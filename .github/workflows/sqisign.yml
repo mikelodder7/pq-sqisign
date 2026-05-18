@@ -55,18 +55,18 @@ jobs:
             flags: "--no-default-features"
           - name: kgen
             flags: "--no-default-features --features kgen"
-          - name: ecap
-            flags: "--no-default-features --features ecap"
-          - name: dcap
-            flags: "--no-default-features --features dcap"
-          - name: kgen+ecap
-            flags: "--no-default-features --features kgen,ecap"
-          - name: kgen+dcap
-            flags: "--no-default-features --features kgen,dcap"
-          - name: ecap+dcap
-            flags: "--no-default-features --features ecap,dcap"
-          - name: kgen+ecap+dcap
-            flags: "--no-default-features --features kgen,ecap,dcap"
+          - name: sign
+            flags: "--no-default-features --features sign"
+          - name: vrfy
+            flags: "--no-default-features --features vrfy"
+          - name: kgen+sign
+            flags: "--no-default-features --features kgen,sign"
+          - name: kgen+vrfy
+            flags: "--no-default-features --features kgen,vrfy"
+          - name: sign+vrfy
+            flags: "--no-default-features --features sign,vrfy"
+          - name: kgen+sign+vrfy
+            flags: "--no-default-features --features kgen,sign,vrfy"
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master

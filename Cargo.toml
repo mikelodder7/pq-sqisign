@@ -15,7 +15,7 @@ rust-version = "1.85"
 
 [features]
 default = ["std", "kgen", "sign", "vrfy"]
-std = ["alloc", "rand_core/std", "subtle/std", "zeroize/std"]
+std = ["alloc", "subtle/std", "zeroize/std"]
 alloc = ["crypto-bigint/alloc"]
 kgen = []
 sign = ["kgen"]
@@ -27,7 +27,7 @@ js = ["dep:getrandom", "getrandom/wasm_js"]
 aes = { version = "0.8", default-features = false }
 crypto-bigint = { version = "0.7", default-features = false, features = ["rand_core", "zeroize", "subtle"] }
 sha3 = { version = "0.10", default-features = false }
-rand_core = { version = "0.9", default-features = false }
+rand_core = { version = "0.10", default-features = false }
 subtle = { version = "2", default-features = false }
 zeroize = { version = "1", default-features = false, features = ["derive"] }
 hybrid-array = { version = "0.4", features = ["zeroize"] }
