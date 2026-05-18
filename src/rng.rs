@@ -51,7 +51,7 @@
 use core::convert::Infallible;
 
 use aes::Aes256;
-use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
+use aes::cipher::{Block, BlockCipherEncrypt, KeyInit};
 use rand_core::{Rng, TryCryptoRng, TryRng};
 
 /// The NIST PQC AES-256-CTR_DRBG state.
@@ -128,13 +128,13 @@ impl NistPqcRng {
 
     /// One AES-256 ECB block of the current `(key, v)` pair.
     fn aes_block(&self) -> [u8; 16] {
-        let key = GenericArray::from_slice(&self.key);
-        let cipher = Aes256::new(key);
-        let mut block = GenericArray::clone_from_slice(&self.v);
+        // aes 0.9 + cipher 0.5: keys and blocks are `Array<u8, N>` from
+        // `hybrid-array`. Construct via the `From<&[u8; N]>` impl.
+        let key_array = (&self.key).into();
+        let cipher = Aes256::new(key_array);
+        let mut block: Block<Aes256> = Block::<Aes256>::from(self.v);
         cipher.encrypt_block(&mut block);
-        let mut out = [0u8; 16];
-        out.copy_from_slice(&block);
-        out
+        block.into()
     }
 }
 
