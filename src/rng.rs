@@ -20,8 +20,8 @@
 //!
 //! # API
 //!
-//! - [`NistPqcRng::new`] — instantiate from a 48-byte seed.
-//! - [`NistPqcRng::fill`] — emit the next `n` bytes (any length).
+//! - `NistPqcRng::new` — instantiate from a 48-byte seed.
+//! - `NistPqcRng::fill` — emit the next `n` bytes (any length).
 //!
 //! # Algorithm
 //!
@@ -48,9 +48,11 @@
 //!     v = temp[32..48]
 //! ```
 
+use core::convert::Infallible;
+
 use aes::Aes256;
 use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
-use rand_core::{CryptoRng, RngCore};
+use rand_core::{Rng, TryCryptoRng, TryRng};
 
 /// The NIST PQC AES-256-CTR_DRBG state.
 #[derive(Clone)]
@@ -136,25 +138,37 @@ impl NistPqcRng {
     }
 }
 
-impl RngCore for NistPqcRng {
-    fn next_u32(&mut self) -> u32 {
+// rand_core 0.10 trait hierarchy:
+//   TryRng → Rng (auto when Error=Infallible) → CryptoRng (auto when also TryCryptoRng)
+// We implement TryRng + TryCryptoRng with infallible error; the rest blanket-impls.
+impl TryRng for NistPqcRng {
+    type Error = Infallible;
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
         let mut buf = [0u8; 4];
         self.fill(&mut buf);
-        u32::from_le_bytes(buf)
+        Ok(u32::from_le_bytes(buf))
     }
-
-    fn next_u64(&mut self) -> u64 {
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
         let mut buf = [0u8; 8];
         self.fill(&mut buf);
-        u64::from_le_bytes(buf)
+        Ok(u64::from_le_bytes(buf))
     }
-
-    fn fill_bytes(&mut self, dst: &mut [u8]) {
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
         self.fill(dst);
+        Ok(())
     }
 }
 
-impl CryptoRng for NistPqcRng {}
+impl TryCryptoRng for NistPqcRng {}
+
+// Compile-time proof that the auto-impls land: `Rng` and `CryptoRng` are
+// blanket-impl'd for any `TryRng<Error=Infallible>` (resp. + `TryCryptoRng`).
+const _: fn() = || {
+    fn requires_crypto<R: rand_core::CryptoRng + ?Sized>() {}
+    fn requires_rng<R: Rng + ?Sized>() {}
+    requires_rng::<NistPqcRng>();
+    requires_crypto::<NistPqcRng>();
+};
 
 #[cfg(test)]
 mod tests {

@@ -46,7 +46,9 @@ pub fn sample_random_quaternion_o0<R: CryptoRng>(rng: &mut R, bound: i64) -> [In
     ]
 }
 
-#[cfg(test)]
+// Sample tests use `NistPqcRng` for a deterministic, seedable CryptoRng;
+// gated on `kat` so non-test builds drop the dependency.
+#[cfg(all(test, feature = "kat"))]
 mod tests {
     use super::*;
     use crate::rng::NistPqcRng;

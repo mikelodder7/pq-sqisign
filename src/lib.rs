@@ -40,6 +40,10 @@ pub mod hash;
 pub mod isogeny;
 pub mod params;
 pub mod quaternion;
+/// NIST PQC AES-256-CTR_DRBG. Test-only — required to reproduce
+/// upstream KAT bytes byte-exactly; not intended for production callers
+/// (they bring their own `CryptoRng`).
+#[cfg(feature = "kat")]
 pub mod rng;
 
 pub use crate::error::{Error, Result};

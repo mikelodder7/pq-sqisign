@@ -179,6 +179,7 @@ mod tests {
         let _ = (k_image, q_img);
     }
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn chain_codomain_matches_repeated_single_step() {
         // Apply chain length-1 — should match the single-step result.
