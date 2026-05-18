@@ -27,9 +27,9 @@ js = ["dep:getrandom", "getrandom/wasm_js"]
 kat = ["dep:aes"]
 
 [dependencies]
-aes = { version = "0.8", default-features = false, optional = true }
+aes = { version = "0.9", default-features = false, optional = true }
 crypto-bigint = { version = "0.7", default-features = false, features = ["rand_core", "zeroize", "subtle"] }
-sha3 = { version = "0.10", default-features = false }
+shake = { version = "0.1", default-features = false }
 rand_core = { version = "0.10", default-features = false }
 subtle = { version = "2", default-features = false }
 zeroize = { version = "1", default-features = false, features = ["derive"] }

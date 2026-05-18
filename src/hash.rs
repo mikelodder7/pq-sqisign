@@ -9,7 +9,7 @@
 //!
 //! This module provides the level-agnostic building blocks:
 //!
-//! - [`Shake256`] — incremental SHAKE-256 wrapper over `sha3::Shake256`.
+//! - [`Shake256`] — incremental SHAKE-256 wrapper over `shake::Shake256`.
 //! - [`hash_to_fp`] — rejection-sample SHAKE bytes into an `F_p` element.
 //! - [`hash_to_fp2`] — pair of `hash_to_fp` calls into `F_{p^2}`.
 //!
@@ -17,8 +17,8 @@
 //! `SQIsign_response_length` and an iterated mask schedule) lands alongside
 //! Sign/Verify in a later session; the primitives here are what it sits on.
 
-use sha3::Shake256 as RawShake256;
-use sha3::digest::{ExtendableOutput, Update, XofReader};
+use shake::Shake256 as RawShake256;
+use shake::digest::{ExtendableOutput, Update, XofReader};
 use subtle::CtOption;
 
 use crate::gf::fp::BaseField;
