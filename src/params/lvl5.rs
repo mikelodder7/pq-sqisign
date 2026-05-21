@@ -37,6 +37,15 @@ impl Params for Level5 {
     const SECURITY_BITS: usize = 256;
 }
 
+/// The Level-5 base prime `p = 27 · 2^500 − 1` as a 512-bit unsigned integer.
+///
+/// L5 is the magnitude ceiling for quaternion arithmetic on `Int<8>`
+/// (signed 512-bit): `p < 2^505` so `p.as_int()` is positive and `−p` is
+/// `~2^505`, both ~6 bits inside the `Int<8>` envelope.
+pub fn prime() -> U512 {
+    *Lvl5Modulus::PARAMS.modulus().as_ref()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -51,5 +60,43 @@ mod tests {
         for &b in &p_bytes[2..] {
             assert_eq!(b, 0xff);
         }
+    }
+
+    #[test]
+    fn prime_helper_returns_canonical_p() {
+        let p = prime();
+        let p_bytes = p.to_be_bytes();
+        assert_eq!(p_bytes[0], 0x01);
+        assert_eq!(p_bytes[1], 0xaf);
+        for &b in &p_bytes[2..] {
+            assert_eq!(b, 0xff);
+        }
+    }
+
+    #[test]
+    fn prime_top_bit_clear_for_int8_sign_room() {
+        // L5 is the magnitude stress case: `Int<8>` (signed 512-bit) needs
+        // the top bit free to represent `−p` without sign-bit collision.
+        // `p ~ 2^505`, so bits 511..505 must be zero — pin that explicitly.
+        let p = prime();
+        let limbs = p.as_limbs();
+        // Top limb is limbs[7] (most significant). Bits 505..511 sit in
+        // bits 41..47 of that limb (since limb 7 covers bits 448..511).
+        // p_top_limb = 0x01af_ffff_ffff_ffff: bits 56..62 = 0, bit 56 = 1
+        // (the 0x01 nibble) — wait, the highest bit of p is at position 504.
+        // Verify: limb 7 covers bits [448, 511]. Bit 504 sits at position
+        // 504 − 448 = 56 within limb 7. Top byte of limb 7 (bits 56..63)
+        // should be 0x01, so bits 57..63 are zero.
+        let top_limb = limbs[7].0;
+        assert_eq!(
+            top_limb >> 57,
+            0,
+            "Int<8> sign-room check: bits 57..63 of top limb must be zero"
+        );
+        assert_eq!(
+            (top_limb >> 56) & 1,
+            1,
+            "bit 504 of p must be set (p_top_limb top byte = 0x01)"
+        );
     }
 }

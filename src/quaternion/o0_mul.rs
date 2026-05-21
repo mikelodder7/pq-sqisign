@@ -112,6 +112,109 @@ pub fn principal_left_ideal_from_o0<const LIMBS: usize>(
     crate::quaternion::LeftIdeal::new(reduced)
 }
 
+/// Build the 4×4 integer Gram matrix `G_O0` such that
+/// `cᵀ · G_O0 · c = 4 · N(α)` for `α ∈ O_0` expressed in the canonical
+/// `O_0`-basis `(1, i, (i + j) / 2, (1 + k) / 2)` with integer
+/// coordinates `c = (a, b, c, d)`.
+///
+/// Derivation: `α` in standard `(1, i, j, k)`-basis is
+/// `(a + d/2, b + c/2, c/2, d/2)`. Reduced norm is
+/// `N(α) = (a + d/2)² + (b + c/2)² + p·(c/2)² + p·(d/2)²`. Multiplying
+/// by 4 to clear denominators:
+///
+/// ```text
+///     4 · N(α) = 4a² + 4b² + (1 + p)·c² + (1 + p)·d² + 4ad + 4bc.
+/// ```
+///
+/// As a symmetric quadratic form `cᵀ G_O0 c` (each off-diagonal entry
+/// contributes twice via `G[i][j] + G[j][i]`):
+///
+/// ```text
+///     G_O0 = [[4,    0,    0,    2 ],
+///             [0,    4,    2,    0 ],
+///             [0,    2,  1+p,    0 ],
+///             [2,    0,    0,  1+p]]
+/// ```
+///
+/// This is the building block for `ideal_gram_matrix(ideal, p)` which
+/// pulls the form back through an ideal basis: `G_I = B · G_O0 · Bᵀ`
+/// so that `vᵀ · G_I · v = 4 · N(α_v)` for `α_v = Σ_r v[r] · B[r]`.
+pub fn o0_reduced_norm_gram_matrix<const LIMBS: usize>(p: &Uint<LIMBS>) -> [[Int<LIMBS>; 4]; 4] {
+    let zero = Int::<LIMBS>::from_i64(0);
+    let two = Int::<LIMBS>::from_i64(2);
+    let four = Int::<LIMBS>::from_i64(4);
+    let one = Int::<LIMBS>::from_i64(1);
+    let one_plus_p = one.wrapping_add(p.as_int());
+    [
+        [four, zero, zero, two],
+        [zero, four, two, zero],
+        [zero, two, one_plus_p, zero],
+        [two, zero, zero, one_plus_p],
+    ]
+}
+
+/// Widen a signed `Int<NARROW>` to `Int<WIDE>` by sign-extension.
+/// Decomposes via `abs_sign`, resizes the unsigned magnitude, then
+/// re-applies the original sign. Used by [`reduced_norm_o0_basis_wide`]
+/// and other wide-Int verification paths that need to compute on
+/// magnitudes that would overflow the narrow type.
+fn widen_int<const NARROW: usize, const WIDE: usize>(x: &Int<NARROW>) -> Int<WIDE> {
+    let (uint_n, neg) = x.abs_sign();
+    let uint_w: Uint<WIDE> = uint_n.resize::<WIDE>();
+    let int_w: Int<WIDE> = *uint_w.as_int();
+    if bool::from(neg) {
+        int_w.wrapping_neg()
+    } else {
+        int_w
+    }
+}
+
+/// Wide-Int variant of [`reduced_norm_o0_basis`] for use as a genuinely
+/// independent verification path at magnitudes where the narrow `Int<N>`
+/// arithmetic would overflow.
+///
+/// Takes the `O_0`-basis coordinates and prime as narrow types
+/// (`Int<NARROW>` / `Uint<NARROW>`), widens them to `Int<WIDE>` /
+/// `Uint<WIDE>` via the private `widen_int` helper / `Uint::resize`,
+/// then computes the reduced norm in `WIDE` precision. Returns
+/// `Int<WIDE>`.
+///
+/// At `NARROW = WIDE` this reduces to [`reduced_norm_o0_basis`] with an
+/// extra widen round-trip — useful as a parity check. For
+/// `WIDE > NARROW` (typically `WIDE = 2·NARROW`), this is the
+/// verification path KLPT tests at L1 large-γ and L3/L5 scale require.
+pub fn reduced_norm_o0_basis_wide<const NARROW: usize, const WIDE: usize>(
+    coords: &[Int<NARROW>; 4],
+    p: &Uint<NARROW>,
+) -> Int<WIDE> {
+    let two = Int::<WIDE>::from_i64(2);
+    let four = Int::<WIDE>::from_i64(4);
+    let c0 = widen_int::<NARROW, WIDE>(&coords[0]);
+    let c1 = widen_int::<NARROW, WIDE>(&coords[1]);
+    let c2 = widen_int::<NARROW, WIDE>(&coords[2]);
+    let c3 = widen_int::<NARROW, WIDE>(&coords[3]);
+    let p_wide: Uint<WIDE> = p.resize::<WIDE>();
+    let p_int = *p_wide.as_int();
+
+    // 2·x in standard (1, i, j, k) basis = (2a + d, 2b + c, c, d).
+    let qa = two.wrapping_mul(&c0).wrapping_add(&c3);
+    let qb = two.wrapping_mul(&c1).wrapping_add(&c2);
+    let qc = c2;
+    let qd = c3;
+
+    // N_red(2·x) = qa² + qb² + p · (qc² + qd²)
+    let qa_sq = qa.wrapping_mul(&qa);
+    let qb_sq = qb.wrapping_mul(&qb);
+    let qc_sq = qc.wrapping_mul(&qc);
+    let qd_sq = qd.wrapping_mul(&qd);
+    let n_two_x = qa_sq
+        .wrapping_add(&qb_sq)
+        .wrapping_add(&p_int.wrapping_mul(&qc_sq.wrapping_add(&qd_sq)));
+
+    // N_red(x) = N_red(2·x) / 4 (exact for valid O_0 elements).
+    int_div_floor(&n_two_x, &four)
+}
+
 /// Reduced norm `N_red(x) = x · x̄ ∈ Z` of an `O_0` element expressed in
 /// `O_0`-basis coordinates `(a, b, c, d)` for the canonical basis
 /// `(1, i, (i+j)/2, (1+k)/2)`.
@@ -132,6 +235,37 @@ pub fn reduced_norm_o0_basis<const LIMBS: usize>(
     let q = Quaternion::<LIMBS>::new(qa, qb, qc, qd);
     let n_two_x = q.norm(p);
     int_div_floor(&n_two_x, &four)
+}
+
+/// Wide-Int variant of [`multiply_o0_basis`]. Widens narrow inputs to
+/// `Int<WIDE>`, performs the multiplication at `WIDE` precision (where
+/// intermediates like `p·c·d` can grow to `O(p³)` without overflow),
+/// then narrows the result back to `Int<NARROW>`.
+///
+/// **Caller invariant**: the *final* product components must fit in
+/// `Int<NARROW>`. For ideal-times-α products where α components are
+/// bounded, the final basis entries stay bounded too; only the
+/// intermediates exceed narrow precision. For inputs where the final
+/// result also overflows narrow, the truncating narrow step silently
+/// loses information — that case needs a wider downstream type.
+pub fn multiply_o0_basis_wide<const NARROW: usize, const WIDE: usize>(
+    x_o0: &[Int<NARROW>; 4],
+    y_o0: &[Int<NARROW>; 4],
+    p: &Uint<NARROW>,
+) -> [Int<NARROW>; 4] {
+    let mut x_w = [Int::<WIDE>::from_i64(0); 4];
+    let mut y_w = [Int::<WIDE>::from_i64(0); 4];
+    for i in 0..4 {
+        x_w[i] = crate::quaternion::lattice::widen_int_lattice::<NARROW, WIDE>(&x_o0[i]);
+        y_w[i] = crate::quaternion::lattice::widen_int_lattice::<NARROW, WIDE>(&y_o0[i]);
+    }
+    let p_w: Uint<WIDE> = p.resize::<WIDE>();
+    let result_w = multiply_o0_basis::<WIDE>(&x_w, &y_w, &p_w);
+    let mut result = [Int::<NARROW>::from_i64(0); 4];
+    for i in 0..4 {
+        result[i] = crate::quaternion::lattice::narrow_int_lattice::<WIDE, NARROW>(&result_w[i]);
+    }
+    result
 }
 
 /// Multiply two `O_0` elements expressed in `O_0`-basis coordinates.
@@ -393,6 +527,97 @@ mod tests {
         let doubled = crate::quaternion::LeftIdeal::<8>::full_order().scale(2);
         assert!(ideal.equals_lattice(&doubled));
         assert_eq!(ideal.norm(), Uint::<8>::from_u64(16));
+    }
+
+    #[test]
+    fn o0_gram_has_expected_pattern_at_p_seven() {
+        let p = fake_p();
+        let g = o0_reduced_norm_gram_matrix(&p);
+        // Diagonal entries: 4, 4, 1+p=8, 1+p=8
+        assert_eq!(g[0][0], n(4));
+        assert_eq!(g[1][1], n(4));
+        assert_eq!(g[2][2], n(8));
+        assert_eq!(g[3][3], n(8));
+        // Off-diagonal cross terms: G[0][3] = G[3][0] = 2, G[1][2] = G[2][1] = 2.
+        assert_eq!(g[0][3], n(2));
+        assert_eq!(g[3][0], n(2));
+        assert_eq!(g[1][2], n(2));
+        assert_eq!(g[2][1], n(2));
+        // Other entries: zero.
+        for (i, j) in [
+            (0, 1),
+            (0, 2),
+            (1, 0),
+            (1, 3),
+            (2, 0),
+            (2, 3),
+            (3, 1),
+            (3, 2),
+        ] {
+            assert_eq!(g[i][j], n(0), "G[{i}][{j}] should be 0");
+        }
+    }
+
+    #[test]
+    fn o0_gram_eval_matches_4n_alpha() {
+        // For c = (1, 2, 3, 4) and p = 7, verify cᵀ G c = 4·N(α) where
+        // α has O_0-coords c.
+        use crate::quaternion::lattice::qf_eval_4x4;
+        let p = fake_p();
+        let g = o0_reduced_norm_gram_matrix(&p);
+        let c: [Int<8>; 4] = [n(1), n(2), n(3), n(4)];
+        let four_n_via_gram = qf_eval_4x4(&c, &g);
+        let n_alpha = reduced_norm_o0_basis(&c, &p);
+        let four_n_via_helper = n(4).wrapping_mul(&n_alpha);
+        assert_eq!(four_n_via_gram, four_n_via_helper);
+    }
+
+    #[test]
+    fn widen_int_preserves_value_for_positive_and_negative() {
+        let pos = Int::<8>::from_i64(42);
+        let neg = Int::<8>::from_i64(-42);
+        let zero = Int::<8>::from_i64(0);
+
+        let pos_wide: Int<16> = widen_int::<8, 16>(&pos);
+        let neg_wide: Int<16> = widen_int::<8, 16>(&neg);
+        let zero_wide: Int<16> = widen_int::<8, 16>(&zero);
+
+        // Round-trip the magnitude: |pos_wide| should equal |pos| via the
+        // same abs_sign decomposition.
+        let (pos_w_uint, pos_w_neg) = pos_wide.abs_sign();
+        assert!(!bool::from(pos_w_neg));
+        assert_eq!(pos_w_uint.resize::<8>(), Uint::<8>::from_u64(42));
+
+        let (neg_w_uint, neg_w_neg) = neg_wide.abs_sign();
+        assert!(bool::from(neg_w_neg));
+        assert_eq!(neg_w_uint.resize::<8>(), Uint::<8>::from_u64(42));
+
+        assert_eq!(zero_wide, Int::<16>::from_i64(0));
+    }
+
+    #[test]
+    fn reduced_norm_wide_at_same_width_matches_narrow() {
+        // Parity probe: at WIDE = NARROW (no widening), the wide version
+        // should agree with the narrow version on inputs that don't
+        // overflow.
+        let p = fake_p(); // 7
+        let coords = [n(1), n(2), n(3), n(4)];
+        let narrow_result = reduced_norm_o0_basis(&coords, &p);
+        let wide_result: Int<8> = reduced_norm_o0_basis_wide::<8, 8>(&coords, &p);
+        assert_eq!(wide_result, narrow_result);
+    }
+
+    #[test]
+    fn reduced_norm_wide_8_to_16_matches_narrow_on_safe_inputs() {
+        // For coords that don't overflow Int<8>, the wide-Int<16>
+        // computation should give the same numeric value as the narrow
+        // Int<8> path. Widen narrow → 16 and compare.
+        let p = fake_p();
+        let coords = [n(5), n(-3), n(2), n(-1)];
+        let narrow_result = reduced_norm_o0_basis(&coords, &p);
+        let wide_result: Int<16> = reduced_norm_o0_basis_wide::<8, 16>(&coords, &p);
+        let narrow_widened = widen_int::<8, 16>(&narrow_result);
+        assert_eq!(wide_result, narrow_widened);
     }
 
     /// Associativity probe: `(e_1 · e_2) · e_0 = e_1 · (e_2 · e_0)`.

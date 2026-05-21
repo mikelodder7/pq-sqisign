@@ -24,25 +24,67 @@
 //! the norm / conjugation that KLPT (and the immediate next session's
 //! prototype) need.
 
-use crypto_bigint::Int;
+use crypto_bigint::{Int, Uint};
+
+use crate::quaternion::lattice::pull_back_gram;
+use crate::quaternion::o0_mul::o0_reduced_norm_gram_matrix;
 
 /// A `Z`-basis matrix for a left `O_0`-ideal, expressed in the canonical
-/// `O_0`-basis `(1, i, (i+j)/2, (1+k)/2)`.
+/// `O_0`-basis `(1, i, (i+j)/2, (1+k)/2)`, optionally scaled by an integer
+/// denominator.
+///
+/// The "true" rational lattice is `(1 / denom) · Z⟨basis⟩`. When
+/// `denom == 1` this collapses to a plain integer `O_0`-ideal — the
+/// representation every method shipped through Session 48 used.
 ///
 /// `LIMBS` is the integer-coefficient width — the same `Int<LIMBS>` used by
 /// [`Quaternion`](super::Quaternion).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct LeftIdeal<const LIMBS: usize> {
-    /// `basis[r]` is the `r`-th `Z`-generator of the ideal, with
-    /// `basis[r][c]` being its coefficient in the `c`-th `O_0`-basis vector.
+    /// `basis[r]` is the `r`-th `Z`-generator of the ideal (times `denom`),
+    /// with `basis[r][c]` being its coefficient in the `c`-th `O_0`-basis
+    /// vector.
     pub basis: [[Int<LIMBS>; 4]; 4],
+    /// Scalar denominator. The rational lattice is `(1 / denom) · Z⟨basis⟩`.
+    /// Defaults to `Uint::ONE` for all integer-only constructions.
+    pub denom: Uint<LIMBS>,
+    /// Cached reduced norm `N(I) = [O_0 : I_rational]`. Tracked separately
+    /// from `|det(basis)| / denom^4` because the `quat_lideal_mul` formula
+    /// `N(I·β) = N(I)·N_red(β_rational)` from the SQIsign C reference
+    /// updates this field via its own rule that doesn't always match the
+    /// raw basis-determinant formula after rational right-multiplication.
+    pub cached_norm: Uint<LIMBS>,
 }
 
 impl<const LIMBS: usize> LeftIdeal<LIMBS> {
-    /// Construct an ideal from its raw 4×4 basis matrix.
-    #[inline]
-    pub const fn new(basis: [[Int<LIMBS>; 4]; 4]) -> Self {
-        Self { basis }
+    /// Construct an integer ideal from its raw 4×4 basis matrix. Sets
+    /// `denom = 1` and computes `cached_norm = |det(basis)|`. Use
+    /// [`Self::with_denom_and_norm`] for rational ideals where the C
+    /// reference's `N(I·β)` formula gives a different cached norm than
+    /// the raw determinant.
+    pub fn new(basis: [[Int<LIMBS>; 4]; 4]) -> Self {
+        let det = det_4x4(&basis);
+        let cached_norm = det.abs();
+        Self {
+            basis,
+            denom: Uint::<LIMBS>::ONE,
+            cached_norm,
+        }
+    }
+
+    /// Construct a rational ideal with explicit `denom` and `cached_norm`.
+    /// Caller is responsible for invariant consistency — typically used
+    /// only by the rational-multiplication operation in KLPT.
+    pub const fn with_denom_and_norm(
+        basis: [[Int<LIMBS>; 4]; 4],
+        denom: Uint<LIMBS>,
+        cached_norm: Uint<LIMBS>,
+    ) -> Self {
+        Self {
+            basis,
+            denom,
+            cached_norm,
+        }
     }
 
     /// The full order `O_0` itself, represented by the identity matrix.
@@ -53,7 +95,8 @@ impl<const LIMBS: usize> LeftIdeal<LIMBS> {
     }
 
     /// Scale every basis vector by an integer constant `n`. The resulting
-    /// ideal is `n · self` (note its norm is `n^4 · norm(self)`).
+    /// ideal is `n · self`: its basis is `n · basis`, its `denom` is
+    /// unchanged, and its `cached_norm` is multiplied by `|n|^4`.
     pub fn scale(&self, n: i64) -> Self {
         let n_int = Int::<LIMBS>::from_i64(n);
         let mut out = self.basis;
@@ -62,11 +105,20 @@ impl<const LIMBS: usize> LeftIdeal<LIMBS> {
                 *cell = cell.wrapping_mul(&n_int);
             }
         }
-        Self::new(out)
+        let n_abs = n.unsigned_abs();
+        let n_pow_4 = n_abs.saturating_pow(4);
+        let n_pow_4_uint = Uint::<LIMBS>::from_u64(n_pow_4);
+        let new_norm = self.cached_norm.wrapping_mul(&n_pow_4_uint);
+        Self {
+            basis: out,
+            denom: self.denom,
+            cached_norm: new_norm,
+        }
     }
 
     /// Conjugate ideal: each basis row `r` becomes `r · C` where `C` is the
-    /// conjugation matrix shown at the module top.
+    /// conjugation matrix shown at the module top. `det(C) = −1`, so `|det|`
+    /// is preserved; `cached_norm` and `denom` are unchanged.
     pub fn conjugate(&self) -> Self {
         let mut out = self.basis;
         for row in out.iter_mut() {
@@ -80,35 +132,63 @@ impl<const LIMBS: usize> LeftIdeal<LIMBS> {
             row[2] = r2.wrapping_neg();
             row[3] = r3.wrapping_neg();
         }
-        Self::new(out)
+        Self {
+            basis: out,
+            denom: self.denom,
+            cached_norm: self.cached_norm,
+        }
     }
 
-    /// Reduced norm `N(I) = |det(M)|` — the index `[O_0 : I]` for integral
-    /// ideals contained in `O_0`. Returns an unsigned `crypto_bigint::Uint`.
-    pub fn norm(&self) -> crypto_bigint::Uint<LIMBS> {
-        let det = det_4x4(&self.basis);
-        det.abs()
+    /// Reduced norm `N(I)` — the cached `[O_0 : I_rational]` value
+    /// maintained by every ideal operation. For integer ideals
+    /// (`denom == 1`) this matches `|det(basis)|`; for rational ideals
+    /// the cached value can diverge from `|det(basis)| / denom^4`
+    /// because the C reference's `lideal_mul` updates the cached norm
+    /// via a separate formula.
+    pub fn norm(&self) -> Uint<LIMBS> {
+        self.cached_norm
     }
 
     /// Reduce the basis matrix to Hermite Normal Form. Returns a new
     /// `LeftIdeal` representing the same lattice as `self` but in canonical
-    /// upper-triangular form.
+    /// upper-triangular form. `cached_norm` and `denom` preserved.
     pub fn reduced(&self) -> Self {
-        Self::new(crate::quaternion::hnf::hnf_4x4(&self.basis))
+        Self {
+            basis: crate::quaternion::hnf::hnf_4x4(&self.basis),
+            denom: self.denom,
+            cached_norm: self.cached_norm,
+        }
     }
 
-    /// Test whether two ideals represent the same lattice. Cheap via HNF:
-    /// two integer lattices are equal iff their HNFs are bitwise-equal.
+    /// Test whether two ideals represent the same rational lattice. For
+    /// the integer-only case (`denom_a == denom_b`) this is HNF equality.
+    /// For mixed denominators, cross-multiply the bases by the other
+    /// ideal's denominator before HNF comparison.
     pub fn equals_lattice(&self, other: &Self) -> bool {
-        self.reduced().basis == other.reduced().basis
+        if self.denom == other.denom {
+            return self.reduced().basis == other.reduced().basis;
+        }
+        let mut a_scaled = self.basis;
+        let other_denom_int = *other.denom.as_int();
+        for row in a_scaled.iter_mut() {
+            for cell in row.iter_mut() {
+                *cell = cell.wrapping_mul(&other_denom_int);
+            }
+        }
+        let mut b_scaled = other.basis;
+        let self_denom_int = *self.denom.as_int();
+        for row in b_scaled.iter_mut() {
+            for cell in row.iter_mut() {
+                *cell = cell.wrapping_mul(&self_denom_int);
+            }
+        }
+        crate::quaternion::hnf::hnf_4x4(&a_scaled) == crate::quaternion::hnf::hnf_4x4(&b_scaled)
     }
 
     /// Divide every basis coordinate by the integer `divisor`. Returns
     /// `None` if the division is not exact (i.e., any cell is not an
-    /// integer multiple of `divisor`).
-    ///
-    /// Used by KLPT's general-case lift to extract `I · γ̄ / N(I)` after
-    /// constructing the unnormalised right-product.
+    /// integer multiple of `divisor`). Updates `cached_norm` by `1 / n^4`
+    /// (also returning `None` if that division isn't exact).
     pub fn divide_basis_by(&self, divisor: i64) -> Option<Self> {
         if divisor == 0 {
             return None;
@@ -125,7 +205,22 @@ impl<const LIMBS: usize> LeftIdeal<LIMBS> {
                 *cell = q;
             }
         }
-        Some(Self::new(out))
+        // Update cached_norm: dividing every basis cell by n divides the
+        // lattice determinant by n^4, so the cached norm divides by n^4.
+        let n_abs = divisor.unsigned_abs();
+        let n_pow_4 = n_abs.checked_pow(4)?;
+        let n_pow_4_uint = Uint::<LIMBS>::from_u64(n_pow_4);
+        let n_nz =
+            Option::<crypto_bigint::NonZero<_>>::from(crypto_bigint::NonZero::new(n_pow_4_uint))?;
+        let (new_norm, rem) = self.cached_norm.div_rem_vartime(&n_nz);
+        if rem != Uint::<LIMBS>::from_u64(0) {
+            return None;
+        }
+        Some(Self {
+            basis: out,
+            denom: self.denom,
+            cached_norm: new_norm,
+        })
     }
 
     /// Test whether the quaternion `q` (in `O_0`-basis coordinates) is an
@@ -166,6 +261,39 @@ impl<const LIMBS: usize> LeftIdeal<LIMBS> {
 /// Determinant of a 4×4 integer matrix via Laplace expansion along the
 /// first row. Wrapping arithmetic — the caller picks `LIMBS` wide enough
 /// that the intermediate products don't overflow.
+/// Pulled-back Gram matrix of the reduced-norm form on an ideal.
+///
+/// Returns `G_I = B · G_O0 · Bᵀ` where `B = ideal.basis` (the 4×4
+/// `O_0`-basis-coordinate matrix of the ideal) and `G_O0` is the
+/// reduced-norm Gram on `O_0` from
+/// [`super::o0_mul::o0_reduced_norm_gram_matrix`].
+///
+/// The invariant: for any integer coordinate vector
+/// `v = (v_0, v_1, v_2, v_3) ∈ Z⁴`, the quaternion
+/// `α_v = Σ_r v[r] · ideal.basis[r] ∈ I` has reduced norm satisfying
+///
+/// ```text
+///     vᵀ · G_I · v = 4 · N(α_v).
+/// ```
+///
+/// This is the integer-Gram input that `lll_4x4` and KLPT's
+/// prime-norm-reduced-equivalent search consume. The factor of 4 is the
+/// same fraction-clearing scalar that
+/// [`super::o0_mul::reduced_norm_o0_basis`] absorbs after the fact.
+///
+/// 64 wrapping multiplications (two 4×4 matmuls). Pure integer
+/// arithmetic; no Cholesky / no floating point.
+pub fn ideal_gram_matrix<const LIMBS: usize>(
+    ideal: &LeftIdeal<LIMBS>,
+    p: &Uint<LIMBS>,
+) -> [[Int<LIMBS>; 4]; 4] {
+    let g_o0 = o0_reduced_norm_gram_matrix(p);
+    pull_back_gram(&ideal.basis, &g_o0)
+}
+
+/// Determinant of a 4×4 integer matrix via Laplace expansion along the
+/// first row. Returns the signed result; ideal-norm callers take the
+/// absolute value via [`Int::abs`].
 pub fn det_4x4<const LIMBS: usize>(m: &[[Int<LIMBS>; 4]; 4]) -> Int<LIMBS> {
     let mut acc = Int::<LIMBS>::from_i64(0);
     let mut sign = 1i64;
@@ -398,5 +526,67 @@ mod tests {
         ];
         // det = 1*(5*10 - 6*8) - 2*(4*10 - 6*7) + 3*(4*8 - 5*7) = 2 + 4 - 9 = -3
         assert_eq!(det_3x3(&m), i64_int(-3));
+    }
+
+    #[test]
+    fn ideal_gram_for_full_order_equals_o0_gram() {
+        use crate::quaternion::o0_mul::o0_reduced_norm_gram_matrix;
+        let p: Uint<8> = Uint::<8>::from_u64(7);
+        let id = Ideal::full_order();
+        let g_i = ideal_gram_matrix(&id, &p);
+        let g_o0 = o0_reduced_norm_gram_matrix(&p);
+        assert_eq!(g_i, g_o0);
+    }
+
+    #[test]
+    fn ideal_gram_eval_matches_4n_alpha_on_full_order() {
+        use crate::quaternion::lattice::qf_eval_4x4;
+        use crate::quaternion::o0_mul::reduced_norm_o0_basis;
+        let p: Uint<8> = Uint::<8>::from_u64(7);
+        let id = Ideal::full_order();
+        let g_i = ideal_gram_matrix(&id, &p);
+
+        // For identity basis, the ideal-coord vector v equals the O_0-coord
+        // vector of α_v. Check vᵀ G_I v = 4·N(α_v).
+        let v: [Int<8>; 4] = [i64_int(1), i64_int(2), i64_int(3), i64_int(4)];
+        let four_n_via_gram = qf_eval_4x4(&v, &g_i);
+        let n_alpha = reduced_norm_o0_basis(&v, &p);
+        let four_n_via_helper = i64_int(4).wrapping_mul(&n_alpha);
+        assert_eq!(four_n_via_gram, four_n_via_helper);
+    }
+
+    #[test]
+    fn ideal_gram_scales_with_basis_scaling() {
+        // For ideal I scaled by 2, basis is 2·B, so G_I = (2B)·G_O0·(2B)ᵀ
+        // = 4 · B·G_O0·Bᵀ = 4 · G_I_original. Every entry quadruples.
+        let p: Uint<8> = Uint::<8>::from_u64(7);
+        let id = Ideal::full_order();
+        let doubled = id.scale(2);
+        let g_i = ideal_gram_matrix(&id, &p);
+        let g_doubled = ideal_gram_matrix(&doubled, &p);
+        for i in 0..4 {
+            for j in 0..4 {
+                assert_eq!(
+                    g_doubled[i][j],
+                    i64_int(4).wrapping_mul(&g_i[i][j]),
+                    "G[{i}][{j}] should quadruple on basis-scale-by-2"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ideal_gram_symmetric() {
+        // G_I = B·G_O0·Bᵀ is symmetric whenever G_O0 is symmetric (which it
+        // is). Verify on a non-trivial ideal: I = 3·O_0 (still axis-aligned)
+        // and a deliberately-skewed Z-basis of the same lattice.
+        let p: Uint<8> = Uint::<8>::from_u64(7);
+        let scaled = Ideal::full_order().scale(3);
+        let g = ideal_gram_matrix(&scaled, &p);
+        for (i, row) in g.iter().enumerate() {
+            for (j, &entry) in row.iter().enumerate() {
+                assert_eq!(entry, g[j][i], "G[{i}][{j}] != G[{j}][{i}]");
+            }
+        }
     }
 }

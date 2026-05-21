@@ -53,6 +53,8 @@ pub mod klpt;
 pub mod lattice;
 pub mod norm_search;
 pub mod o0_mul;
+pub mod primality;
+pub mod represent_integer;
 pub mod sample;
 pub mod short_vec;
 pub mod smooth;

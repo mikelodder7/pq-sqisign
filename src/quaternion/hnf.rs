@@ -194,33 +194,34 @@ pub fn hnf_4x4<const LIMBS: usize>(input: &[[Int<LIMBS>; 4]; 4]) -> [[Int<LIMBS>
     m
 }
 
-/// Integer floor-division: returns `⌊a / b⌋` for non-zero `b`. Implemented
-/// via repeated subtraction since `crypto-bigint`'s signed-division surface
-/// is unstable across 0.7.x — performance isn't critical here (KLPT moves
-/// the matrix through, then operates on its HNF; the divisions touch
-/// only small quotients in practice).
+/// Integer floor-division: returns `⌊a / b⌋` for non-zero `b`, `0` when
+/// `b == 0`.
+///
+/// Strategy: normalise both operands to unsigned via `Int::abs_sign`,
+/// delegate to `crypto-bigint`'s `Uint::div_rem_vartime` (Knuth Algorithm D
+/// under the hood — `O(LIMBS · 64)` work regardless of the quotient
+/// magnitude), then apply the floor-vs-truncate adjustment when exactly one
+/// operand was negative. The `crypto-bigint 0.7.x` *signed* division
+/// surface is still unstable, so we route around it via the stable
+/// `Uint` surface and reinterpret the result via `Uint::as_int`.
 pub fn int_div_floor<const LIMBS: usize>(a: &Int<LIMBS>, b: &Int<LIMBS>) -> Int<LIMBS> {
+    use crypto_bigint::NonZero;
     let zero = Int::<LIMBS>::from_i64(0);
     let one = Int::<LIMBS>::from_i64(1);
     if *b == zero {
         return zero;
     }
-    // Normalise sign: work in unsigned space.
-    let (mut a_abs, a_neg) = a.abs_sign();
+    let (a_abs, a_neg) = a.abs_sign();
     let (b_abs, b_neg) = b.abs_sign();
     let result_neg = bool::from(a_neg) ^ bool::from(b_neg);
-    // Repeated subtraction — fine for the small quotients HNF reduction generates
-    // after Euclidean pre-processing.
-    let mut q = crypto_bigint::Uint::<LIMBS>::from_u64(0);
-    while a_abs >= b_abs {
-        a_abs = a_abs.wrapping_sub(&b_abs);
-        q = q.wrapping_add(&crypto_bigint::Uint::<LIMBS>::from_u64(1));
-    }
+    let Some(b_nz) = Option::<NonZero<_>>::from(NonZero::new(b_abs)) else {
+        return zero;
+    };
+    let (q, r) = a_abs.div_rem_vartime(&b_nz);
     let q_int = *q.as_int();
+    let zero_u = crypto_bigint::Uint::<LIMBS>::from_u64(0);
     if result_neg {
-        // Floor (not truncate): if remainder is non-zero, subtract 1.
-        let remainder = a_abs;
-        if remainder == crypto_bigint::Uint::<LIMBS>::from_u64(0) {
+        if r == zero_u {
             q_int.wrapping_neg()
         } else {
             q_int.wrapping_neg().wrapping_sub(&one)
@@ -309,5 +310,47 @@ mod tests {
         assert_eq!(int_div_floor(&n(5), &n(0)), n(0));
         assert_eq!(int_div_floor(&n(10), &n(5)), n(2));
         assert_eq!(int_div_floor(&n(-10), &n(5)), n(-2));
+    }
+
+    #[test]
+    fn int_div_floor_handles_real_prime_scale_quotient() {
+        // 2^200 / 2^100 = 2^100. The pre-Session-35 repeated-subtraction body
+        // would have needed 2^100 iterations to finish (≈ heat-death of the
+        // universe). The Knuth-Algorithm-D-backed body returns in microseconds.
+        let num_u = crypto_bigint::Uint::<8>::ONE.shl_vartime(200);
+        let den_u = crypto_bigint::Uint::<8>::ONE.shl_vartime(100);
+        let expected_u = crypto_bigint::Uint::<8>::ONE.shl_vartime(100);
+        let num: Int<8> = *num_u.as_int();
+        let den: Int<8> = *den_u.as_int();
+        let expected: Int<8> = *expected_u.as_int();
+        assert_eq!(int_div_floor(&num, &den), expected);
+    }
+
+    #[test]
+    fn int_div_floor_large_negative_quotient() {
+        // -(2^200) / 2^100 = -(2^100). Exact division — floor adjustment does
+        // not subtract one because the remainder is zero.
+        let num_u = crypto_bigint::Uint::<8>::ONE.shl_vartime(200);
+        let den_u = crypto_bigint::Uint::<8>::ONE.shl_vartime(100);
+        let expected_u = crypto_bigint::Uint::<8>::ONE.shl_vartime(100);
+        let num: Int<8> = (*num_u.as_int()).wrapping_neg();
+        let den: Int<8> = *den_u.as_int();
+        let expected: Int<8> = (*expected_u.as_int()).wrapping_neg();
+        assert_eq!(int_div_floor(&num, &den), expected);
+    }
+
+    #[test]
+    fn int_div_floor_large_negative_quotient_with_remainder() {
+        // -(2^200 + 1) / 2^100 = -(2^100) − 1   (floor of −(2^100 + 2^(−100)))
+        let num_u = crypto_bigint::Uint::<8>::ONE
+            .shl_vartime(200)
+            .wrapping_add(&crypto_bigint::Uint::<8>::ONE);
+        let den_u = crypto_bigint::Uint::<8>::ONE.shl_vartime(100);
+        let num: Int<8> = (*num_u.as_int()).wrapping_neg();
+        let den: Int<8> = *den_u.as_int();
+        let expected: Int<8> = (*crypto_bigint::Uint::<8>::ONE.shl_vartime(100).as_int())
+            .wrapping_neg()
+            .wrapping_sub(&Int::<8>::from_i64(1));
+        assert_eq!(int_div_floor(&num, &den), expected);
     }
 }

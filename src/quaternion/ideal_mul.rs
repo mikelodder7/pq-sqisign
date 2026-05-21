@@ -45,6 +45,171 @@ pub fn ideal_right_multiply<const LIMBS: usize>(
     LeftIdeal::new(reduced)
 }
 
+/// Right-multiply a left ideal `I` by the rational quaternion
+/// `α_rational = α_coord / α_denom`, returning the left ideal
+/// `I · α_rational`. The integer basis matrix is `I.basis · M_{α_coord}`
+/// (just like [`ideal_right_multiply`]); the denominator is multiplied
+/// by `α_denom`; and the cached norm is updated via the SQIsign C
+/// reference's `quat_lideal_mul` identity:
+///
+/// ```text
+///     N(I · α_rational) = N(I) · N_red(α_coord) / α_denom²
+/// ```
+///
+/// where `N_red(α_coord)` is the integer reduced norm of the
+/// `O_0`-basis coordinate vector `α_coord` (computed via
+/// [`super::o0_mul::reduced_norm_o0_basis`]).
+///
+/// `caller_provided_new_norm`, when `Some`, overrides the formula and
+/// uses the caller's value — useful when KLPT's prime-norm search has
+/// already computed `N(J) = q` from the prime-acceptance test and
+/// wants to skip the redundant arithmetic.
+///
+/// Returns `None` if any of the divisibility / norm-update integer
+/// divisions aren't exact, indicating an invariant violation.
+#[allow(clippy::needless_range_loop)]
+pub fn ideal_right_multiply_rational<const LIMBS: usize>(
+    i: &LeftIdeal<LIMBS>,
+    alpha_coord: &[Int<LIMBS>; 4],
+    alpha_denom: &Uint<LIMBS>,
+    p: &Uint<LIMBS>,
+    caller_provided_new_norm: Option<Uint<LIMBS>>,
+) -> Option<LeftIdeal<LIMBS>> {
+    let zero = Int::<LIMBS>::from_i64(0);
+    let mut basis = [[zero; 4]; 4];
+    for k in 0..4 {
+        basis[k] = multiply_o0_basis(&i.basis[k], alpha_coord, p);
+    }
+    let reduced = crate::quaternion::hnf::hnf_4x4(&basis);
+    let new_denom = i.denom.wrapping_mul(alpha_denom);
+
+    let new_norm = match caller_provided_new_norm {
+        Some(n) => n,
+        None => {
+            // N_red(α_coord), then multiply by N(I), then divide by α_denom².
+            let n_red_alpha_int = crate::quaternion::o0_mul::reduced_norm_o0_basis(alpha_coord, p);
+            let n_red_alpha = n_red_alpha_int.abs();
+            let numerator = i.cached_norm.wrapping_mul(&n_red_alpha);
+            let denom_sq = alpha_denom.wrapping_mul(alpha_denom);
+            let denom_sq_nz =
+                Option::<crypto_bigint::NonZero<_>>::from(crypto_bigint::NonZero::new(denom_sq))?;
+            let (q, rem) = numerator.div_rem_vartime(&denom_sq_nz);
+            if rem != Uint::<LIMBS>::from_u64(0) {
+                return None;
+            }
+            q
+        }
+    };
+
+    Some(LeftIdeal::with_denom_and_norm(reduced, new_denom, new_norm))
+}
+
+/// Wide-Int variant of [`ideal_right_multiply_rational`]. Performs the
+/// inner `multiply_o0_basis` calls at `WIDE` precision via
+/// [`super::o0_mul::multiply_o0_basis_wide`], avoiding overflow when
+/// the ideal's basis entries are O(p) — the regime where the narrow
+/// rational right-multiply (S49) would wrap.
+///
+/// The final basis entries (after multiplication and HNF) must still
+/// fit in `Int<NARROW>` (here pinned to `Int<8>` for compatibility
+/// with the rest of the prototype). For ideals of moderate norm at L1,
+/// L3, L5 this is satisfied because the rational basis `(basis/denom)`
+/// has bounded entries even when the integer numerator grows.
+///
+/// `caller_provided_new_norm` overrides the C-reference formula
+/// `N(I)·N_red(α)/α_denom²` — KLPT callers supply `Some(q)` from the
+/// primality test to skip redundant arithmetic.
+#[allow(clippy::needless_range_loop)]
+pub fn ideal_right_multiply_rational_wide<const WIDE: usize>(
+    i: &LeftIdeal<8>,
+    alpha_coord: &[Int<8>; 4],
+    alpha_denom: &Uint<8>,
+    p: &Uint<8>,
+    caller_provided_new_norm: Option<Uint<8>>,
+) -> Option<LeftIdeal<8>> {
+    use crate::quaternion::o0_mul::multiply_o0_basis_wide;
+    let zero = Int::<8>::from_i64(0);
+    let mut basis = [[zero; 4]; 4];
+    for k in 0..4 {
+        basis[k] = multiply_o0_basis_wide::<8, WIDE>(&i.basis[k], alpha_coord, p);
+    }
+    let reduced = crate::quaternion::hnf::hnf_4x4(&basis);
+    let new_denom = i.denom.wrapping_mul(alpha_denom);
+
+    let new_norm = match caller_provided_new_norm {
+        Some(n) => n,
+        None => {
+            // Auto-compute via the SQIsign C reference's formula
+            // `N(I·β) = N(I) · N_red(β_coord) / β_denom²` at WIDE
+            // precision, then narrow result to Uint<8>.
+            let n_red_alpha_w: Int<WIDE> =
+                crate::quaternion::o0_mul::reduced_norm_o0_basis_wide::<8, WIDE>(alpha_coord, p);
+            let n_red_alpha_w_u: Uint<WIDE> = n_red_alpha_w.abs();
+            let cached_norm_w: Uint<WIDE> = i.cached_norm.resize::<WIDE>();
+            let numerator_w = cached_norm_w.wrapping_mul(&n_red_alpha_w_u);
+            let alpha_denom_w: Uint<WIDE> = alpha_denom.resize::<WIDE>();
+            let denom_sq_w = alpha_denom_w.wrapping_mul(&alpha_denom_w);
+            let denom_sq_nz_w: crypto_bigint::NonZero<Uint<WIDE>> =
+                Option::<crypto_bigint::NonZero<_>>::from(crypto_bigint::NonZero::new(denom_sq_w))?;
+            let (q_w, rem_w) = numerator_w.div_rem_vartime(&denom_sq_nz_w);
+            if rem_w != Uint::<WIDE>::from_u64(0) {
+                return None;
+            }
+            q_w.resize::<8>()
+        }
+    };
+
+    Some(LeftIdeal::with_denom_and_norm(reduced, new_denom, new_norm))
+}
+
+/// Left ideal whose cached norm is tracked at independent precision
+/// `NLIMBS`, decoupled from the basis's `Int<8>` precision.
+///
+/// At L5 scale and beyond, the canonical KLPT-body output norm
+/// `N(K) = q · target_m` can exceed `Uint<8>`'s 512-bit ceiling. The
+/// existing [`LeftIdeal<8>`] stores `cached_norm` at `Uint<8>`, which
+/// silently truncates wide norms. `LeftIdealWideNorm<NLIMBS>` lifts
+/// the cached-norm storage to `Uint<NLIMBS>`, leaving the basis at
+/// `Int<8>` (the prototype's narrow regime; basis entries at L1/L3/L5
+/// fit narrow because they're bounded by `√(cached_norm)` not by
+/// `cached_norm` itself).
+///
+/// The `inner.cached_norm` field is set but should be considered
+/// LOSSY — the authoritative cached norm is the explicit
+/// `cached_norm: Uint<NLIMBS>` field. Operations that need the
+/// authoritative value should read `WideIdealNorm.cached_norm`, not
+/// `WideIdealNorm.inner.cached_norm`.
+///
+/// This is the S75 structural fix unblocking the L5 KLPT body.
+#[derive(Debug, Clone)]
+pub struct LeftIdealWideNorm<const NLIMBS: usize> {
+    /// Underlying left ideal with basis at `Int<8>`. The inner
+    /// `cached_norm: Uint<8>` is LOSSY when the true norm exceeds
+    /// `Uint<8>`; consult `LeftIdealWideNorm.cached_norm` instead.
+    pub inner: LeftIdeal<8>,
+    /// Authoritative cached norm at `Uint<NLIMBS>` precision.
+    pub cached_norm: Uint<NLIMBS>,
+}
+
+impl<const NLIMBS: usize> LeftIdealWideNorm<NLIMBS> {
+    /// Construct from a `LeftIdeal<8>` with an explicit wide cached norm.
+    /// Caller's `cached_norm` is the authoritative value; the inner
+    /// `LeftIdeal<8>`'s narrow `cached_norm` is preserved for
+    /// compatibility but should not be trusted for wide-norm operations.
+    pub const fn new(inner: LeftIdeal<8>, cached_norm: Uint<NLIMBS>) -> Self {
+        Self { inner, cached_norm }
+    }
+
+    /// Bridge from a narrow `LeftIdeal<8>` to `LeftIdealWideNorm<NLIMBS>`
+    /// by widening the inner cached_norm via `resize`. Use when starting
+    /// from a small ideal (e.g., `O_0` with `N = 1`) before composing
+    /// with wide-norm operations.
+    pub fn from_narrow(inner: LeftIdeal<8>) -> Self {
+        let cached_norm = inner.cached_norm.resize::<NLIMBS>();
+        Self { inner, cached_norm }
+    }
+}
+
 /// Compute `I · J` as a left `O_0`-ideal in canonical HNF form.
 pub fn ideal_multiply<const LIMBS: usize>(
     i: &LeftIdeal<LIMBS>,
@@ -72,6 +237,48 @@ mod tests {
     use super::*;
 
     type Ideal = LeftIdeal<8>;
+
+    #[test]
+    fn rational_wide_auto_norm_matches_caller_provided() {
+        // Auto-norm-compute path: when `caller_provided_new_norm` is
+        // None, the function computes `N(I)·N_red(α)/α_denom²` at WIDE
+        // precision. This should match a known case where the caller
+        // provided the same value.
+        //
+        // Use a simple integer ideal: I = 2·O_0 at fake-prime p=7,
+        // α = (1, 0, 0, 0) (= 1 in O_0), α_denom = 1.
+        // N_red(α) = 1, so N(I·α) = N(I)·1/1 = N(I) = 16.
+        let p = Uint::<8>::from_u64(7);
+        let two_id = Ideal::full_order().scale(2);
+        let alpha_one = [
+            Int::<8>::from_i64(1),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+        ];
+        let alpha_denom = Uint::<8>::from_u64(1);
+
+        // Auto-compute path (caller_provided_new_norm = None):
+        let j_auto =
+            ideal_right_multiply_rational_wide::<16>(&two_id, &alpha_one, &alpha_denom, &p, None)
+                .expect("auto-norm path returns Some on valid input");
+
+        // Caller-provided path with N(I) = 16:
+        let j_explicit = ideal_right_multiply_rational_wide::<16>(
+            &two_id,
+            &alpha_one,
+            &alpha_denom,
+            &p,
+            Some(Uint::<8>::from_u64(16)),
+        )
+        .expect("explicit-norm path returns Some on valid input");
+
+        // Both paths must agree on the cached norm.
+        assert_eq!(j_auto.norm(), j_explicit.norm());
+        assert_eq!(j_auto.norm(), Uint::<8>::from_u64(16));
+        // And on the basis (HNF-reduced).
+        assert_eq!(j_auto.basis, j_explicit.basis);
+    }
 
     fn z() -> Int<8> {
         Int::<8>::from_i64(0)

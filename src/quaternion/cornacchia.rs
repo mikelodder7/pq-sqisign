@@ -11,7 +11,7 @@
 //! followed by a single Euclidean reduction) replaces this in a later
 //! session — the public surface stays unchanged.
 
-use crate::quaternion::sqrt_mod::tonelli_shanks;
+use crate::quaternion::sqrt_mod::{tonelli_shanks, tonelli_shanks_uint};
 
 /// Classical Cornacchia: solve `x² + d · y² = p` where `p` is **prime**.
 ///
@@ -77,6 +77,109 @@ pub fn cornacchia_classical(d: u64, p: u64) -> Option<(u64, u64)> {
         return Some((b, s));
     }
     None
+}
+
+/// Wide-Int variant of [`cornacchia_classical`].
+///
+/// Solve `x² + d · y² = p` where `p` is **prime**, at `Uint<LIMBS>` precision.
+/// Mirrors [`cornacchia_classical`]'s structure: Tonelli-Shanks for the
+/// modular square root + Euclidean ladder for the descent + perfect-square
+/// check on `(p − b²) / d`. All steps use existing wide primitives:
+/// [`super::sqrt_mod::tonelli_shanks_uint`] (S67),
+/// `Uint::{rem_vartime, sub_mod, wrapping_mul, div_rem_vartime, floor_sqrt_vartime}`.
+///
+/// **Precision contract**: the caller's `LIMBS` MUST be large enough that
+/// `p²` fits inside `Uint<LIMBS>` without overflow — i.e.,
+/// `64 · LIMBS ≥ 2 · bits(p) + 1`. For the SQIsign reference primes:
+/// - L1 (`p ≈ 2^248`): `LIMBS ≥ 8` (512 bits) is sufficient.
+/// - L3 (`p ≈ 2^383`): `LIMBS ≥ 12` (768 bits) is sufficient.
+/// - L5 (`p ≈ 2^505`): `LIMBS ≥ 16` (1024 bits) is sufficient.
+///
+/// The function does NOT validate this contract — under-sized `LIMBS`
+/// will produce silent overflow in the `b · b` step. Match the S55-S58
+/// pattern: caller widens to fit; function operates at the given width.
+///
+/// **Runtime**: `O((log p)²)` versus trial iteration's `O(√p)`. At L1
+/// scale (`p ≈ 2^248`) trial iteration would need ≈ `2^124` steps; the
+/// Euclidean ladder needs ≈ `2 · log₂(p) ≈ 500` steps. This is the
+/// difference between "completes in milliseconds" and "completes after
+/// the heat death of the sun".
+///
+/// **Use case**: this is the modular-sqrt path in `quat_represent_integer`
+/// (the wide β-finder; S69+). It is also the workhorse for any wide-Int
+/// sum-of-two-squares decomposition KLPT needs.
+pub fn cornacchia_classical_uint<const LIMBS: usize>(
+    d: &crypto_bigint::Uint<LIMBS>,
+    p: &crypto_bigint::NonZero<crypto_bigint::Uint<LIMBS>>,
+) -> Option<(crypto_bigint::Uint<LIMBS>, crypto_bigint::Uint<LIMBS>)> {
+    let zero = crypto_bigint::Uint::<LIMBS>::from_u64(0);
+    let one = crypto_bigint::Uint::<LIMBS>::ONE;
+
+    // p == 1: trivial; no non-zero solutions.
+    if *p.as_ref() == one {
+        return None;
+    }
+
+    // d co-prime to p (for Tonelli step to make sense). Equivalent: d mod p ≠ 0.
+    let d_mod = d.rem_vartime(p);
+    if d_mod == zero {
+        return None;
+    }
+
+    // t² ≡ −d (mod p). −d mod p = p − (d mod p).
+    let neg_d = p.as_ref().wrapping_sub(&d_mod);
+    let mut t = tonelli_shanks_uint::<LIMBS>(&neg_d, p)?;
+
+    // Normalize: pick the t ≥ p/2 branch. `p/2` is the floor; this picks
+    // the larger of the two roots so the Euclidean ladder converges in the
+    // expected direction.
+    let half_p = p.as_ref().shr_vartime(1);
+    if t < half_p {
+        t = p.as_ref().wrapping_sub(&t);
+    }
+
+    // Euclidean ladder: (a, b) ← (p, t); iterate (b, a rem b) while b² > p.
+    let mut a = *p.as_ref();
+    let mut b = t;
+    loop {
+        // b² ≤ p?  Compute b² in-place (caller's LIMBS guaranteed to fit p²
+        // per the precision contract documented above).
+        let b_sq = b.wrapping_mul(&b);
+        if b_sq <= *p.as_ref() {
+            break;
+        }
+        // (a, b) ← (b, a rem b).
+        if b == zero {
+            // Algorithm invariant says this can't happen for prime p with
+            // t in range; defensive bail-out.
+            return None;
+        }
+        let b_nz = crypto_bigint::NonZero::new(b).into_option()?;
+        let r = a.rem_vartime(&b_nz);
+        a = b;
+        b = r;
+    }
+
+    // Candidate x = b. Check (p − b²) / d is a non-negative perfect square.
+    let b_sq = b.wrapping_mul(&b);
+    if b_sq > *p.as_ref() {
+        return None;
+    }
+    let r = p.as_ref().wrapping_sub(&b_sq);
+
+    // Use the ORIGINAL d (not d_mod), because we want exact division over
+    // the integers, not modular. d_nz from the original d.
+    let d_nz = crypto_bigint::NonZero::new(*d).into_option()?;
+    let (s_sq, rem) = r.div_rem_vartime(&d_nz);
+    if rem != zero {
+        return None;
+    }
+
+    let s = s_sq.floor_sqrt_vartime();
+    if s.wrapping_mul(&s) != s_sq {
+        return None;
+    }
+    Some((b, s))
 }
 
 /// Solve `x² + d · y² = m` over the non-negative integers, returning the
@@ -273,5 +376,119 @@ mod tests {
             let classical = cornacchia_classical(d, p).is_some();
             assert_eq!(trial, classical, "(d={d}, p={p}) verdict mismatch");
         }
+    }
+
+    // ── S68 — wide-Int classical Cornacchia (cornacchia_classical_uint) ──
+
+    fn verify_wide<const LIMBS: usize>(
+        d: &crypto_bigint::Uint<LIMBS>,
+        p: &crypto_bigint::Uint<LIMBS>,
+        sol: (crypto_bigint::Uint<LIMBS>, crypto_bigint::Uint<LIMBS>),
+    ) {
+        let (x, y) = sol;
+        let x_sq = x.wrapping_mul(&x);
+        let y_sq = y.wrapping_mul(&y);
+        let dy_sq = d.wrapping_mul(&y_sq);
+        let total = x_sq.wrapping_add(&dy_sq);
+        assert_eq!(total, *p, "S68 wide Cornacchia: x² + d·y² ≠ p");
+    }
+
+    #[test]
+    fn cornacchia_classical_uint_parity_with_narrow() {
+        // S68 parity: for every (d, p) where narrow `cornacchia_classical`
+        // returns Some/None, the wide version at `Uint<8>` must AGREE on
+        // solvability, and when Some the returned (x, y) must satisfy
+        // x² + d·y² = p at wide precision (may not be the SAME (x, y)
+        // because the two algorithms may pick different roots).
+        use crypto_bigint::{NonZero, Uint};
+        let cases = [
+            (1u64, 5u64),
+            (1, 13),
+            (1, 17),
+            (1, 29),
+            (1, 37),
+            (2, 3),
+            (2, 11),
+            (3, 7),
+            (3, 31),
+            (1, 7),  // unsolvable
+            (1, 11), // unsolvable
+            (2, 5),  // unsolvable
+        ];
+        for &(d, p) in &cases {
+            let narrow = cornacchia_classical(d, p).is_some();
+            let d_w: Uint<8> = Uint::from_u64(d);
+            let p_w: Uint<8> = Uint::from_u64(p);
+            let p_nz: NonZero<Uint<8>> = NonZero::new(p_w).into_option().expect("p nonzero");
+            let wide = cornacchia_classical_uint(&d_w, &p_nz);
+            assert_eq!(
+                narrow,
+                wide.is_some(),
+                "S68 parity verdict mismatch at (d={d}, p={p}): narrow={narrow} wide={:?}",
+                wide.is_some(),
+            );
+            if let Some(sol) = wide {
+                verify_wide(&d_w, &p_w, sol);
+            }
+        }
+    }
+
+    #[test]
+    fn cornacchia_classical_uint_d1_p_real_lvl1_prime_minus_1_unsolvable() {
+        // S68 real-prime-scale negative case: at the L1 prime
+        // p = 5·2^248 − 1, p ≡ 3 (mod 4) which means -1 is a QNR mod p,
+        // so x² + y² = p has no integer solution (Cornacchia returns
+        // None at Tonelli-Shanks: −1 mod p is a QNR). This proves the
+        // wide modular-sqrt path connects correctly at production
+        // magnitude.
+        use crypto_bigint::{NonZero, Uint};
+        let p: Uint<8> = crate::params::lvl1::prime().resize::<8>();
+        let p_nz: NonZero<Uint<8>> = NonZero::new(p).into_option().expect("p nonzero");
+        let d: Uint<8> = Uint::from_u64(1);
+        let r = cornacchia_classical_uint(&d, &p_nz);
+        assert!(
+            r.is_none(),
+            "S68: p = 5·2^248 − 1 is 3 mod 4; -1 is a QNR; sum of two squares must be unsolvable, got {r:?}",
+        );
+    }
+
+    #[test]
+    fn cornacchia_classical_uint_d1_pseudoprime_p_eq_5_solvable() {
+        // S68 minimal solvable case at wide precision: p = 5 ≡ 1 (mod 4),
+        // so -1 IS a QR mod 5, Tonelli returns sqrt(-1) = sqrt(4) = ±2,
+        // and the descent finds (1, 2): 1² + 1·2² = 5. Exercises the
+        // FULL wide path (Tonelli iterative branch + Euclidean ladder
+        // + perfect-square check).
+        use crypto_bigint::{NonZero, Uint};
+        let p: Uint<8> = Uint::from_u64(5);
+        let p_nz: NonZero<Uint<8>> = NonZero::new(p).into_option().expect("p nonzero");
+        let d: Uint<8> = Uint::from_u64(1);
+        let (x, y) = cornacchia_classical_uint(&d, &p_nz).expect("5 = 1² + 2²");
+        verify_wide(&d, &p, (x, y));
+    }
+
+    #[test]
+    fn cornacchia_classical_uint_d_eq_zero_returns_none() {
+        // d = 0: x² = p has no solution unless p is a perfect square,
+        // and the function rejects d=0 cleanly at d.rem_vartime(p) == 0.
+        use crypto_bigint::{NonZero, Uint};
+        let p: Uint<8> = Uint::from_u64(13);
+        let p_nz: NonZero<Uint<8>> = NonZero::new(p).into_option().expect("p nonzero");
+        let d: Uint<8> = Uint::from_u64(0);
+        assert_eq!(
+            cornacchia_classical_uint(&d, &p_nz),
+            None,
+            "d=0 must return None (function rejects degenerate input)",
+        );
+    }
+
+    #[test]
+    fn cornacchia_classical_uint_p_eq_one_returns_none() {
+        // p = 1: trivial; no non-zero solutions exist.
+        use crypto_bigint::{NonZero, Uint};
+        let p: Uint<8> = Uint::from_u64(1);
+        let p_nz: NonZero<Uint<8>> = NonZero::new(p).into_option().expect("p nonzero");
+        let d: Uint<8> = Uint::from_u64(1);
+        assert_eq!(cornacchia_classical_uint(&d, &p_nz), None);
     }
 }

@@ -37,6 +37,14 @@ impl Params for Level3 {
     const SECURITY_BITS: usize = 192;
 }
 
+/// The Level-3 base prime `p = 65 · 2^376 − 1` as a 384-bit unsigned integer.
+///
+/// Use `prime().resize::<N>()` to embed in a wider-LIMBS context (e.g.
+/// `prime().resize::<8>()` for quaternion arithmetic in `Uint<8>`).
+pub fn prime() -> U384 {
+    *Lvl3Modulus::PARAMS.modulus().as_ref()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -49,6 +57,34 @@ mod tests {
         assert_eq!(p_bytes[0], 0x40);
         for &b in &p_bytes[1..] {
             assert_eq!(b, 0xff);
+        }
+    }
+
+    #[test]
+    fn prime_helper_returns_canonical_p() {
+        // `prime()` must agree byte-for-byte with the hex literal in the
+        // `const_monty_params!` invocation.
+        let p = prime();
+        let p_bytes = p.to_be_bytes();
+        assert_eq!(p_bytes[0], 0x40);
+        for &b in &p_bytes[1..] {
+            assert_eq!(b, 0xff);
+        }
+    }
+
+    #[test]
+    fn prime_resizes_to_uint8_zero_extending() {
+        // L3 prime is 6 limbs; resize to 8 limbs zero-extends the upper 2.
+        use crypto_bigint::Uint;
+        let p = prime();
+        let p_wide: Uint<8> = p.resize::<8>();
+        let wide_limbs = p_wide.as_limbs();
+        let narrow_limbs = p.as_limbs();
+        for (i, (w, n)) in wide_limbs.iter().zip(narrow_limbs.iter()).enumerate() {
+            assert_eq!(w.0, n.0, "limb {i} preserved");
+        }
+        for (i, w) in wide_limbs.iter().enumerate().skip(6) {
+            assert_eq!(w.0, 0, "upper limb {i} zero-extended");
         }
     }
 }

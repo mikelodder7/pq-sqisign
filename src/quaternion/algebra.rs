@@ -426,4 +426,177 @@ mod tests {
         assert!(doubled.equals(&summed));
         let _ = p;
     }
+
+    /// The Level-1 base prime `p = 5·2^248 − 1` widened to `Uint<8>` for
+    /// quaternion arithmetic. Use this in tests that need to verify a
+    /// `p`-dependent identity (`j² = −p`, `k² = −p`) at real-prime scale.
+    fn level1_p() -> U {
+        crate::params::lvl1::prime().resize::<8>()
+    }
+
+    #[test]
+    fn i_squared_is_minus_one_at_real_lvl1_prime() {
+        // i² = −1 is structural — independent of p. This test pins that the
+        // wiring (real prime through `mul`) doesn't perturb p-independent
+        // identities.
+        let p = level1_p();
+        let i_sq = Q::i().mul(&Q::i(), &p);
+        let minus_one = Q::one().negate();
+        assert!(i_sq.equals(&minus_one));
+    }
+
+    #[test]
+    fn j_squared_is_minus_real_lvl1_prime() {
+        // j² = −p. The first test where the *value* of p enters the result.
+        let p = level1_p();
+        let j_sq = Q::j().mul(&Q::j(), &p);
+        let minus_p = Q::new(
+            p.as_int().wrapping_neg(),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+        );
+        assert!(j_sq.equals(&minus_p));
+    }
+
+    #[test]
+    fn k_equals_ij_at_real_lvl1_prime() {
+        let p = level1_p();
+        let ij = Q::i().mul(&Q::j(), &p);
+        assert!(ij.equals(&Q::k()));
+    }
+
+    #[test]
+    fn ji_equals_minus_k_at_real_lvl1_prime() {
+        let p = level1_p();
+        let ji = Q::j().mul(&Q::i(), &p);
+        let minus_k = Q::k().negate();
+        assert!(ji.equals(&minus_k));
+    }
+
+    #[test]
+    fn k_squared_is_minus_real_lvl1_prime() {
+        let p = level1_p();
+        let k_sq = Q::k().mul(&Q::k(), &p);
+        let minus_p = Q::new(
+            p.as_int().wrapping_neg(),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+        );
+        assert!(k_sq.equals(&minus_p));
+    }
+
+    /// The Level-3 base prime `p = 65·2^376 − 1` widened to `Uint<8>`.
+    fn level3_p() -> U {
+        crate::params::lvl3::prime().resize::<8>()
+    }
+
+    #[test]
+    fn i_squared_is_minus_one_at_real_lvl3_prime() {
+        let p = level3_p();
+        let i_sq = Q::i().mul(&Q::i(), &p);
+        let minus_one = Q::one().negate();
+        assert!(i_sq.equals(&minus_one));
+    }
+
+    #[test]
+    fn j_squared_is_minus_real_lvl3_prime() {
+        let p = level3_p();
+        let j_sq = Q::j().mul(&Q::j(), &p);
+        let minus_p = Q::new(
+            p.as_int().wrapping_neg(),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+        );
+        assert!(j_sq.equals(&minus_p));
+    }
+
+    #[test]
+    fn k_equals_ij_at_real_lvl3_prime() {
+        let p = level3_p();
+        let ij = Q::i().mul(&Q::j(), &p);
+        assert!(ij.equals(&Q::k()));
+    }
+
+    #[test]
+    fn ji_equals_minus_k_at_real_lvl3_prime() {
+        let p = level3_p();
+        let ji = Q::j().mul(&Q::i(), &p);
+        let minus_k = Q::k().negate();
+        assert!(ji.equals(&minus_k));
+    }
+
+    #[test]
+    fn k_squared_is_minus_real_lvl3_prime() {
+        let p = level3_p();
+        let k_sq = Q::k().mul(&Q::k(), &p);
+        let minus_p = Q::new(
+            p.as_int().wrapping_neg(),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+        );
+        assert!(k_sq.equals(&minus_p));
+    }
+
+    /// The Level-5 base prime `p = 27·2^500 − 1` as `Uint<8>` (its native
+    /// width — `resize::<8>()` is a structural no-op here, kept for
+    /// symmetry with the L1/L3 call shape).
+    fn level5_p() -> U {
+        crate::params::lvl5::prime().resize::<8>()
+    }
+
+    #[test]
+    fn i_squared_is_minus_one_at_real_lvl5_prime() {
+        let p = level5_p();
+        let i_sq = Q::i().mul(&Q::i(), &p);
+        let minus_one = Q::one().negate();
+        assert!(i_sq.equals(&minus_one));
+    }
+
+    #[test]
+    fn j_squared_is_minus_real_lvl5_prime() {
+        // Magnitude stress test: `p ~ 2^505`, `−p` lands ~6 bits below
+        // `Int<8>::MIN` — the `Int<8>` sign-room check in
+        // `lvl5::prime_top_bit_clear_for_int8_sign_room` proves this fits.
+        let p = level5_p();
+        let j_sq = Q::j().mul(&Q::j(), &p);
+        let minus_p = Q::new(
+            p.as_int().wrapping_neg(),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+        );
+        assert!(j_sq.equals(&minus_p));
+    }
+
+    #[test]
+    fn k_equals_ij_at_real_lvl5_prime() {
+        let p = level5_p();
+        let ij = Q::i().mul(&Q::j(), &p);
+        assert!(ij.equals(&Q::k()));
+    }
+
+    #[test]
+    fn ji_equals_minus_k_at_real_lvl5_prime() {
+        let p = level5_p();
+        let ji = Q::j().mul(&Q::i(), &p);
+        let minus_k = Q::k().negate();
+        assert!(ji.equals(&minus_k));
+    }
+
+    #[test]
+    fn k_squared_is_minus_real_lvl5_prime() {
+        let p = level5_p();
+        let k_sq = Q::k().mul(&Q::k(), &p);
+        let minus_p = Q::new(
+            p.as_int().wrapping_neg(),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+        );
+        assert!(k_sq.equals(&minus_p));
+    }
 }

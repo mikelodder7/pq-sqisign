@@ -58,6 +58,78 @@ impl core::fmt::Debug for Shake256 {
     }
 }
 
+impl Shake256 {
+    /// Finalize this Shake256 state into an [`Shake256Rng`] for use as a
+    /// deterministic [`CryptoRng`](rand_core::CryptoRng). The resulting
+    /// RNG draws bytes from the unbounded XOF squeeze stream of the
+    /// absorbed state.
+    ///
+    /// Use case (forward-prep for the SQIsign sign flow): callers absorb
+    /// `(msg, sk, rng-derived entropy)` into a fresh Shake256 and
+    /// finalize into a Shake256Rng. That RNG seeds the downstream
+    /// challenge-ideal construction, ensuring the sign output binds to
+    /// `msg` deterministically. The dual property — same `(msg, sk,
+    /// entropy)` always produces the same RNG byte stream — is verified
+    /// by the determinism tests below.
+    pub fn into_rng(self) -> Shake256Rng {
+        Shake256Rng {
+            reader: self.inner.finalize_xof(),
+        }
+    }
+}
+
+/// Deterministic CryptoRng backed by an absorbed Shake256 state.
+///
+/// Constructed via [`Shake256::into_rng`] or [`Shake256Rng::from_seed`].
+/// All bytes consumed from the RNG come from the Shake256 XOF squeeze
+/// stream of the absorbed input. Seeding-by-input determinism makes
+/// this a useful building block for SQIsign's message-derivation step:
+/// hashing `(msg, sk, rng-entropy)` into a Shake256Rng gives a chain-
+/// driving RNG whose output binds to all three inputs.
+pub struct Shake256Rng {
+    reader: shake::Shake256Reader,
+}
+
+impl Shake256Rng {
+    /// Construct a Shake256Rng directly from a byte seed. Equivalent to
+    /// `Shake256::new().absorb(seed).into_rng()`.
+    pub fn from_seed(seed: &[u8]) -> Self {
+        let mut h = Shake256::new();
+        h.absorb(seed);
+        h.into_rng()
+    }
+}
+
+impl core::fmt::Debug for Shake256Rng {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Don't leak XOF state; CryptoRng best practice per rand_core 0.10 docs.
+        f.debug_struct("Shake256Rng").finish_non_exhaustive()
+    }
+}
+
+impl rand_core::TryRng for Shake256Rng {
+    type Error = core::convert::Infallible;
+
+    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+        let mut buf = [0u8; 4];
+        self.reader.read(&mut buf);
+        Ok(u32::from_le_bytes(buf))
+    }
+
+    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
+        let mut buf = [0u8; 8];
+        self.reader.read(&mut buf);
+        Ok(u64::from_le_bytes(buf))
+    }
+
+    fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
+        self.reader.read(dst);
+        Ok(())
+    }
+}
+
+impl rand_core::TryCryptoRng for Shake256Rng {}
+
 /// Maximum buffer the rejection loop will allocate on the stack per attempt.
 /// 80 bytes covers Level-5's 64-byte `Fp` encoding plus a generous margin
 /// for masking; bigger primes can adjust if SQIsign ever lands at a
@@ -349,4 +421,95 @@ mod tests {
             hash_to_fp2::<Fp1Element>(b"dom", b"input", 16).unwrap_or(Fp2::<Fp1Element>::zero());
         assert_ne!(q.re, q.im);
     }
+
+    // ── S85 — Shake256Rng deterministic CryptoRng tests ──
+
+    #[test]
+    fn shake256_rng_from_seed_is_deterministic() {
+        // Two RNGs from the same seed must produce identical byte
+        // streams. This is the foundational guarantee — sign-flow
+        // determinism depends on it.
+        let mut rng_a = Shake256Rng::from_seed(b"seed-bytes-for-deterministic-test");
+        let mut rng_b = Shake256Rng::from_seed(b"seed-bytes-for-deterministic-test");
+        let mut buf_a = [0u8; 64];
+        let mut buf_b = [0u8; 64];
+        rand_core::Rng::fill_bytes(&mut rng_a, &mut buf_a);
+        rand_core::Rng::fill_bytes(&mut rng_b, &mut buf_b);
+        assert_eq!(buf_a, buf_b);
+    }
+
+    #[test]
+    fn shake256_rng_differs_for_different_seeds() {
+        // Different seeds → different byte streams.
+        let mut rng_a = Shake256Rng::from_seed(b"seed-a");
+        let mut rng_b = Shake256Rng::from_seed(b"seed-b");
+        let mut buf_a = [0u8; 32];
+        let mut buf_b = [0u8; 32];
+        rand_core::Rng::fill_bytes(&mut rng_a, &mut buf_a);
+        rand_core::Rng::fill_bytes(&mut rng_b, &mut buf_b);
+        assert_ne!(buf_a, buf_b);
+    }
+
+    #[test]
+    fn shake256_rng_via_absorb_matches_from_seed() {
+        // Constructing via absorb then into_rng must match
+        // from_seed for the same input (they're definitionally
+        // equivalent; verifies the from_seed convenience method).
+        let mut h = Shake256::new();
+        h.absorb(b"the-same-seed");
+        let mut rng_a = h.into_rng();
+        let mut rng_b = Shake256Rng::from_seed(b"the-same-seed");
+        let mut buf_a = [0u8; 32];
+        let mut buf_b = [0u8; 32];
+        rand_core::Rng::fill_bytes(&mut rng_a, &mut buf_a);
+        rand_core::Rng::fill_bytes(&mut rng_b, &mut buf_b);
+        assert_eq!(buf_a, buf_b);
+    }
+
+    #[test]
+    fn shake256_rng_multi_absorb_binds_inputs() {
+        // The sign-flow use case: absorb (msg, sk, entropy) in sequence,
+        // then into_rng. Different msg → different downstream RNG.
+        let mut a = Shake256::new();
+        a.absorb(b"msg-a");
+        a.absorb(b"sk-bytes");
+        a.absorb(b"entropy-bytes");
+        let mut rng_a = a.into_rng();
+
+        let mut b = Shake256::new();
+        b.absorb(b"msg-b"); // different message
+        b.absorb(b"sk-bytes");
+        b.absorb(b"entropy-bytes");
+        let mut rng_b = b.into_rng();
+
+        let mut buf_a = [0u8; 48];
+        let mut buf_b = [0u8; 48];
+        rand_core::Rng::fill_bytes(&mut rng_a, &mut buf_a);
+        rand_core::Rng::fill_bytes(&mut rng_b, &mut buf_b);
+        assert_ne!(buf_a, buf_b);
+    }
+
+    #[test]
+    fn shake256_rng_next_u32_and_u64_match_fill_bytes() {
+        // next_u32 reads 4 LE bytes; next_u64 reads 8 LE bytes. Verify
+        // by comparing against a fresh RNG with the same seed read
+        // via fill_bytes.
+        let seed = b"u32-u64-consistency";
+        let mut rng_a = Shake256Rng::from_seed(seed);
+        let mut rng_b = Shake256Rng::from_seed(seed);
+        let x = rand_core::Rng::next_u32(&mut rng_a);
+        let y = rand_core::Rng::next_u64(&mut rng_a);
+        let mut buf = [0u8; 12];
+        rand_core::Rng::fill_bytes(&mut rng_b, &mut buf);
+        let expected_x = u32::from_le_bytes(buf[..4].try_into().expect("4 bytes"));
+        let expected_y = u64::from_le_bytes(buf[4..12].try_into().expect("8 bytes"));
+        assert_eq!(x, expected_x);
+        assert_eq!(y, expected_y);
+    }
+
+    // Compile-time proof that Shake256Rng satisfies CryptoRng.
+    const _: fn() = || {
+        fn requires_crypto_rng<R: rand_core::CryptoRng + ?Sized>() {}
+        requires_crypto_rng::<Shake256Rng>();
+    };
 }
