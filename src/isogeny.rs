@@ -13,6 +13,7 @@
 //! See spec §5 (Geometric Algorithms) for formula references.
 
 pub mod clapotis;
+pub mod theta;
 pub mod two;
 
 #[cfg(feature = "alloc")]

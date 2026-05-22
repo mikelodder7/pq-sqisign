@@ -75,6 +75,7 @@ pub mod quaternion;
 /// (they bring their own `CryptoRng`).
 #[cfg(feature = "kat")]
 pub mod rng;
+pub mod wire;
 
 pub use crate::error::{Error, Result};
 pub use crate::params::{Level1, Level3, Level5, Params};

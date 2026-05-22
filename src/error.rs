@@ -23,6 +23,10 @@ pub enum Error {
     InvalidSignature,
     /// Public key bytes did not decode to a valid point on the expected curve.
     InvalidPublicKey,
+    /// Decoded theta-null is degenerate — the corresponding abelian variety
+    /// has no well-defined doubling constants (i.e. `H(theta_null²)` has at
+    /// least one zero component, so its componentwise inverse is undefined).
+    InvalidThetaNull,
     /// Secret key bytes did not decode to a valid representation.
     InvalidSecretKey,
     /// Internal invariant violation — should not occur with correct inputs.
@@ -41,6 +45,9 @@ impl fmt::Display for Error {
             Error::NonCanonicalEncoding => f.write_str("non-canonical field encoding"),
             Error::InvalidSignature => f.write_str("invalid signature"),
             Error::InvalidPublicKey => f.write_str("invalid public key encoding"),
+            Error::InvalidThetaNull => {
+                f.write_str("degenerate theta-null: doubling constants undefined")
+            }
             Error::InvalidSecretKey => f.write_str("invalid secret key encoding"),
             Error::Internal(msg) => write!(f, "internal invariant violated: {msg}"),
             Error::Unimplemented(msg) => write!(f, "not yet implemented: {msg}"),

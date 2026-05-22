@@ -193,4 +193,112 @@ mod tests {
         assert_eq!(lhs, rhs);
         assert_eq!(chain.steps.len(), 1);
     }
+
+    // ── S90 — 2-isogeny operations at production NIST levels ──
+
+    /// Generic helper: verifies a 2-isogeny with kernel `(i, 0)`
+    /// maps the kernel point to the identity on the codomain.
+    fn check_kernel_pushes_to_infinity<F: BaseField>() {
+        let kernel_x = Fp2::<F>::img();
+        let kernel = MontgomeryPoint::<F>::new(kernel_x, Fp2::<F>::one());
+        let iso = TwoIsogeny::new(&kernel);
+        let image = iso.eval(&kernel);
+        assert!(
+            bool::from(image.z.is_zero()),
+            "S90: kernel point must map to infinity on the codomain",
+        );
+    }
+
+    #[test]
+    fn kernel_pushes_to_infinity_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_kernel_pushes_to_infinity::<Fp3Element>();
+    }
+
+    #[test]
+    fn kernel_pushes_to_infinity_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_kernel_pushes_to_infinity::<Fp5Element>();
+    }
+
+    /// Generic helper: verifies a 2-isogeny with kernel `(i, 0)`
+    /// from E_0 produces a codomain with affine A ≠ 0 (different
+    /// curve, hence different j-invariant).
+    fn check_isogeny_with_kernel_i_changes_curve<F: BaseField>() {
+        let kernel = MontgomeryPoint::<F>::new(Fp2::<F>::img(), Fp2::<F>::one());
+        let iso = TwoIsogeny::new(&kernel);
+        let a_dst = iso.codomain.to_affine_a();
+        assert_ne!(
+            a_dst,
+            Fp2::<F>::zero(),
+            "S90: codomain of 2-isogeny from E_0 with kernel (i, 0) must have A ≠ 0",
+        );
+    }
+
+    #[test]
+    fn isogeny_with_kernel_i_changes_curve_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_isogeny_with_kernel_i_changes_curve::<Fp3Element>();
+    }
+
+    #[test]
+    fn isogeny_with_kernel_i_changes_curve_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_isogeny_with_kernel_i_changes_curve::<Fp5Element>();
+    }
+
+    /// Generic helper: smoke-test for double application of the
+    /// 2-isogeny — verifies `eval` doesn't panic on a non-kernel
+    /// point pushed through.
+    fn check_double_iso_step_works<F: BaseField>() {
+        let k = MontgomeryPoint::<F>::new(Fp2::<F>::img(), Fp2::<F>::one());
+        let iso1 = TwoIsogeny::new(&k);
+        let k_image = iso1.eval(&k);
+        // Build x = 4 on E_0 (not in kernel).
+        let q = MontgomeryPoint::<F>::new(Fp2::<F>::one().double().double(), Fp2::<F>::one());
+        let q_img = iso1.eval(&q);
+        let _ = (k_image, q_img);
+    }
+
+    #[test]
+    fn double_iso_step_works_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_double_iso_step_works::<Fp3Element>();
+    }
+
+    #[test]
+    fn double_iso_step_works_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_double_iso_step_works::<Fp5Element>();
+    }
+
+    /// Generic helper: chain length-1 must match single-step.
+    #[cfg(feature = "alloc")]
+    fn check_chain_codomain_matches_repeated_single_step<F: BaseField>() {
+        let domain = CurveA24::<F>::e0();
+        let kernel = MontgomeryPoint::<F>::new(Fp2::<F>::img(), Fp2::<F>::one());
+        let (chain, _extra) = IsogenyChain2e::new(domain, kernel, 1, None);
+        let single = TwoIsogeny::new(&kernel);
+        let lhs = chain.codomain.a24.mul(&single.codomain.c24);
+        let rhs = single.codomain.a24.mul(&chain.codomain.c24);
+        assert_eq!(
+            lhs, rhs,
+            "S90: chain length-1 must match single-step codomain",
+        );
+        assert_eq!(chain.steps.len(), 1, "S90: chain.steps.len() must equal 1");
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn chain_codomain_matches_repeated_single_step_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_chain_codomain_matches_repeated_single_step::<Fp3Element>();
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn chain_codomain_matches_repeated_single_step_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_chain_codomain_matches_repeated_single_step::<Fp5Element>();
+    }
 }

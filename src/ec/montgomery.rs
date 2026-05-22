@@ -396,4 +396,196 @@ mod tests {
         let rhs = q_proj.x.mul(&q_affine.z);
         assert_eq!(lhs, rhs);
     }
+
+    // ── S89 — EC operations at production NIST levels ──
+
+    /// Generic helper: at any BaseField level, E_0's j-invariant equals
+    /// 1728 = 2^10 + 2^9 + 2^7 + 2^6, the well-known j-invariant of the
+    /// curve `y² = x³ + x` (A = 0 Montgomery form).
+    fn check_e0_j_invariant_is_1728<F: BaseField>() {
+        let j = MontgomeryCurve::<F>::e0().j_invariant();
+        let one = Fp2::<F>::one();
+        let mut acc = Fp2::<F>::zero();
+        for &b in &[10u32, 9, 7, 6] {
+            let mut p2 = one;
+            for _ in 0..b {
+                p2 = p2.double();
+            }
+            acc = acc.add(&p2);
+        }
+        assert_eq!(j, acc, "S89: E_0 j-invariant must equal 1728");
+    }
+
+    #[test]
+    fn e0_j_invariant_is_1728_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_e0_j_invariant_is_1728::<Fp3Element>();
+    }
+
+    #[test]
+    fn e0_j_invariant_is_1728_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_e0_j_invariant_is_1728::<Fp5Element>();
+    }
+
+    /// Generic helper: at any BaseField level, E_0 in `CurveA24` form
+    /// recovers `A = 0` when converted back to affine.
+    fn check_curve_a24_round_trip_affine<F: BaseField>() {
+        let proj = CurveA24::<F>::e0();
+        let a_back = proj.to_affine_a();
+        assert_eq!(
+            a_back,
+            Fp2::<F>::zero(),
+            "S89: CurveA24::e0() must round-trip to affine A = 0",
+        );
+    }
+
+    #[test]
+    fn curve_a24_round_trip_affine_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_curve_a24_round_trip_affine::<Fp3Element>();
+    }
+
+    #[test]
+    fn curve_a24_round_trip_affine_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_curve_a24_round_trip_affine::<Fp5Element>();
+    }
+
+    /// Generic helper: at any BaseField level, `CurveA24::x_double` and
+    /// `MontgomeryPoint::x_double` must agree on E_0 (the existing L1
+    /// test only covers Fp1Element; this generalises across levels).
+    fn check_curve_a24_double_matches_affine<F: BaseField>() {
+        let curve = MontgomeryCurve::<F>::e0();
+        let a24_affine = curve.a24();
+        let proj = curve.to_a24();
+        let p = MontgomeryPoint::<F>::new(Fp2::<F>::one().double(), Fp2::<F>::one());
+        let q_affine = p.x_double(&a24_affine);
+        let q_proj = proj.x_double(&p);
+        let lhs = q_affine.x.mul(&q_proj.z);
+        let rhs = q_proj.x.mul(&q_affine.z);
+        assert_eq!(
+            lhs, rhs,
+            "S89: CurveA24::x_double must match affine x_double on E_0",
+        );
+    }
+
+    #[test]
+    fn curve_a24_double_matches_affine_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_curve_a24_double_matches_affine::<Fp3Element>();
+    }
+
+    #[test]
+    fn curve_a24_double_matches_affine_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_curve_a24_double_matches_affine::<Fp5Element>();
+    }
+
+    // ── S91 — ladder / ladder3pt at production NIST levels ──
+
+    /// Generic helper: `ladder3pt(p, q, p−q, [0]·k, a24)` returns `p`
+    /// unchanged (projectively). The L1 version exists as
+    /// `ladder3pt_at_zero_returns_p`; this lifts it to a generic helper
+    /// so L3/L5 can invoke.
+    fn check_ladder3pt_at_zero_returns_p<F: BaseField>() {
+        let curve = MontgomeryCurve::<F>::e0();
+        let a24 = curve.a24();
+        let p = MontgomeryPoint::<F>::new(Fp2::<F>::one().double(), Fp2::<F>::one()); // x = 2
+        let q = MontgomeryPoint::<F>::new(
+            Fp2::<F>::one().double().double(), // x = 4
+            Fp2::<F>::one(),
+        );
+        let p_minus_q = MontgomeryPoint::<F>::new(
+            Fp2::<F>::one().double().double().double(), // x = 8
+            Fp2::<F>::one(),
+        );
+        let zero_k = [0u8; 4];
+        let r = MontgomeryPoint::ladder3pt(&p, &q, &p_minus_q, &zero_k, &a24);
+        // r should equal p projectively: r.x · p.z == p.x · r.z.
+        let lhs = r.x.mul(&p.z);
+        let rhs = p.x.mul(&r.z);
+        assert_eq!(
+            lhs, rhs,
+            "S91: ladder3pt with scalar [0] must return p (projectively) at this level",
+        );
+    }
+
+    #[test]
+    fn ladder3pt_at_zero_returns_p_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_ladder3pt_at_zero_returns_p::<Fp3Element>();
+    }
+
+    #[test]
+    fn ladder3pt_at_zero_returns_p_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_ladder3pt_at_zero_returns_p::<Fp5Element>();
+    }
+
+    /// Generic helper: `ladder([0], a24)` returns the point at infinity
+    /// for any base point on any base-field level.
+    fn check_ladder_at_zero_returns_infinity<F: BaseField>() {
+        let curve = MontgomeryCurve::<F>::e0();
+        let a24 = curve.a24();
+        let p = MontgomeryPoint::<F>::new(Fp2::<F>::one().double(), Fp2::<F>::one()); // x = 2
+        let zero_k = [0u8; 4];
+        let r = p.ladder(&zero_k, &a24);
+        assert!(
+            bool::from(r.is_infinity()),
+            "S91: ladder([0]) must return point at infinity at this level",
+        );
+    }
+
+    #[test]
+    fn ladder_at_zero_returns_infinity_at_lvl1() {
+        check_ladder_at_zero_returns_infinity::<Fp1Element>();
+    }
+
+    #[test]
+    fn ladder_at_zero_returns_infinity_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_ladder_at_zero_returns_infinity::<Fp3Element>();
+    }
+
+    #[test]
+    fn ladder_at_zero_returns_infinity_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_ladder_at_zero_returns_infinity::<Fp5Element>();
+    }
+
+    /// Generic helper: `ladder([1], a24)` returns the point itself
+    /// (projectively). Tests the "scalar one is identity" property of
+    /// the ladder algorithm at any base-field level.
+    fn check_ladder_at_one_returns_self<F: BaseField>() {
+        let curve = MontgomeryCurve::<F>::e0();
+        let a24 = curve.a24();
+        let p = MontgomeryPoint::<F>::new(Fp2::<F>::one().double(), Fp2::<F>::one()); // x = 2
+        let one_k = [1u8, 0, 0, 0]; // LE: scalar = 1
+        let r = p.ladder(&one_k, &a24);
+        // r should equal p projectively.
+        let lhs = r.x.mul(&p.z);
+        let rhs = p.x.mul(&r.z);
+        assert_eq!(
+            lhs, rhs,
+            "S91: ladder([1]) must return self (projectively) at this level",
+        );
+    }
+
+    #[test]
+    fn ladder_at_one_returns_self_at_lvl1() {
+        check_ladder_at_one_returns_self::<Fp1Element>();
+    }
+
+    #[test]
+    fn ladder_at_one_returns_self_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_ladder_at_one_returns_self::<Fp3Element>();
+    }
+
+    #[test]
+    fn ladder_at_one_returns_self_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_ladder_at_one_returns_self::<Fp5Element>();
+    }
 }

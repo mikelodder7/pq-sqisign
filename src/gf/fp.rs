@@ -330,4 +330,208 @@ mod tests {
         let o2 = opt.unwrap_or(<Fp1Element as BaseField>::zero());
         assert_eq!(o, o2);
     }
+
+    // ── S88 — Fp byte round-trip at production NIST levels ──
+
+    #[test]
+    fn round_trip_zero_bytes_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        let z = <Fp3Element as BaseField>::zero();
+        let mut bytes = [0u8; 48];
+        z.to_bytes_le(&mut bytes);
+        let opt = Fp3Element::from_bytes_le(&bytes);
+        let z2 = opt.unwrap_or(<Fp3Element as BaseField>::zero());
+        assert_eq!(z, z2);
+    }
+
+    #[test]
+    fn round_trip_one_bytes_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        let o = <Fp3Element as BaseField>::one();
+        let mut bytes = [0u8; 48];
+        o.to_bytes_le(&mut bytes);
+        let opt = Fp3Element::from_bytes_le(&bytes);
+        let o2 = opt.unwrap_or(<Fp3Element as BaseField>::zero());
+        assert_eq!(o, o2);
+    }
+
+    #[test]
+    fn round_trip_zero_bytes_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        let z = <Fp5Element as BaseField>::zero();
+        let mut bytes = [0u8; 64];
+        z.to_bytes_le(&mut bytes);
+        let opt = Fp5Element::from_bytes_le(&bytes);
+        let z2 = opt.unwrap_or(<Fp5Element as BaseField>::zero());
+        assert_eq!(z, z2);
+    }
+
+    #[test]
+    fn round_trip_one_bytes_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        let o = <Fp5Element as BaseField>::one();
+        let mut bytes = [0u8; 64];
+        o.to_bytes_le(&mut bytes);
+        let opt = Fp5Element::from_bytes_le(&bytes);
+        let o2 = opt.unwrap_or(<Fp5Element as BaseField>::zero());
+        assert_eq!(o, o2);
+    }
+
+    #[test]
+    fn round_trip_iterated_bytes_at_lvl1() {
+        // Iterate over 16 small Fp values (1, 2, 3, ..., 16) at L1,
+        // round-trip each, assert equality. Exercises non-trivial
+        // values at production scale.
+        let one = <Fp1Element as BaseField>::one();
+        let mut acc = one;
+        let mut bytes = [0u8; 32];
+        for i in 0..16 {
+            acc.to_bytes_le(&mut bytes);
+            let opt = Fp1Element::from_bytes_le(&bytes);
+            let acc2 = opt.unwrap_or(<Fp1Element as BaseField>::zero());
+            assert_eq!(acc, acc2, "round-trip failed at iteration {i}");
+            acc = acc.add(&one);
+        }
+    }
+
+    #[test]
+    fn round_trip_iterated_bytes_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        let one = <Fp3Element as BaseField>::one();
+        let mut acc = one;
+        let mut bytes = [0u8; 48];
+        for i in 0..16 {
+            acc.to_bytes_le(&mut bytes);
+            let opt = Fp3Element::from_bytes_le(&bytes);
+            let acc2 = opt.unwrap_or(<Fp3Element as BaseField>::zero());
+            assert_eq!(acc, acc2, "round-trip failed at iteration {i}");
+            acc = acc.add(&one);
+        }
+    }
+
+    #[test]
+    fn round_trip_iterated_bytes_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        let one = <Fp5Element as BaseField>::one();
+        let mut acc = one;
+        let mut bytes = [0u8; 64];
+        for i in 0..16 {
+            acc.to_bytes_le(&mut bytes);
+            let opt = Fp5Element::from_bytes_le(&bytes);
+            let acc2 = opt.unwrap_or(<Fp5Element as BaseField>::zero());
+            assert_eq!(acc, acc2, "round-trip failed at iteration {i}");
+            acc = acc.add(&one);
+        }
+    }
+
+    // ── S93 — fuzz-style randomized Fp property tests at L1/L3/L5 ──
+
+    /// Generic helper: round-trip 8 pseudo-random Fp elements through
+    /// bytes. Mirrors S92's `check_fp2_random_roundtrip_bytes` at the
+    /// base-field layer.
+    fn check_fp_random_roundtrip_bytes<F: BaseField>() {
+        use crate::hash::hash_to_fp;
+        let n = F::ENCODED_BYTES;
+        let mut buf = [0u8; 64]; // big enough for L5's 64-byte Fp encoding
+        for i in 0u8..8 {
+            let x = hash_to_fp::<F>(b"S93-roundtrip", &[i], 16)
+                .into_option()
+                .unwrap_or_else(F::one);
+            x.to_bytes_le(&mut buf[..n]);
+            let y = F::from_bytes_le(&buf[..n]).unwrap_or_else(F::zero);
+            assert_eq!(x, y, "S93: Fp random round-trip failed at iteration {i}");
+        }
+    }
+
+    #[test]
+    fn fp_random_roundtrip_bytes_at_lvl1() {
+        check_fp_random_roundtrip_bytes::<Fp1Element>();
+    }
+
+    #[test]
+    fn fp_random_roundtrip_bytes_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_fp_random_roundtrip_bytes::<Fp3Element>();
+    }
+
+    #[test]
+    fn fp_random_roundtrip_bytes_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_fp_random_roundtrip_bytes::<Fp5Element>();
+    }
+
+    /// Generic helper: for each pseudo-random Fp `x`, check `sqrt(x²)² == x²`.
+    /// `x²` is always a square so sqrt must succeed; the recovered root
+    /// can be ±x but squaring it recovers x² either way.
+    fn check_fp_random_sqrt_squared<F: BaseField>() {
+        use crate::hash::hash_to_fp;
+        for i in 0u8..8 {
+            let x = hash_to_fp::<F>(b"S93-sqrt-sq", &[i], 16)
+                .into_option()
+                .unwrap_or_else(F::one);
+            let sq = x.square();
+            let r = sq.sqrt().unwrap_or_else(F::zero);
+            let r_sq = r.square();
+            assert_eq!(
+                r_sq, sq,
+                "S93: sqrt(x²)² must equal x² for random Fp x at iteration {i}",
+            );
+        }
+    }
+
+    #[test]
+    fn fp_random_sqrt_squared_at_lvl1() {
+        check_fp_random_sqrt_squared::<Fp1Element>();
+    }
+
+    #[test]
+    fn fp_random_sqrt_squared_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_fp_random_sqrt_squared::<Fp3Element>();
+    }
+
+    #[test]
+    fn fp_random_sqrt_squared_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_fp_random_sqrt_squared::<Fp5Element>();
+    }
+
+    /// Generic helper: `x · x.invert() == one` for pseudo-random Fp x.
+    /// Skips the zero edge case (invert(0) yields None per the trait
+    /// contract).
+    fn check_fp_random_invert_yields_identity<F: BaseField>() {
+        use crate::hash::hash_to_fp;
+        for i in 0u8..8 {
+            let x = hash_to_fp::<F>(b"S93-invert", &[i], 16)
+                .into_option()
+                .unwrap_or_else(F::one);
+            if bool::from(<F as ConstantTimeEq>::ct_eq(&x, &F::zero())) {
+                continue;
+            }
+            let inv = x.invert().unwrap_or_else(F::zero);
+            let prod = x.mul(&inv);
+            assert_eq!(
+                prod,
+                F::one(),
+                "S93: x · x.invert() must equal one for random Fp x at iteration {i}",
+            );
+        }
+    }
+
+    #[test]
+    fn fp_random_invert_at_lvl1() {
+        check_fp_random_invert_yields_identity::<Fp1Element>();
+    }
+
+    #[test]
+    fn fp_random_invert_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_fp_random_invert_yields_identity::<Fp3Element>();
+    }
+
+    #[test]
+    fn fp_random_invert_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_fp_random_invert_yields_identity::<Fp5Element>();
+    }
 }
