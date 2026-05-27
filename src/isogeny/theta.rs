@@ -83,6 +83,45 @@ impl<F: BaseField> ThetaPoint2D<F> {
         self.x.is_zero() & self.y.is_zero() & self.z.is_zero() & self.w.is_zero()
     }
 
+    /// Return `Choice::TRUE` iff `self` lies on a product theta
+    /// structure (i.e., `self.x · self.w == self.y · self.z`).
+    ///
+    /// Algebraically identical to the free function
+    /// [`crate::isogeny::splitting::is_product_theta_point`] (which
+    /// is the C-reference-citing surface). This method form exists
+    /// for the ergonomic `p.is_product()` call style that matches
+    /// the rest of `ThetaPoint2D`'s API.
+    ///
+    /// Reference: `theta_structure.c:71-78`
+    /// (`is_product_theta_point`).
+    pub fn is_product(&self) -> Choice {
+        self.x.mul(&self.w).ct_eq(&self.y.mul(&self.z))
+    }
+
+    /// Extract the couple-Montgomery point `(P_1, P_2)` on `E_1 × E_2`
+    /// from this theta-coord point, given the abelian variety `domain`
+    /// it lives on. Assumes `domain` has been split to a product
+    /// structure.
+    ///
+    /// Method-form alias of
+    /// [`crate::isogeny::splitting::theta_point_to_montgomery_point`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(NotProductTheta)` if `self` doesn't lie on a
+    /// product structure, or `Err(AllZeroPoint)` if `self` is
+    /// `(0:0:0:0)` after the alt-coord fallback path.
+    #[allow(dead_code)]
+    pub fn to_montgomery_point_on(
+        &self,
+        domain: &AbelianVariety2D<F>,
+    ) -> core::result::Result<
+        crate::ec::couple::CoupleMontgomeryPoint<F>,
+        crate::isogeny::splitting::ExtractionError,
+    > {
+        crate::isogeny::splitting::theta_point_to_montgomery_point(self, domain)
+    }
+
     /// Hadamard transform of `self`.
     ///
     /// On a 4-tuple `(x, y, z, w)` representing a 2-dim theta-coordinate
@@ -384,66 +423,6 @@ impl<F: BaseField> ThetaPoint2D<F> {
         Ok(Self::new(x, y, z, w))
     }
 
-    /// Theta-coordinate differential addition: `P + Q` given `P − Q`.
-    ///
-    /// Computes `P + Q` on the underlying 2-dim abelian variety from
-    /// three projective theta-coordinate inputs:
-    /// - `p`, `q`: the operands.
-    /// - `p_minus_q`: the difference `P − Q`, supplied by the caller.
-    ///   (Theta-coordinate subtraction is not derivable from `p` and
-    ///   `q` alone — the level-(2,2) projective representation loses
-    ///   the sign information needed to distinguish `P − Q` from
-    ///   `P + Q`.)
-    ///
-    /// Returns `None` if any component of `H(p_minus_q)` is zero
-    /// (the componentwise inversion at the heart of the formula is
-    /// undefined).
-    ///
-    /// # Provisional formula
-    ///
-    /// For each index `i ∈ {0, 1, 2, 3}`:
-    ///
-    /// ```text
-    /// (P + Q)[i] = H(p)[i] · H(q)[i] / H(p_minus_q)[i]
-    /// ```
-    ///
-    /// where `H` is the Hadamard transform. This is the simplest
-    /// plausible level-(2,2) projective differential-addition formula
-    /// admitted by the Riemann bilinear relations (Mumford, *Tata
-    /// Lectures on Theta II*, §6). It is symmetric in `p` and `q`
-    /// (so `diff_add` is commutative) and produces `None` exactly
-    /// when the inversion fails.
-    ///
-    /// # Spec-authority caveat
-    ///
-    /// SQIsign 2.0.1 §6.3 may specify a different sign or scaling
-    /// convention (e.g. one involving the variety's theta-null or
-    /// doubling constants explicitly). The committed formula above
-    /// matches the structural identity from the public literature
-    /// but **has not been verified byte-exactly against the SQIsign
-    /// 2.0.1 reference C implementation**. Verification — and any
-    /// necessary correction — is deferred to a future session when
-    /// the spec can be studied directly. Until then, this method is
-    /// safe to use for *internal-consistency* code paths but should
-    /// not be relied on for KAT byte-exact comparison.
-    ///
-    /// # Constant-time
-    ///
-    /// Yes — uses only the constant-time `Fp2` primitives plus the
-    /// `?` short-circuit on `componentwise_inverse`, which leaks
-    /// only the public "is this input degenerate" bit.
-    ///
-    /// Cost: 3 Hadamard transforms (16 add/sub each = 48 total),
-    /// 2 componentwise Fp2 multiplications (8 mults total), and
-    /// 4 Fp2 inversions (componentwise_inverse of `H(p_minus_q)`).
-    pub fn diff_add(p: &Self, q: &Self, p_minus_q: &Self) -> Option<Self> {
-        let hp = p.hadamard();
-        let hq = q.hadamard();
-        let hpmq = p_minus_q.hadamard();
-        let hpmq_inv = hpmq.componentwise_inverse()?;
-        Some(hp.componentwise_mul(&hq).componentwise_mul(&hpmq_inv))
-    }
-
     /// Theta-coordinate doubling: `P → 2P` on the 2-dim abelian variety.
     ///
     /// Composes the four primitives in spec-§6.2 order:
@@ -621,6 +600,30 @@ impl<F: BaseField> AbelianVariety2D<F> {
             q = self.double(&q);
         }
         q
+    }
+
+    /// Extract the elliptic product `E_1 × E_2` from this abelian
+    /// variety (assuming it has been split to a product structure,
+    /// e.g., via the gluing-isogeny chain's `splitting_compute`).
+    ///
+    /// Method-form alias of
+    /// [`crate::isogeny::splitting::theta_product_structure_to_elliptic_product`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(ExtractionError::NotProductTheta)` if the theta-null
+    /// doesn't lie on a product structure, `Err(ZeroNullCoordinate)` if
+    /// any required null-point coordinate is zero, or
+    /// `Err(ZeroChartCoefficient)` if the computed Montgomery chart
+    /// coefficient denominators (`x^4 - y^4` or `x^4 - z^4`) vanish.
+    #[allow(dead_code)]
+    pub fn to_elliptic_product(
+        &self,
+    ) -> core::result::Result<
+        crate::ec::couple::CoupleCurve<F>,
+        crate::isogeny::splitting::ExtractionError,
+    > {
+        crate::isogeny::splitting::theta_product_structure_to_elliptic_product(self)
     }
 
     /// Encoded byte length of an abelian variety: just the theta-null
@@ -3567,177 +3570,75 @@ mod tests {
         check_canonicalise_to_bytes_rejects_undersized_buffer::<Fp5Element>();
     }
 
-    // ── S114 — theta-coordinate differential addition (provisional) ──
+    // S152 — ThetaPoint2D::is_product method tests.
 
-    /// Generic helper: `diff_add` is symmetric in its first two
-    /// arguments (commutativity of addition). For 6 random
-    /// `(p, q, r)` triples per level where `H(r)` has no zero
-    /// component, `diff_add(p, q, r) == diff_add(q, p, r)`.
-    fn check_diff_add_commutes<F: BaseField>() {
-        use crate::hash::hash_to_fp2;
-        for i in 0u8..6 {
-            let mk = |tag: &[u8]| {
-                hash_to_fp2::<F>(tag, &[i], 16)
-                    .into_option()
-                    .unwrap_or_else(|| Fp2::<F>::new(F::one(), F::one()))
-            };
-            let p = ThetaPoint2D::<F>::new(
-                mk(b"dac-p-x"),
-                mk(b"dac-p-y"),
-                mk(b"dac-p-z"),
-                mk(b"dac-p-w"),
-            );
-            let q = ThetaPoint2D::<F>::new(
-                mk(b"dac-q-x"),
-                mk(b"dac-q-y"),
-                mk(b"dac-q-z"),
-                mk(b"dac-q-w"),
-            );
-            let r = ThetaPoint2D::<F>::new(
-                mk(b"dac-r-x"),
-                mk(b"dac-r-y"),
-                mk(b"dac-r-z"),
-                mk(b"dac-r-w"),
-            );
-            // Skip samples where H(r) has a zero component (diff_add returns None).
-            let pq = ThetaPoint2D::<F>::diff_add(&p, &q, &r);
-            let qp = ThetaPoint2D::<F>::diff_add(&q, &p, &r);
-            // Either both succeed (and produce equal results) or both
-            // fail. A mismatch in Some/None status would violate symmetry.
-            assert_eq!(
-                pq.is_some(),
-                qp.is_some(),
-                "S114: diff_add symmetry — both branches must agree on Some/None at iteration {i}",
-            );
-            if let (Some(pq_v), Some(qp_v)) = (pq, qp) {
-                assert_eq!(
-                    pq_v, qp_v,
-                    "S114: diff_add must be symmetric in p, q at iteration {i}",
-                );
+    #[test]
+    fn is_product_accepts_product_theta_point_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+
+        let mut small_acc = Fp2::<Fp1Element>::zero();
+        let one_v = Fp2::<Fp1Element>::one();
+        let small = |n: u32| -> Fp2<Fp1Element> {
+            let mut acc = Fp2::<Fp1Element>::zero();
+            for _ in 0..n {
+                acc = acc.add(&one_v);
             }
-        }
-    }
+            acc
+        };
+        let _ = &mut small_acc;
 
-    #[test]
-    fn diff_add_commutes_at_lvl1() {
-        check_diff_add_commutes::<Fp1Element>();
-    }
-
-    #[test]
-    fn diff_add_commutes_at_lvl3() {
-        use crate::params::lvl3::Fp3Element;
-        check_diff_add_commutes::<Fp3Element>();
-    }
-
-    #[test]
-    fn diff_add_commutes_at_lvl5() {
-        use crate::params::lvl5::Fp5Element;
-        check_diff_add_commutes::<Fp5Element>();
-    }
-
-    /// Generic helper: `diff_add` returns None when `H(p_minus_q)`
-    /// has a zero component. Construct a `p_minus_q` whose Hadamard
-    /// transform has a zero in position 0 by setting
-    /// `p_minus_q = (1, 1, -1, -1)` — then `H(p_minus_q)[0]
-    /// = 1 + 1 + (-1) + (-1) = 0`.
-    fn check_diff_add_rejects_degenerate_difference<F: BaseField>() {
-        let one = Fp2::<F>::one();
-        let neg_one = one.negate();
-        // (1, 1, -1, -1) — Hadamard yields (0, ?, ?, ?).
-        let degenerate = ThetaPoint2D::<F>::new(one, one, neg_one, neg_one);
-        // Verify our construction: H(degenerate)[0] == 0.
-        let h = degenerate.hadamard();
+        // (2, 3, 6, 9): 2·9 = 18 = 3·6 ✓
+        let p = ThetaPoint2D::new(small(2), small(3), small(6), small(9));
         assert!(
-            bool::from(h.x.is_zero()),
-            "S114: setup error — H(degenerate)[0] is not zero",
-        );
-        let p = ThetaPoint2D::<F>::identity();
-        let q = ThetaPoint2D::<F>::identity();
-        let r = ThetaPoint2D::<F>::diff_add(&p, &q, &degenerate);
-        assert_eq!(
-            r, None,
-            "S114: diff_add must return None when H(p_minus_q) has a zero component",
+            bool::from(p.is_product()),
+            "S152: (2, 3, 6, 9) satisfies x·w=y·z; method must return TRUE",
         );
     }
 
     #[test]
-    fn diff_add_rejects_degenerate_difference_at_lvl1() {
-        check_diff_add_rejects_degenerate_difference::<Fp1Element>();
-    }
+    fn is_product_rejects_non_product_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
 
-    #[test]
-    fn diff_add_rejects_degenerate_difference_at_lvl3() {
-        use crate::params::lvl3::Fp3Element;
-        check_diff_add_rejects_degenerate_difference::<Fp3Element>();
-    }
-
-    #[test]
-    fn diff_add_rejects_degenerate_difference_at_lvl5() {
-        use crate::params::lvl5::Fp5Element;
-        check_diff_add_rejects_degenerate_difference::<Fp5Element>();
-    }
-
-    /// Generic helper: for inputs where the Hadamard transform of
-    /// `p_minus_q` has no zero component, `diff_add` returns Some
-    /// (does not unexpectedly fail). 4 random triples per level.
-    fn check_diff_add_succeeds_on_non_degenerate<F: BaseField>() {
-        use crate::hash::hash_to_fp2;
-        for i in 0u8..4 {
-            let mk = |tag: &[u8]| {
-                hash_to_fp2::<F>(tag, &[i], 16)
-                    .into_option()
-                    .unwrap_or_else(|| Fp2::<F>::new(F::one(), F::one()))
-            };
-            let p = ThetaPoint2D::<F>::new(
-                mk(b"das-p-x"),
-                mk(b"das-p-y"),
-                mk(b"das-p-z"),
-                mk(b"das-p-w"),
-            );
-            let q = ThetaPoint2D::<F>::new(
-                mk(b"das-q-x"),
-                mk(b"das-q-y"),
-                mk(b"das-q-z"),
-                mk(b"das-q-w"),
-            );
-            let r = ThetaPoint2D::<F>::new(
-                mk(b"das-r-x"),
-                mk(b"das-r-y"),
-                mk(b"das-r-z"),
-                mk(b"das-r-w"),
-            );
-            let h_r = r.hadamard();
-            // Skip samples where H(r) has a zero component — those are
-            // the documented-None cases, not a failure of the success path.
-            if bool::from(h_r.x.is_zero())
-                || bool::from(h_r.y.is_zero())
-                || bool::from(h_r.z.is_zero())
-                || bool::from(h_r.w.is_zero())
-            {
-                continue;
+        let one_v = Fp2::<Fp1Element>::one();
+        let small = |n: u32| -> Fp2<Fp1Element> {
+            let mut acc = Fp2::<Fp1Element>::zero();
+            for _ in 0..n {
+                acc = acc.add(&one_v);
             }
-            let result = ThetaPoint2D::<F>::diff_add(&p, &q, &r);
-            assert!(
-                result.is_some(),
-                "S114: diff_add must return Some when H(p_minus_q) has no zero component, iter {i}",
+            acc
+        };
+
+        // (2, 3, 5, 7): 2·7=14 ≠ 3·5=15 — not product
+        let p = ThetaPoint2D::new(small(2), small(3), small(5), small(7));
+        assert!(
+            !bool::from(p.is_product()),
+            "S152: (2, 3, 5, 7) violates product identity; method must return FALSE",
+        );
+    }
+
+    /// S152: confirm the method delegates identically to the free
+    /// function in splitting.rs (same algebraic identity, same result).
+    #[test]
+    fn is_product_method_matches_free_function_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::isogeny::splitting::is_product_theta_point;
+
+        let one_v = Fp2::<Fp1Element>::one();
+        let small = |n: u32| -> Fp2<Fp1Element> {
+            let mut acc = Fp2::<Fp1Element>::zero();
+            for _ in 0..n {
+                acc = acc.add(&one_v);
+            }
+            acc
+        };
+
+        for &(x, y, z, w) in &[(1u32, 2, 3, 6), (5, 7, 11, 13), (0, 0, 0, 0), (2, 4, 6, 12)] {
+            let p = ThetaPoint2D::new(small(x), small(y), small(z), small(w));
+            assert_eq!(
+                bool::from(p.is_product()),
+                bool::from(is_product_theta_point(&p)),
+                "S152: method and free function must agree on ({x}, {y}, {z}, {w})",
             );
         }
-    }
-
-    #[test]
-    fn diff_add_succeeds_on_non_degenerate_at_lvl1() {
-        check_diff_add_succeeds_on_non_degenerate::<Fp1Element>();
-    }
-
-    #[test]
-    fn diff_add_succeeds_on_non_degenerate_at_lvl3() {
-        use crate::params::lvl3::Fp3Element;
-        check_diff_add_succeeds_on_non_degenerate::<Fp3Element>();
-    }
-
-    #[test]
-    fn diff_add_succeeds_on_non_degenerate_at_lvl5() {
-        use crate::params::lvl5::Fp5Element;
-        check_diff_add_succeeds_on_non_degenerate::<Fp5Element>();
     }
 }
