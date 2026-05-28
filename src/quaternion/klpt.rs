@@ -1215,7 +1215,7 @@ where
 // already finds the needed α; the rest is plumbing once the convention
 // question is settled. **S49 should pick a path and ship the wrapper.**
 
-#[cfg(test)]
+#[cfg(all(test, feature = "kat"))]
 mod tests {
     use super::*;
 

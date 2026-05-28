@@ -665,6 +665,56 @@ mod tests {
         );
     }
 
+    // S168 — BasisChangeMatrix::identity + is_identity.
+
+    #[test]
+    fn basis_change_matrix_identity_constructor_matches_identity_grid_at_lvl1() {
+        let via_method = BasisChangeMatrix::<Fp1Element>::identity();
+        let via_grid = identity_4x4();
+        assert_eq!(
+            via_method, via_grid,
+            "S168: identity() must equal hand-built identity grid",
+        );
+    }
+
+    #[test]
+    fn basis_change_matrix_identity_is_neutral_under_mul_at_lvl1() {
+        let i = BasisChangeMatrix::<Fp1Element>::identity();
+        let a = from_u32_grid([
+            [2, 3, 5, 7],
+            [11, 13, 17, 19],
+            [23, 29, 31, 37],
+            [41, 43, 47, 53],
+        ]);
+        assert_eq!(i.mul(&a), a, "S168: I · A = A");
+        assert_eq!(a.mul(&i), a, "S168: A · I = A");
+    }
+
+    #[test]
+    fn basis_change_matrix_is_identity_true_for_identity_at_lvl1() {
+        let i = BasisChangeMatrix::<Fp1Element>::identity();
+        assert!(
+            bool::from(i.is_identity()),
+            "S168: identity().is_identity() must be TRUE",
+        );
+    }
+
+    #[test]
+    fn basis_change_matrix_is_identity_false_for_nonidentity_at_lvl1() {
+        // Diagonal-only-with-non-1 value
+        let m = from_u32_grid([[2, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]);
+        assert!(
+            !bool::from(m.is_identity()),
+            "S168: diag-(2,1,1,1) is NOT identity",
+        );
+        // Identity-shape with one off-diagonal non-zero
+        let m2 = from_u32_grid([[1, 1, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]);
+        assert!(
+            !bool::from(m2.is_identity()),
+            "S168: identity with one off-diagonal 1 is NOT identity",
+        );
+    }
+
     // S154 — BasisChangeMatrix method-form alias tests.
 
     #[test]

@@ -55,11 +55,61 @@ impl<F: BaseField> MontgomeryPoint<F> {
         self.z.is_zero()
     }
 
+    /// `Choice::TRUE` iff this is a finite 2-torsion point on the
+    /// Montgomery curve `y² = x³ + Ax² + x` (affine `a`).
+    ///
+    /// Algebra: a point `P = (X : Z)` is 2-torsion iff `y² = 0` at
+    /// `x = X/Z`. Substituting and clearing denominators yields the
+    /// projective condition:
+    ///
+    /// ```text
+    /// X · (X² + A · X · Z + Z²) == 0
+    /// ```
+    ///
+    /// which factors into `X == 0` (the `(0, 0)` 2-torsion point) or
+    /// `X² + A·X·Z + Z² == 0` (the two `(±i, 0)`-type roots on E_0,
+    /// or the analogous pair on any Montgomery curve). The
+    /// `Z ≠ 0` clause excludes the infinity sentinel `(1 : 0)`.
+    ///
+    /// Companion to [`crate::ec::jacobian::JacobianPoint::is_two_torsion`]
+    /// for the x-only side of the chain layer.
+    pub fn is_two_torsion(&self, a: &Fp2<F>) -> Choice {
+        // Non-infinity: Z != 0.
+        let is_finite = !self.z.is_zero();
+        // X == 0 case.
+        let x_zero = self.x.is_zero();
+        // X² + A·X·Z + Z² == 0 case.
+        let x_sq = self.x.square();
+        let z_sq = self.z.square();
+        let a_x_z = a.mul(&self.x).mul(&self.z);
+        let quadratic = x_sq.add(&a_x_z).add(&z_sq);
+        let quadratic_zero = quadratic.is_zero();
+        is_finite & (x_zero | quadratic_zero)
+    }
+
     /// Affine x-coordinate of a non-identity point, i.e. `X / Z`.
     pub fn affine_x(&self) -> Fp2<F> {
         let z_inv = self.z.invert();
         let zinv = z_inv.unwrap_or(Fp2::zero());
         self.x.mul(&zinv)
+    }
+
+    /// Normalize the projective `(X : Z)` representative to its
+    /// affine form `(X/Z : 1)`.
+    ///
+    /// Companion to [`Self::affine_x`] (which returns just the
+    /// affine x-coordinate as an `Fp2`). The full self-typed
+    /// normalization preserves the type for callers that need a
+    /// canonical projective representative downstream.
+    ///
+    /// Infinity `(1 : 0)` is returned unchanged — Z=0 can't be
+    /// inverted, and infinity's canonical representative is itself.
+    pub fn to_affine(&self) -> Self {
+        let is_inf = self.z.is_zero();
+        let z_inv = self.z.invert().unwrap_or(Fp2::zero());
+        let affine_x = self.x.mul(&z_inv);
+        let affine_point = Self::new(affine_x, Fp2::one());
+        Self::conditional_select(&affine_point, &Self::infinity(), is_inf)
     }
 
     /// `[2] · self` on the Montgomery curve with reduced parameter
@@ -182,6 +232,17 @@ impl<F: BaseField> MontgomeryCurve<F> {
     #[inline]
     pub fn e0() -> Self {
         Self::new(Fp2::zero())
+    }
+
+    /// `Choice::TRUE` iff `self` is the starting curve `E_0`
+    /// (`A == 0` in affine Montgomery form).
+    ///
+    /// Predicate companion to [`Self::e0`]. Useful for chain-init
+    /// assertions and for fast-path branches that specialize to
+    /// `E_0`'s known constants (e.g., `a24 = 1/2`).
+    #[inline]
+    pub fn is_e0(&self) -> Choice {
+        self.a.is_zero()
     }
 
     /// Constant `a24 = (A + 2) / 4` used by xDBL / xLAD / xDBLADD.
@@ -587,5 +648,127 @@ mod tests {
     fn ladder_at_one_returns_self_at_lvl5() {
         use crate::params::lvl5::Fp5Element;
         check_ladder_at_one_returns_self::<Fp5Element>();
+    }
+
+    // S176 — MontgomeryPoint::to_affine tests.
+
+    fn check_to_affine_normalizes<F: BaseField>() {
+        let one = Fp2::<F>::one();
+        let two = one.add(&one);
+        let three = two.add(&one);
+
+        // (X, Z) = (6, 2) → affine x = 3 → to_affine should produce (3, 1).
+        let six = two.add(&two).add(&two);
+        let p = MontgomeryPoint::<F>::new(six, two);
+        let affine = p.to_affine();
+        assert_eq!(affine.x, three, "S176: (6, 2).to_affine().x = 3");
+        assert_eq!(affine.z, one, "S176: to_affine().z = 1 for non-infinity");
+    }
+
+    fn check_to_affine_preserves_infinity<F: BaseField>() {
+        let inf = MontgomeryPoint::<F>::infinity();
+        let affine_inf = inf.to_affine();
+        assert!(
+            bool::from(affine_inf.is_infinity()),
+            "S176: to_affine of infinity must remain infinity",
+        );
+    }
+
+    fn check_to_affine_idempotent<F: BaseField>() {
+        let one = Fp2::<F>::one();
+        let two = one.add(&one);
+        let p = MontgomeryPoint::<F>::new(two.add(&two).add(&two), two);
+        let once = p.to_affine();
+        let twice = once.to_affine();
+        assert_eq!(once, twice, "S176: to_affine is idempotent");
+    }
+
+    #[test]
+    fn montgomery_to_affine_normalizes_at_lvl1() {
+        check_to_affine_normalizes::<Fp1Element>();
+    }
+
+    #[test]
+    fn montgomery_to_affine_normalizes_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_to_affine_normalizes::<Fp3Element>();
+    }
+
+    #[test]
+    fn montgomery_to_affine_normalizes_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_to_affine_normalizes::<Fp5Element>();
+    }
+
+    #[test]
+    fn montgomery_to_affine_preserves_infinity_at_lvl1() {
+        check_to_affine_preserves_infinity::<Fp1Element>();
+    }
+
+    #[test]
+    fn montgomery_to_affine_idempotent_at_lvl1() {
+        check_to_affine_idempotent::<Fp1Element>();
+    }
+
+    // S173 — MontgomeryPoint::is_two_torsion (x-only form) tests.
+
+    fn check_is_two_torsion_xz_predicate<F: BaseField>() {
+        let a_zero = Fp2::<F>::zero(); // E_0
+        let zero = Fp2::<F>::zero();
+        let one = Fp2::<F>::one();
+        let imag = Fp2::<F>::new(F::zero(), F::one());
+
+        // (0 : 1) on E_0 — the (0, 0) 2-torsion point.
+        let origin = MontgomeryPoint::<F>::new(zero, one);
+        assert!(
+            bool::from(origin.is_two_torsion(&a_zero)),
+            "S173: x-only (0:1) on E_0 must be 2-torsion",
+        );
+
+        // (i : 1) on E_0 — root of X² + Z² = 0 since A=0: 1·(-1) + 1 = 0.
+        let pos_i = MontgomeryPoint::<F>::new(imag, one);
+        assert!(
+            bool::from(pos_i.is_two_torsion(&a_zero)),
+            "S173: x-only (i:1) on E_0 must be 2-torsion",
+        );
+
+        // (-i : 1) on E_0 — same as (i:1) under squaring.
+        let neg_i = MontgomeryPoint::<F>::new(imag.negate(), one);
+        assert!(
+            bool::from(neg_i.is_two_torsion(&a_zero)),
+            "S173: x-only (-i:1) on E_0 must be 2-torsion",
+        );
+
+        // Infinity (1 : 0) — Z=0 excludes per predicate.
+        let inf = MontgomeryPoint::<F>::infinity();
+        assert!(
+            !bool::from(inf.is_two_torsion(&a_zero)),
+            "S173: x-only infinity is NOT 2-torsion (Z=0 excludes)",
+        );
+
+        // (1 : 1) — affine x=1, not a 2-torsion x-coord on E_0
+        // (1·(1² + 0·1·1 + 1²) = 1·2 = 2 ≠ 0 at L1's prime).
+        let nontors = MontgomeryPoint::<F>::new(one, one);
+        assert!(
+            !bool::from(nontors.is_two_torsion(&a_zero)),
+            "S173: x-only (1:1) on E_0 must NOT be 2-torsion",
+        );
+    }
+
+    #[test]
+    fn montgomery_is_two_torsion_predicate_at_lvl1() {
+        check_is_two_torsion_xz_predicate::<Fp1Element>();
+    }
+
+    #[test]
+    fn montgomery_is_two_torsion_predicate_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_is_two_torsion_xz_predicate::<Fp3Element>();
+    }
+
+    #[test]
+    fn montgomery_is_two_torsion_predicate_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_is_two_torsion_xz_predicate::<Fp5Element>();
     }
 }

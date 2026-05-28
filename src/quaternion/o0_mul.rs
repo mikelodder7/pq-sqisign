@@ -112,6 +112,72 @@ pub fn principal_left_ideal_from_o0<const LIMBS: usize>(
     crate::quaternion::LeftIdeal::new(reduced)
 }
 
+/// Build the left `O_0`-ideal `O_0 · γ + O_0 · n` from a quaternion `γ`
+/// (given in `O_0`-basis coordinates) and an integer `n`. Returns the
+/// ideal in canonical HNF form with `cached_norm = n`.
+///
+/// **Caller invariant:** `n | N_red(γ)`. When this holds, the lattice
+/// `O_0 · γ + O_0 · n` has reduced norm exactly `n`. When it does not,
+/// the cached norm field still records `n` but the lattice's actual
+/// norm may differ from the cached value — caller is responsible for
+/// asserting divisibility before calling.
+///
+/// Algorithm: stack the 8 generators `e_k · γ` (k ∈ 0..4) and `n · e_k`
+/// (k ∈ 0..4) as an 8×4 integer matrix, then HNF-reduce with
+/// `hnf_rect_4cols`. The top 4 rows of the result form the canonical
+/// upper-triangular `Z`-basis of the lattice.
+pub fn left_ideal_from_element_and_integer_o0<const LIMBS: usize>(
+    gamma: &[Int<LIMBS>; 4],
+    n: &Uint<LIMBS>,
+    p: &Uint<LIMBS>,
+) -> crate::quaternion::LeftIdeal<LIMBS> {
+    // Debug-mode invariant check: the lattice norm equals `n` only when
+    // `n` divides N_red(gamma). Violation silently corrupts every
+    // downstream consumer that reads cached_norm. In release builds this
+    // is the caller's responsibility per the docstring.
+    #[cfg(debug_assertions)]
+    {
+        use crypto_bigint::NonZero;
+        let n_norm_int = reduced_norm_o0_basis::<LIMBS>(gamma, p);
+        let n_norm_abs = n_norm_int.abs();
+        let n_nz: NonZero<Uint<LIMBS>> =
+            NonZero::new(*n).expect("left_ideal_from_element_and_integer_o0: n must be non-zero");
+        let rem = n_norm_abs.rem_vartime(&n_nz);
+        debug_assert_eq!(
+            rem,
+            Uint::<LIMBS>::from_u64(0),
+            "left_ideal_from_element_and_integer_o0: caller invariant n | N_red(gamma) violated",
+        );
+    }
+
+    // Top-bit precondition for the `n.as_int()` reinterpretation below.
+    // If `n`'s top bit is set, `*n.as_int()` is interpreted as a negative
+    // `Int<LIMBS>` and the constructed `n · e_k` rows go negative,
+    // corrupting the HNF. At signing-flow scale `n` (ideal norm) is well
+    // below the LIMBS ceiling; the debug_assert defends future callers.
+    debug_assert!(
+        n.bits_vartime()
+            < 64u32 * u32::try_from(LIMBS).expect("LIMBS fits u32 at all SQIsign levels"),
+        "left_ideal_from_element_and_integer_o0: n's top bit must be zero (n.bits_vartime() < 64·LIMBS)",
+    );
+
+    let zero = Int::<LIMBS>::from_i64(0);
+    let one_int = Int::<LIMBS>::from_i64(1);
+    let n_int = *n.as_int();
+    let mut rows: [[Int<LIMBS>; 4]; 8] = [[zero; 4]; 8];
+    for k in 0..4 {
+        let mut e = [zero; 4];
+        e[k] = one_int;
+        rows[k] = multiply_o0_basis(&e, gamma, p);
+    }
+    for k in 0..4 {
+        rows[4 + k][k] = n_int;
+    }
+    let h = crate::quaternion::hnf::hnf_rect_4cols::<8, LIMBS>(&rows);
+    let basis = [h[0], h[1], h[2], h[3]];
+    crate::quaternion::LeftIdeal::with_denom_and_norm(basis, Uint::<LIMBS>::ONE, *n)
+}
+
 /// Build the 4×4 integer Gram matrix `G_O0` such that
 /// `cᵀ · G_O0 · c = 4 · N(α)` for `α ∈ O_0` expressed in the canonical
 /// `O_0`-basis `(1, i, (i + j) / 2, (1 + k) / 2)` with integer

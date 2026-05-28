@@ -64,6 +64,30 @@ impl<F: BaseField> Fp2<F> {
         self.re.is_zero() & self.im.is_zero()
     }
 
+    /// Choice::TRUE iff `self == 1 + 0i`.
+    ///
+    /// Predicate companion to [`Self::one`]. Implemented as a
+    /// constant-time equality check against the canonical one.
+    /// Used by tests and by routines that need to detect the
+    /// multiplicative identity without materializing it.
+    #[inline]
+    pub fn is_one(&self) -> Choice {
+        self.ct_eq(&Self::one())
+    }
+
+    /// Choice::TRUE iff `self == -1 + 0i` (the additive inverse of 1).
+    ///
+    /// Predicate completing the `is_zero` / `is_one` / `is_neg_one`
+    /// trio for canonical small-integer field values. Implemented
+    /// as a constant-time equality check against `Self::one().negate()`.
+    /// Useful for algebraic identity checks where `-1` appears as
+    /// a distinguished value (e.g., sign of square roots, Legendre
+    /// symbol witnesses).
+    #[inline]
+    pub fn is_neg_one(&self) -> Choice {
+        self.ct_eq(&Self::one().negate())
+    }
+
     /// `self + rhs`.
     #[inline]
     pub fn add(&self, rhs: &Self) -> Self {
@@ -547,5 +571,91 @@ mod tests {
                 ));
             assert_eq!(z, y);
         }
+    }
+
+    // S169 — Fp2::is_one predicate tests.
+
+    #[test]
+    fn fp2_is_one_true_for_one_at_lvl1() {
+        let one_v = Fp2::<Fp1Element>::one();
+        assert!(
+            bool::from(one_v.is_one()),
+            "S169: Fp2::one().is_one() must be TRUE",
+        );
+    }
+
+    #[test]
+    fn fp2_is_one_false_for_zero_at_lvl1() {
+        let zero = Fp2::<Fp1Element>::zero();
+        assert!(
+            !bool::from(zero.is_one()),
+            "S169: Fp2::zero().is_one() must be FALSE",
+        );
+    }
+
+    #[test]
+    fn fp2_is_one_false_for_img_at_lvl1() {
+        // 0 + 1i ≠ 1 + 0i — predicate must distinguish im-only-1 from re-only-1
+        let img = Fp2::<Fp1Element>::img();
+        assert!(
+            !bool::from(img.is_one()),
+            "S169: Fp2::img() (= 0+1i) is NOT equal to 1+0i",
+        );
+    }
+
+    #[test]
+    fn fp2_is_one_false_for_two_at_lvl1() {
+        let one_v = Fp2::<Fp1Element>::one();
+        let two = one_v.add(&one_v);
+        assert!(
+            !bool::from(two.is_one()),
+            "S169: 2 ≠ 1; is_one must be FALSE",
+        );
+    }
+
+    // S177 — Fp2::is_neg_one predicate tests.
+
+    #[test]
+    fn fp2_is_neg_one_true_for_neg_one_at_lvl1() {
+        let neg_one = Fp2::<Fp1Element>::one().negate();
+        assert!(
+            bool::from(neg_one.is_neg_one()),
+            "S177: (-1).is_neg_one() must be TRUE",
+        );
+    }
+
+    #[test]
+    fn fp2_is_neg_one_false_for_one_at_lvl1() {
+        let one_v = Fp2::<Fp1Element>::one();
+        assert!(
+            !bool::from(one_v.is_neg_one()),
+            "S177: 1.is_neg_one() must be FALSE",
+        );
+    }
+
+    #[test]
+    fn fp2_is_neg_one_false_for_zero_at_lvl1() {
+        let zero = Fp2::<Fp1Element>::zero();
+        assert!(
+            !bool::from(zero.is_neg_one()),
+            "S177: 0.is_neg_one() must be FALSE",
+        );
+    }
+
+    #[test]
+    fn fp2_is_neg_one_consistent_with_negation_at_lvl1() {
+        // Round-trip: any x's negation, then negated again, equals x.
+        // Specifically: negate(1).is_neg_one == TRUE; negate(negate(1)).is_one == TRUE.
+        let one_v = Fp2::<Fp1Element>::one();
+        let neg_one = one_v.negate();
+        let double_neg = neg_one.negate();
+        assert!(
+            bool::from(neg_one.is_neg_one()),
+            "S177: negate(1) is_neg_one",
+        );
+        assert!(
+            bool::from(double_neg.is_one()),
+            "S177: negate(negate(1)) is_one (round-trip)",
+        );
     }
 }

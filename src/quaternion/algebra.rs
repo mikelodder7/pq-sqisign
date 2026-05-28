@@ -136,7 +136,19 @@ impl<const LIMBS: usize> Quaternion<LIMBS> {
     ///
     /// `p` is the level's prime, encoded as an unsigned `Uint<LIMBS>`.
     /// (Internally cast to `Int<LIMBS>` once.)
+    ///
+    /// **Precondition** (caller's responsibility): same as [`Self::norm`]
+    /// — `p`'s top bit must be zero (`p.bits_vartime() < 64·LIMBS`).
+    /// If `p`'s top bit is set, `*p.as_int()` is interpreted as a
+    /// negative `Int<LIMBS>` and every product involving `p_int` flips
+    /// sign. Structurally satisfied at all production SQIsign LIMBS
+    /// values; debug_assert defends future callers.
     pub fn mul(&self, rhs: &Self, p: &Uint<LIMBS>) -> Self {
+        debug_assert!(
+            p.bits_vartime()
+                < 64u32 * u32::try_from(LIMBS).expect("LIMBS fits u32 at all SQIsign levels"),
+            "Quaternion::mul: p's top bit must be zero (p.bits_vartime() < 64·LIMBS); reinterpretation as Int<LIMBS> via p.as_int() would otherwise yield a negative value and sign-flip every p·c·d product",
+        );
         let p_int = *p.as_int();
         // 1 = a·e − b·f − p · (c·g + d·h)
         let ae = self.a.wrapping_mul(&rhs.a);
@@ -168,7 +180,21 @@ impl<const LIMBS: usize> Quaternion<LIMBS> {
     }
 
     /// Reduced norm `N(q) = a² + b² + p (c² + d²)`.
+    ///
+    /// **Precondition** (caller's responsibility): `p`'s top bit must be
+    /// zero — i.e. `p.bits_vartime() < 64·LIMBS`. The body reinterprets
+    /// `p` as `Int<LIMBS>` via `*p.as_int()`; if `p`'s top bit is set,
+    /// the reinterpretation is negative and the computed reduced norm
+    /// is sign-flipped. At all production SQIsign LIMBS values (L1
+    /// LIMBS≥8 with p≈2^248; L3 LIMBS≥12 with p≈2^383; L5 LIMBS≥16
+    /// with p≈2^505) the bound holds structurally; the debug_assert
+    /// catches misuse at debug-build / test time.
     pub fn norm(&self, p: &Uint<LIMBS>) -> Int<LIMBS> {
+        debug_assert!(
+            p.bits_vartime()
+                < 64u32 * u32::try_from(LIMBS).expect("LIMBS fits u32 at all SQIsign levels"),
+            "Quaternion::norm: p's top bit must be zero (p.bits_vartime() < 64·LIMBS); reinterpretation as Int<LIMBS> via p.as_int() would otherwise yield a negative value and a sign-flipped reduced norm",
+        );
         let p_int = *p.as_int();
         let a_sq = self.a.wrapping_mul(&self.a);
         let b_sq = self.b.wrapping_mul(&self.b);

@@ -57,6 +57,7 @@ pub mod primality;
 pub mod represent_integer;
 pub mod sample;
 pub mod short_vec;
+pub mod sign_orchestration;
 pub mod smooth;
 pub mod sqrt_mod;
 

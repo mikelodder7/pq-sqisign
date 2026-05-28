@@ -78,6 +78,32 @@ impl<F: BaseField> JacobianPoint<F> {
         self.z.is_zero()
     }
 
+    /// **Structural-only** 2-torsion check (`Y == 0` and `Z ≠ 0`).
+    ///
+    /// **Precondition** (caller's responsibility): `self` is a valid
+    /// point on the Montgomery curve `y² = x³ + A·x² + x` for some `A`.
+    /// This predicate does NOT verify curve membership. For a
+    /// curve-validated 2-torsion test on the x-only Montgomery side
+    /// use [`crate::ec::montgomery::MontgomeryPoint::is_two_torsion`]
+    /// instead (which factors the projective curve equation
+    /// `X · (X² + A·X·Z + Z²) == 0`).
+    ///
+    /// Why "_unchecked": on a valid Montgomery point, `Y = 0` forces
+    /// 2-torsion via `2P = O ⟺ P = -P ⟺ Y = -Y ⟺ 2Y = 0` (char ≠ 2).
+    /// For an arbitrary `(X, 0, Z)` triple not on any curve, this
+    /// predicate still returns `TRUE` — so adversarial or malformed
+    /// state can pass. Callers using this as a security-relevant
+    /// gate (e.g. chain boundary validation) MUST establish curve
+    /// membership separately.
+    ///
+    /// Useful for kernel-walk endpoint detection inside trusted
+    /// chain code where curve membership is invariant by
+    /// construction.
+    #[inline]
+    pub fn is_two_torsion_unchecked(&self) -> Choice {
+        self.y.is_zero() & !self.is_infinity()
+    }
+
     /// Negate this Jacobian point by sending `Y` to `-Y`.
     #[inline]
     pub fn negate(&self) -> Self {
@@ -761,6 +787,60 @@ mod tests {
     fn double_of_2_torsion_is_infinity_at_lvl5() {
         use crate::params::lvl5::Fp5Element;
         check_double_of_2_torsion_is_infinity::<Fp5Element>();
+    }
+
+    // S170 — is_two_torsion predicate tests.
+
+    fn check_is_two_torsion_predicate<F: BaseField>() {
+        let one = Fp2::<F>::one();
+        let zero = Fp2::<F>::zero();
+        let imag = Fp2::<F>::new(F::zero(), F::one());
+
+        // Three known 2-torsion points on E_0: (0,0,1), (i,0,1), (-i,0,1).
+        let p_origin = JacobianPoint::<F>::new(zero, zero, one);
+        let p_pos_i = JacobianPoint::<F>::new(imag, zero, one);
+        let p_neg_i = JacobianPoint::<F>::new(imag.negate(), zero, one);
+
+        for (label, p) in [("origin", p_origin), ("+i", p_pos_i), ("-i", p_neg_i)] {
+            assert!(
+                bool::from(p.is_two_torsion_unchecked()),
+                "S170: known 2-torsion {label} must return TRUE",
+            );
+        }
+
+        // Infinity has Y=1 in the canonical sentinel — predicate must REJECT.
+        let inf = JacobianPoint::<F>::infinity();
+        assert!(
+            !bool::from(inf.is_two_torsion_unchecked()),
+            "S170: infinity must NOT be classified as 2-torsion (Z=0)",
+        );
+
+        // A non-2-torsion finite point: (1, y, 1) where y ≠ 0 on E_0.
+        // y² = x³ + x = 2 at x=1, so y = ±√2. We don't need the exact y;
+        // we just need a Y ≠ 0 fixture, so use Y = 1 (any nonzero is fine
+        // for the predicate check, the curve-equation validity isn't tested).
+        let nontors = JacobianPoint::<F>::new(one, one, one);
+        assert!(
+            !bool::from(nontors.is_two_torsion_unchecked()),
+            "S170: finite point with Y≠0 must NOT be 2-torsion",
+        );
+    }
+
+    #[test]
+    fn is_two_torsion_predicate_at_lvl1() {
+        check_is_two_torsion_predicate::<Fp1Element>();
+    }
+
+    #[test]
+    fn is_two_torsion_predicate_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_is_two_torsion_predicate::<Fp3Element>();
+    }
+
+    #[test]
+    fn is_two_torsion_predicate_at_lvl5() {
+        use crate::params::lvl5::Fp5Element;
+        check_is_two_torsion_predicate::<Fp5Element>();
     }
 
     fn check_double_consistency_with_montgomery_xdbl<F: BaseField>() {

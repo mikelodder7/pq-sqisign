@@ -42,6 +42,17 @@ impl<F: BaseField> CoupleCurve<F> {
     pub fn e0_e0() -> Self {
         Self::new(MontgomeryCurve::e0(), MontgomeryCurve::e0())
     }
+
+    /// `Choice::TRUE` iff **both** halves are the starting curve `E_0`.
+    ///
+    /// Predicate companion to [`Self::e0_e0`]. Returns
+    /// `self.e1.is_e0() & self.e2.is_e0()`. Useful for chain-init
+    /// assertions that confirm the elliptic-product origin matches
+    /// SQIsign's expected starting state.
+    #[inline]
+    pub fn is_e0_e0(&self) -> Choice {
+        self.e1.is_e0() & self.e2.is_e0()
+    }
 }
 
 /// Pair of Jacobian points `(P_1, P_2)` on `E_1 × E_2`.
@@ -87,6 +98,24 @@ impl<F: BaseField> CoupleJacobianPoint<F> {
         Self::new(self.p1.negate(), self.p2.negate())
     }
 
+    /// **Structural-only** 2-torsion check on both halves
+    /// (`Y == 0 ∧ Z ≠ 0` per
+    /// [`JacobianPoint::is_two_torsion_unchecked`]).
+    ///
+    /// **Precondition** (caller's responsibility): both `self.p1` and
+    /// `self.p2` are valid Montgomery-curve points. This predicate
+    /// inherits the unchecked semantics of its per-half components —
+    /// see [`JacobianPoint::is_two_torsion_unchecked`] for the full
+    /// rationale + the safe-test alternative on the x-only Montgomery
+    /// side.
+    ///
+    /// Useful for chain-walker endpoint detection inside trusted
+    /// chain code where curve membership is invariant.
+    #[inline]
+    pub fn is_two_torsion_unchecked(&self) -> Choice {
+        self.p1.is_two_torsion_unchecked() & self.p2.is_two_torsion_unchecked()
+    }
+
     /// Componentwise doubling `(2·P_1, 2·P_2)`.
     #[inline]
     pub fn double(&self, curves: &CoupleCurve<F>) -> Self {
@@ -106,6 +135,19 @@ impl<F: BaseField> CoupleJacobianPoint<F> {
     #[inline]
     pub fn to_couple_xz(&self) -> CoupleMontgomeryPoint<F> {
         CoupleMontgomeryPoint::new(self.p1.to_montgomery_xz(), self.p2.to_montgomery_xz())
+    }
+
+    /// Componentwise affine normalization on the elliptic product.
+    ///
+    /// Wraps [`JacobianPoint::to_affine`] per half. The Jacobian
+    /// `(X : Y : Z)` representation is normalized to its `(X/Z²,
+    /// Y/Z³, 1)` form (with infinity returned as the canonical
+    /// `(1, 1, 0)` sentinel). Both halves are normalized
+    /// independently — no shared inversion across halves (matching
+    /// the S125 doctrine of per-half independent state).
+    #[inline]
+    pub fn to_affine(&self) -> Self {
+        Self::new(self.p1.to_affine(), self.p2.to_affine())
     }
 
     /// Return per-half Alg 8.13 `ADDComponents` triples `[(u_1, v_1, w_1), (u_2, v_2, w_2)]`.
@@ -186,6 +228,41 @@ impl<F: BaseField> CoupleMontgomeryPoint<F> {
     #[inline]
     pub fn is_infinity(&self) -> Choice {
         self.p1.is_infinity() & self.p2.is_infinity()
+    }
+
+    /// `Choice::TRUE` iff **both** x-only halves are finite
+    /// 2-torsion points on their respective Montgomery curves.
+    ///
+    /// Wraps [`MontgomeryPoint::is_two_torsion`] (S173) per half
+    /// with each half's affine A coefficient (`a_1` for E_1, `a_2`
+    /// for E_2). Companion to [`CoupleJacobianPoint::is_two_torsion`]
+    /// for the x-only side of the chain.
+    #[inline]
+    pub fn is_two_torsion(&self, a_1: &Fp2<F>, a_2: &Fp2<F>) -> Choice {
+        self.p1.is_two_torsion(a_1) & self.p2.is_two_torsion(a_2)
+    }
+
+    /// Ergonomic 2-torsion predicate that derives the per-half
+    /// affine A coefficients from a [`CoupleCurve<F>`] internally.
+    ///
+    /// Equivalent to `self.is_two_torsion(&curves.e1.a, &curves.e2.a)`
+    /// but matches the [`Self::double_with_curves`] / [`Self::ladder_with_curves`]
+    /// ergonomic pattern.
+    #[inline]
+    pub fn is_two_torsion_with_curves(&self, curves: &CoupleCurve<F>) -> Choice {
+        self.is_two_torsion(&curves.e1.a, &curves.e2.a)
+    }
+
+    /// Componentwise affine normalization of both x-only halves.
+    ///
+    /// Wraps [`MontgomeryPoint::to_affine`] per half. Each half's
+    /// `(X : Z)` projective representative is normalized to
+    /// `(X/Z : 1)`. Infinity sentinels `(1 : 0)` are preserved.
+    /// Companion to [`CoupleJacobianPoint::to_affine`] for the
+    /// x-only side of the chain.
+    #[inline]
+    pub fn to_affine(&self) -> Self {
+        Self::new(self.p1.to_affine(), self.p2.to_affine())
     }
 
     /// Componentwise Montgomery x-only doubling on `E_1 × E_2`.
@@ -384,6 +461,109 @@ impl<F: BaseField> ThetaKernelCouplePoints<F> {
             t2,
             t1_minus_t2,
         }
+    }
+
+    /// Apply iterated doubling `2^n · ·` to all three kernel points
+    /// simultaneously.
+    ///
+    /// Returns a new bundle `(2^n·T_1, 2^n·T_2, 2^n·(T_1 − T_2))`.
+    /// Algebraically `2(T_1 − T_2) = 2T_1 − 2T_2`, so componentwise
+    /// doubling preserves the difference relationship; the resulting
+    /// bundle remains a valid `ThetaKernelCouplePoints` invariant.
+    ///
+    /// Used by the chain walker's torsion-descent phase: starting
+    /// from an 8-torsion-above-kernel bundle, repeated doublings
+    /// descend through 4-torsion to 2-torsion (i.e., the kernel
+    /// itself) for use as input to the splitting boundary.
+    pub fn double_iter(&self, n: u32, curves: &CoupleCurve<F>) -> Self {
+        Self::new(
+            self.t1.double_iter(n, curves),
+            self.t2.double_iter(n, curves),
+            self.t1_minus_t2.double_iter(n, curves),
+        )
+    }
+
+    /// Project all three kernel points to Montgomery x-only form.
+    ///
+    /// Returns `[T_1.xz, T_2.xz, (T_1 - T_2).xz]` — a triple of
+    /// [`CoupleMontgomeryPoint<F>`] in array order
+    /// `(t1, t2, t1_minus_t2)`.
+    ///
+    /// Used at chain initialization where the gluing isogeny's
+    /// x-only-input variant
+    /// ([`crate::isogeny::gluing::GluingCodomain::eval_point_special_case`])
+    /// expects couple-Montgomery inputs derived from the Jacobian
+    /// kernel descendants.
+    pub fn to_couple_xz_triple(&self) -> [CoupleMontgomeryPoint<F>; 3] {
+        [
+            self.t1.to_couple_xz(),
+            self.t2.to_couple_xz(),
+            self.t1_minus_t2.to_couple_xz(),
+        ]
+    }
+
+    /// Apply S133-era projective coordinate randomization (blinding)
+    /// to all three kernel points in place.
+    ///
+    /// Each of `t1`, `t2`, `t1_minus_t2` is blinded with its own
+    /// independent random scaling — and each couple-half within
+    /// those is also independently blinded per S125 doctrine. The
+    /// affine difference invariant `t1_minus_t2 = t1 - t2` is
+    /// preserved because projective rescaling doesn't change the
+    /// underlying affine point.
+    ///
+    /// Cost: `3 ·` the cost of
+    /// [`CoupleJacobianPoint::randomize_in_place`] (each call samples
+    /// its own per-half lambdas, so total entropy draw is `6 · 64`
+    /// bytes at L5).
+    pub fn randomize_in_place<R: CryptoRng>(&mut self, rng: &mut R) {
+        self.t1.randomize_in_place(rng);
+        self.t2.randomize_in_place(rng);
+        self.t1_minus_t2.randomize_in_place(rng);
+    }
+
+    /// Consuming-self ergonomic shim over [`Self::randomize_in_place`].
+    pub fn randomize_projective<R: CryptoRng>(mut self, rng: &mut R) -> Self {
+        self.randomize_in_place(rng);
+        self
+    }
+
+    /// `Choice::TRUE` iff **all three** kernel-couple fields are at
+    /// infinity (i.e., the kernel has been fully consumed by
+    /// torsion-descent: every doubling has driven the point to the
+    /// identity).
+    ///
+    /// Useful for chain-walker bound checks: detecting when iterated
+    /// doubling has descended past the kernel order and further
+    /// doublings would be no-ops.
+    pub fn is_infinity(&self) -> Choice {
+        self.t1.is_infinity() & self.t2.is_infinity() & self.t1_minus_t2.is_infinity()
+    }
+
+    /// **Structural-only** 2-torsion check on all three kernel-couple
+    /// fields (per
+    /// [`CoupleJacobianPoint::is_two_torsion_unchecked`]).
+    ///
+    /// **Precondition** (caller's responsibility): every component is
+    /// a valid Montgomery-curve point. This predicate inherits the
+    /// unchecked semantics of its underlying
+    /// [`JacobianPoint::is_two_torsion_unchecked`] calls — see that
+    /// function's docs for the full rationale + the safe-test
+    /// alternative.
+    ///
+    /// On an abelian group, the difference of two 2-torsion elements
+    /// is also 2-torsion (the 2-torsion subgroup is closed under
+    /// addition), so for a *valid* kernel bundle with
+    /// `t1_minus_t2 = t1 - t2` the third check is redundant —
+    /// but checking all three independently catches malformed
+    /// bundles where the third field was constructed inconsistently.
+    ///
+    /// Useful for splitting-step boundary detection inside trusted
+    /// chain code where curve membership is invariant.
+    pub fn is_two_torsion_unchecked(&self) -> Choice {
+        self.t1.is_two_torsion_unchecked()
+            & self.t2.is_two_torsion_unchecked()
+            & self.t1_minus_t2.is_two_torsion_unchecked()
     }
 }
 
@@ -908,6 +1088,617 @@ mod tests {
         );
         let r = p.double_iter(0, &one_v, &one_v);
         assert_eq!(r, p, "S149: double_iter(0) = identity");
+    }
+
+    // S176 — CoupleMontgomeryPoint::to_affine.
+
+    #[test]
+    fn couple_montgomery_to_affine_componentwise_matches_per_half_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+
+        let one_v = Fp2::<Fp1Element>::one();
+        let two = one_v.add(&one_v);
+        let three = two.add(&one_v);
+
+        let p = CoupleMontgomeryPoint::new(
+            MontgomeryPoint::<Fp1Element>::new(two.add(&two).add(&two), two),
+            MontgomeryPoint::<Fp1Element>::new(three.add(&three), two),
+        );
+        let affine = p.to_affine();
+        assert_eq!(
+            affine.p1,
+            p.p1.to_affine(),
+            "S176: couple to_affine p1 must match per-half",
+        );
+        assert_eq!(
+            affine.p2,
+            p.p2.to_affine(),
+            "S176: couple to_affine p2 must match per-half",
+        );
+    }
+
+    #[test]
+    fn couple_montgomery_to_affine_of_infinity_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        let inf = CoupleMontgomeryPoint::<Fp1Element>::infinity();
+        let affine_inf = inf.to_affine();
+        assert!(
+            bool::from(affine_inf.is_infinity()),
+            "S176: couple to_affine of (O, O) → (O, O)",
+        );
+    }
+
+    // S175 — CoupleJacobianPoint::to_affine.
+
+    #[test]
+    fn couple_jacobian_to_affine_componentwise_matches_per_half_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+
+        let one_v = Fp2::<Fp1Element>::one();
+        let two = one_v.add(&one_v);
+        let three = two.add(&one_v);
+
+        let p = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(one_v, two, three),
+            JacobianPoint::<Fp1Element>::new(two, three, one_v),
+        );
+        let affine = p.to_affine();
+        assert_eq!(
+            affine.p1,
+            p.p1.to_affine(),
+            "S175: to_affine p1 must match per-half",
+        );
+        assert_eq!(
+            affine.p2,
+            p.p2.to_affine(),
+            "S175: to_affine p2 must match per-half",
+        );
+    }
+
+    #[test]
+    fn couple_jacobian_to_affine_of_infinity_is_infinity_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        let inf = CoupleJacobianPoint::<Fp1Element>::infinity();
+        let affine_inf = inf.to_affine();
+        assert!(
+            bool::from(affine_inf.is_infinity()),
+            "S175: to_affine of (O, O) must remain (O, O)",
+        );
+    }
+
+    #[test]
+    fn couple_jacobian_to_affine_idempotent_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+
+        let one_v = Fp2::<Fp1Element>::one();
+        let two = one_v.add(&one_v);
+        let three = two.add(&one_v);
+
+        let p = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(one_v, two, three),
+            JacobianPoint::<Fp1Element>::new(two, three, one_v),
+        );
+        let once = p.to_affine();
+        let twice = once.to_affine();
+        assert_eq!(once, twice, "S175: to_affine is idempotent",);
+    }
+
+    // S174 — CoupleMontgomeryPoint::is_two_torsion + is_two_torsion_with_curves.
+
+    #[test]
+    fn couple_montgomery_is_two_torsion_true_when_both_halves_2t_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+
+        let zero = Fp2::<Fp1Element>::zero();
+        let one_v = Fp2::<Fp1Element>::one();
+        let imag = Fp2::<Fp1Element>::new(
+            <Fp1Element as BaseField>::zero(),
+            <Fp1Element as BaseField>::one(),
+        );
+        let a_e0 = zero; // E_0 has A = 0
+
+        // (0 : 1) on E_0 for half 1, (i : 1) on E_0 for half 2.
+        let p = CoupleMontgomeryPoint::new(
+            MontgomeryPoint::<Fp1Element>::new(zero, one_v),
+            MontgomeryPoint::<Fp1Element>::new(imag, one_v),
+        );
+        assert!(
+            bool::from(p.is_two_torsion(&a_e0, &a_e0)),
+            "S174: couple with both halves 2-torsion → TRUE",
+        );
+    }
+
+    #[test]
+    fn couple_montgomery_is_two_torsion_false_when_one_half_not_2t_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+
+        let zero = Fp2::<Fp1Element>::zero();
+        let one_v = Fp2::<Fp1Element>::one();
+        let two_tors = MontgomeryPoint::<Fp1Element>::new(zero, one_v);
+        let nontors = MontgomeryPoint::<Fp1Element>::new(one_v, one_v);
+        let a_e0 = zero;
+
+        let mixed_p1 = CoupleMontgomeryPoint::new(nontors, two_tors);
+        let mixed_p2 = CoupleMontgomeryPoint::new(two_tors, nontors);
+        assert!(
+            !bool::from(mixed_p1.is_two_torsion(&a_e0, &a_e0)),
+            "S174: p1 non-2-torsion → FALSE",
+        );
+        assert!(
+            !bool::from(mixed_p2.is_two_torsion(&a_e0, &a_e0)),
+            "S174: p2 non-2-torsion → FALSE",
+        );
+    }
+
+    #[test]
+    fn couple_montgomery_is_two_torsion_with_curves_matches_explicit_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+
+        let zero = Fp2::<Fp1Element>::zero();
+        let one_v = Fp2::<Fp1Element>::one();
+        let curves = CoupleCurve::<Fp1Element>::e0_e0();
+        let p = CoupleMontgomeryPoint::new(
+            MontgomeryPoint::<Fp1Element>::new(zero, one_v),
+            MontgomeryPoint::<Fp1Element>::new(zero, one_v),
+        );
+
+        let via_wrapper = p.is_two_torsion_with_curves(&curves);
+        let via_explicit = p.is_two_torsion(&curves.e1.a, &curves.e2.a);
+        assert_eq!(
+            bool::from(via_wrapper),
+            bool::from(via_explicit),
+            "S174: with_curves variant must match explicit-A variant",
+        );
+        assert!(
+            bool::from(via_wrapper),
+            "S174: (0:1, 0:1) on E_0 × E_0 is couple 2-torsion",
+        );
+    }
+
+    // S172 — ThetaKernelCouplePoints::is_two_torsion.
+
+    #[test]
+    fn theta_kernel_is_two_torsion_true_when_all_three_2t_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+
+        let zero = Fp2::<Fp1Element>::zero();
+        let one_v = Fp2::<Fp1Element>::one();
+        let imag = Fp2::<Fp1Element>::new(
+            <Fp1Element as BaseField>::zero(),
+            <Fp1Element as BaseField>::one(),
+        );
+
+        // (0, 0, 1) on each half.
+        let origin_origin = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(zero, zero, one_v),
+            JacobianPoint::<Fp1Element>::new(zero, zero, one_v),
+        );
+        // (i, 0, 1) on each half.
+        let i_i = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(imag, zero, one_v),
+            JacobianPoint::<Fp1Element>::new(imag, zero, one_v),
+        );
+        // (-i, 0, 1) on each half.
+        let neg_i_neg_i = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(imag.negate(), zero, one_v),
+            JacobianPoint::<Fp1Element>::new(imag.negate(), zero, one_v),
+        );
+
+        let kernel = ThetaKernelCouplePoints::new(origin_origin, i_i, neg_i_neg_i);
+        assert!(
+            bool::from(kernel.is_two_torsion_unchecked()),
+            "S172: all three 2-torsion couples → kernel is_two_torsion TRUE",
+        );
+    }
+
+    #[test]
+    fn theta_kernel_is_two_torsion_false_when_one_field_not_2t_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+
+        let zero = Fp2::<Fp1Element>::zero();
+        let one_v = Fp2::<Fp1Element>::one();
+
+        let two_tors = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(zero, zero, one_v),
+            JacobianPoint::<Fp1Element>::new(zero, zero, one_v),
+        );
+        let nontors = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(one_v, one_v, one_v),
+            JacobianPoint::<Fp1Element>::new(one_v, one_v, one_v),
+        );
+
+        let k1 = ThetaKernelCouplePoints::new(nontors, two_tors, two_tors);
+        let k2 = ThetaKernelCouplePoints::new(two_tors, nontors, two_tors);
+        let k3 = ThetaKernelCouplePoints::new(two_tors, two_tors, nontors);
+
+        for (label, k) in [
+            ("t1 not 2t", k1),
+            ("t2 not 2t", k2),
+            ("t1_minus_t2 not 2t", k3),
+        ] {
+            assert!(
+                !bool::from(k.is_two_torsion_unchecked()),
+                "S172: kernel with {label} must NOT be is_two_torsion",
+            );
+        }
+    }
+
+    #[test]
+    fn theta_kernel_is_two_torsion_false_for_all_infinity_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        // All-infinity kernel: Y=1 (sentinel), Z=0 — per S170 doctrine,
+        // is_two_torsion FALSE because Z=0 excludes.
+        let inf = CoupleJacobianPoint::<Fp1Element>::infinity();
+        let kernel = ThetaKernelCouplePoints::new(inf, inf, inf);
+        assert!(
+            !bool::from(kernel.is_two_torsion_unchecked()),
+            "S172: all-infinity kernel is NOT 2-torsion (Z=0 excludes)",
+        );
+    }
+
+    // S171 — CoupleJacobianPoint::is_two_torsion.
+
+    #[test]
+    fn couple_jacobian_is_two_torsion_true_when_both_halves_two_torsion_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+
+        let zero = Fp2::<Fp1Element>::zero();
+        let one_v = Fp2::<Fp1Element>::one();
+        let imag = Fp2::<Fp1Element>::new(
+            <Fp1Element as BaseField>::zero(),
+            <Fp1Element as BaseField>::one(),
+        );
+
+        // (0, 0, 1) on E_0 is 2-torsion (the origin (0, 0)).
+        let origin = JacobianPoint::<Fp1Element>::new(zero, zero, one_v);
+        // (i, 0, 1) on E_0 is 2-torsion.
+        let pos_i = JacobianPoint::<Fp1Element>::new(imag, zero, one_v);
+
+        let couple = CoupleJacobianPoint::new(origin, pos_i);
+        assert!(
+            bool::from(couple.is_two_torsion_unchecked()),
+            "S171: couple with both halves 2-torsion must return TRUE",
+        );
+    }
+
+    #[test]
+    fn couple_jacobian_is_two_torsion_false_when_one_half_not_two_torsion_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+
+        let zero = Fp2::<Fp1Element>::zero();
+        let one_v = Fp2::<Fp1Element>::one();
+
+        let origin = JacobianPoint::<Fp1Element>::new(zero, zero, one_v);
+        let nontors = JacobianPoint::<Fp1Element>::new(one_v, one_v, one_v);
+
+        let mixed_p1 = CoupleJacobianPoint::new(nontors, origin);
+        let mixed_p2 = CoupleJacobianPoint::new(origin, nontors);
+
+        assert!(
+            !bool::from(mixed_p1.is_two_torsion_unchecked()),
+            "S171: couple with p1 non-2-torsion is NOT 2-torsion",
+        );
+        assert!(
+            !bool::from(mixed_p2.is_two_torsion_unchecked()),
+            "S171: couple with p2 non-2-torsion is NOT 2-torsion",
+        );
+    }
+
+    #[test]
+    fn couple_jacobian_is_two_torsion_false_for_infinity_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        // Infinity has Y=1 in canonical sentinel → is_two_torsion FALSE per S170 doctrine.
+        let inf = CoupleJacobianPoint::<Fp1Element>::infinity();
+        assert!(
+            !bool::from(inf.is_two_torsion_unchecked()),
+            "S171: (O, O) is NOT 2-torsion (Z=0 on both halves)",
+        );
+    }
+
+    // S167 — ThetaKernelCouplePoints::is_infinity.
+
+    #[test]
+    fn theta_kernel_is_infinity_true_when_all_three_inf_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        let inf = CoupleJacobianPoint::<Fp1Element>::infinity();
+        let kernel = ThetaKernelCouplePoints::new(inf, inf, inf);
+        assert!(
+            bool::from(kernel.is_infinity()),
+            "S167: all-infinity kernel must have is_infinity == TRUE",
+        );
+    }
+
+    #[test]
+    fn theta_kernel_is_infinity_false_when_one_field_finite_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+        let one_v = Fp2::<Fp1Element>::one();
+        let two = one_v.add(&one_v);
+        let inf = CoupleJacobianPoint::<Fp1Element>::infinity();
+        let finite = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(one_v, two, one_v),
+            JacobianPoint::<Fp1Element>::new(one_v, two, one_v),
+        );
+        // Each of the three positions tested independently.
+        let k1 = ThetaKernelCouplePoints::new(finite, inf, inf);
+        let k2 = ThetaKernelCouplePoints::new(inf, finite, inf);
+        let k3 = ThetaKernelCouplePoints::new(inf, inf, finite);
+        for (label, k) in [
+            ("t1 finite", k1),
+            ("t2 finite", k2),
+            ("t1_minus_t2 finite", k3),
+        ] {
+            assert!(
+                !bool::from(k.is_infinity()),
+                "S167: kernel with {label} must NOT be is_infinity",
+            );
+        }
+    }
+
+    // S166 — ThetaKernelCouplePoints blinding methods.
+
+    #[test]
+    fn theta_kernel_randomize_preserves_affine_identity_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+        use rand_chacha::ChaCha20Rng;
+        use rand_core::SeedableRng;
+
+        let one_v = Fp2::<Fp1Element>::one();
+        let two = one_v.add(&one_v);
+        let three = two.add(&one_v);
+
+        let t1 = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(one_v, two, one_v),
+            JacobianPoint::<Fp1Element>::new(three, one_v, two),
+        );
+        let t2 = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(two, three, one_v),
+            JacobianPoint::<Fp1Element>::new(one_v, two, three),
+        );
+        let t1m2 = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(three, one_v, two),
+            JacobianPoint::<Fp1Element>::new(two, three, one_v),
+        );
+        let kernel = ThetaKernelCouplePoints::new(t1, t2, t1m2);
+
+        let mut rng = ChaCha20Rng::from_seed([0x42; 32]);
+        let blinded = kernel.randomize_projective(&mut rng);
+
+        // Affine identity (via is_equivalent) preserved on each field.
+        assert!(
+            bool::from(blinded.t1.p1.is_equivalent(&t1.p1)),
+            "S166: blinded.t1.p1 affinely equal to original",
+        );
+        assert!(
+            bool::from(blinded.t1.p2.is_equivalent(&t1.p2)),
+            "S166: blinded.t1.p2 affinely equal to original",
+        );
+        assert!(
+            bool::from(blinded.t2.p1.is_equivalent(&t2.p1)),
+            "S166: blinded.t2.p1 affinely equal to original",
+        );
+        assert!(
+            bool::from(blinded.t2.p2.is_equivalent(&t2.p2)),
+            "S166: blinded.t2.p2 affinely equal to original",
+        );
+        assert!(
+            bool::from(blinded.t1_minus_t2.p1.is_equivalent(&t1m2.p1)),
+            "S166: blinded.t1_minus_t2.p1 affinely equal to original",
+        );
+        assert!(
+            bool::from(blinded.t1_minus_t2.p2.is_equivalent(&t1m2.p2)),
+            "S166: blinded.t1_minus_t2.p2 affinely equal to original",
+        );
+    }
+
+    #[test]
+    fn theta_kernel_randomize_uses_independent_lambdas_at_lvl1() {
+        // With identical t1 = t2 = t1m2 inputs and a single rng,
+        // randomize should produce DIFFERENT projective representations
+        // for each (because each field consumes its own per-half lambdas).
+        // This is the S125 "independent per-call" doctrine in action.
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+        use rand_chacha::ChaCha20Rng;
+        use rand_core::SeedableRng;
+
+        let one_v = Fp2::<Fp1Element>::one();
+        let two = one_v.add(&one_v);
+        let same = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(one_v, two, one_v),
+            JacobianPoint::<Fp1Element>::new(one_v, two, one_v),
+        );
+        let kernel = ThetaKernelCouplePoints::new(same, same, same);
+
+        let mut rng = ChaCha20Rng::from_seed([0x55; 32]);
+        let blinded = kernel.randomize_projective(&mut rng);
+
+        // The three blinded fields should NOT be byte-identical
+        // (different lambdas → different projective coords) even
+        // though their affine equivalence to `same` is preserved.
+        assert!(
+            blinded.t1 != blinded.t2 || blinded.t2 != blinded.t1_minus_t2,
+            "S166: blinded kernel fields must differ projectively (independent lambdas)",
+        );
+    }
+
+    // S165 — ThetaKernelCouplePoints::to_couple_xz_triple.
+
+    #[test]
+    fn theta_kernel_to_couple_xz_triple_matches_per_field_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+
+        let one_v = Fp2::<Fp1Element>::one();
+        let two = one_v.add(&one_v);
+        let three = two.add(&one_v);
+
+        let t1 = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(one_v, two, one_v),
+            JacobianPoint::<Fp1Element>::new(three, one_v, two),
+        );
+        let t2 = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(two, three, one_v),
+            JacobianPoint::<Fp1Element>::new(one_v, two, three),
+        );
+        let t1m2 = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(three, one_v, two),
+            JacobianPoint::<Fp1Element>::new(two, three, one_v),
+        );
+        let kernel = ThetaKernelCouplePoints::new(t1, t2, t1m2);
+
+        let triple = kernel.to_couple_xz_triple();
+
+        assert_eq!(
+            triple[0],
+            t1.to_couple_xz(),
+            "S165: triple[0] = t1.to_couple_xz()"
+        );
+        assert_eq!(
+            triple[1],
+            t2.to_couple_xz(),
+            "S165: triple[1] = t2.to_couple_xz()"
+        );
+        assert_eq!(
+            triple[2],
+            t1m2.to_couple_xz(),
+            "S165: triple[2] = t1_minus_t2.to_couple_xz()"
+        );
+    }
+
+    #[test]
+    fn theta_kernel_to_couple_xz_triple_of_infinity_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        let inf = CoupleJacobianPoint::<Fp1Element>::infinity();
+        let kernel = ThetaKernelCouplePoints::new(inf, inf, inf);
+        let triple = kernel.to_couple_xz_triple();
+        for (i, cmp) in triple.iter().enumerate() {
+            assert!(
+                bool::from(cmp.is_infinity()),
+                "S165: triple[{i}] of all-infinity kernel must be infinity",
+            );
+        }
+    }
+
+    // S164 — ThetaKernelCouplePoints::double_iter.
+
+    #[test]
+    fn theta_kernel_double_iter_zero_is_identity_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        let inf = CoupleJacobianPoint::<Fp1Element>::infinity();
+        let kernel = ThetaKernelCouplePoints::new(inf, inf, inf);
+        let curves = CoupleCurve::<Fp1Element>::e0_e0();
+        let r = kernel.double_iter(0, &curves);
+        assert_eq!(r.t1, inf, "S164: double_iter(0).t1 = identity");
+        assert_eq!(r.t2, inf, "S164: double_iter(0).t2 = identity");
+        assert_eq!(
+            r.t1_minus_t2, inf,
+            "S164: double_iter(0).t1_minus_t2 = identity"
+        );
+    }
+
+    #[test]
+    fn theta_kernel_double_iter_componentwise_matches_per_field_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+
+        let one_v = Fp2::<Fp1Element>::one();
+        let two = one_v.add(&one_v);
+        let three = two.add(&one_v);
+        let curves = CoupleCurve::<Fp1Element>::e0_e0();
+
+        let t1 = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(one_v, two, one_v),
+            JacobianPoint::<Fp1Element>::new(three, one_v, two),
+        );
+        let t2 = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(two, three, one_v),
+            JacobianPoint::<Fp1Element>::new(one_v, two, three),
+        );
+        let t1m2 = CoupleJacobianPoint::new(
+            JacobianPoint::<Fp1Element>::new(three, one_v, two),
+            JacobianPoint::<Fp1Element>::new(two, three, one_v),
+        );
+        let kernel = ThetaKernelCouplePoints::new(t1, t2, t1m2);
+
+        for n in [1u32, 2, 3] {
+            let r = kernel.double_iter(n, &curves);
+            assert_eq!(
+                r.t1,
+                t1.double_iter(n, &curves),
+                "S164: t1 matches per-field"
+            );
+            assert_eq!(
+                r.t2,
+                t2.double_iter(n, &curves),
+                "S164: t2 matches per-field"
+            );
+            assert_eq!(
+                r.t1_minus_t2,
+                t1m2.double_iter(n, &curves),
+                "S164: t1_minus_t2 matches per-field",
+            );
+        }
+    }
+
+    // S163 — is_e0 + is_e0_e0 predicates.
+
+    #[test]
+    fn montgomery_curve_is_e0_true_for_e0_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        let e0 = MontgomeryCurve::<Fp1Element>::e0();
+        assert!(
+            bool::from(e0.is_e0()),
+            "S163: MontgomeryCurve::e0().is_e0() must be TRUE",
+        );
+    }
+
+    #[test]
+    fn montgomery_curve_is_e0_false_for_nonzero_a_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+        let one_v = Fp2::<Fp1Element>::one();
+        let curve = MontgomeryCurve::<Fp1Element>::new(one_v);
+        assert!(
+            !bool::from(curve.is_e0()),
+            "S163: MontgomeryCurve with A=1 must not be E_0",
+        );
+    }
+
+    #[test]
+    fn couple_curve_is_e0_e0_true_for_e0_e0_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        let cc = CoupleCurve::<Fp1Element>::e0_e0();
+        assert!(
+            bool::from(cc.is_e0_e0()),
+            "S163: e0_e0().is_e0_e0() must be TRUE",
+        );
+    }
+
+    #[test]
+    fn couple_curve_is_e0_e0_false_when_one_half_not_e0_at_lvl1() {
+        use crate::gf::fp::Fp1Element;
+        use crate::gf::fp2::Fp2;
+        let one_v = Fp2::<Fp1Element>::one();
+        let mixed = CoupleCurve {
+            e1: MontgomeryCurve::<Fp1Element>::e0(),
+            e2: MontgomeryCurve::<Fp1Element>::new(one_v),
+        };
+        assert!(
+            !bool::from(mixed.is_e0_e0()),
+            "S163: couple with one non-E_0 half is NOT (E_0, E_0)",
+        );
     }
 
     // S162 — CoupleJacobianPoint::negate.

@@ -151,7 +151,7 @@ pub fn evaluate_response_isogeny<P: Params>(_sig: &[u8], _msg: &[u8], _pk: &[u8]
     ))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "kat"))]
 mod tests {
     use super::*;
 

@@ -53,7 +53,7 @@
 //! S136 ships only the kernel-halving slice; everything above is
 //! deferred.
 
-use subtle::{Choice, CtOption};
+use subtle::{Choice, ConstantTimeEq, CtOption};
 
 use crate::ec::couple::{CoupleCurve, CoupleJacobianPoint, CoupleMontgomeryPoint};
 use crate::ec::montgomery::MontgomeryPoint;
@@ -667,6 +667,48 @@ pub(crate) struct BasisChangeMatrix<F: BaseField> {
 }
 
 impl<F: BaseField> BasisChangeMatrix<F> {
+    /// The `4 × 4` identity matrix `I` — neutral multiplier under
+    /// [`Self::mul`].
+    ///
+    /// `I · M = M · I = M` for any [`BasisChangeMatrix<F>`] `M`.
+    /// Useful as the initial accumulator value when composing a
+    /// sequence of basis-change matrices along a chain-walker step:
+    /// `acc = I; for m in steps { acc = acc.mul(&m); }`.
+    #[allow(dead_code)]
+    pub(crate) fn identity() -> Self {
+        let zero = Fp2::<F>::zero();
+        let one = Fp2::<F>::one();
+        Self {
+            m: [
+                [one, zero, zero, zero],
+                [zero, one, zero, zero],
+                [zero, zero, one, zero],
+                [zero, zero, zero, one],
+            ],
+        }
+    }
+
+    /// `Choice::TRUE` iff `self` is the `4 × 4` identity matrix.
+    ///
+    /// Predicate companion to [`Self::identity`]. Each diagonal
+    /// entry checked equal to `1`; each off-diagonal entry checked
+    /// equal to `0`. Entrywise constant-time via `Fp2`'s
+    /// `ConstantTimeEq` (the iteration count is fixed at 16 cells,
+    /// so the total comparison runs in fixed time).
+    #[allow(dead_code)]
+    pub(crate) fn is_identity(&self) -> Choice {
+        let zero = Fp2::<F>::zero();
+        let one = Fp2::<F>::one();
+        let mut acc = Choice::from(1u8);
+        for (i, row) in self.m.iter().enumerate() {
+            for (j, cell) in row.iter().enumerate() {
+                let expected = if i == j { one } else { zero };
+                acc &= cell.ct_eq(&expected);
+            }
+        }
+        acc
+    }
+
     /// Compute `self · other` — standard `4 × 4` matrix product.
     ///
     /// Method-form alias of
