@@ -206,6 +206,162 @@ impl<const LIMBS: usize> Quaternion<LIMBS> {
     }
 }
 
+/// A rational element of `B_{p,∞}` — a [`Quaternion`] over a positive
+/// integer denominator.
+///
+/// Mirrors the SQIsign C reference's `quat_alg_elem_t` (`coord[4]` + `denom`)
+/// at `src/quaternion/ref/generic/quaternion.h`. The denominator is
+/// tracked separately so that operations like `quat_alg_mul` and
+/// `quat_alg_normalize` can keep the rational representation in
+/// reduced form.
+///
+/// The `Clapotis` evaluator's `find_uv` output (`beta1`, `beta2`)
+/// is a `RationalQuaternion` because the LLL-reduction step + ideal
+/// rescaling introduce denominators ≠ 1.
+///
+/// Invariant: `denom > 0`. The numerator's coefficients may be
+/// negative; the denominator is always positive. The
+/// [`Self::normalize`] method divides both numerator and
+/// denominator by their common GCD to put the rational in
+/// lowest terms.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct RationalQuaternion<const LIMBS: usize> {
+    /// Numerator — a quaternion with integer coefficients (possibly negative).
+    pub num: Quaternion<LIMBS>,
+    /// Denominator — a positive `Uint<LIMBS>` (rational arithmetic
+    /// convention: never zero, never signed).
+    pub denom: Uint<LIMBS>,
+}
+
+impl<const LIMBS: usize> RationalQuaternion<LIMBS> {
+    /// Construct from a numerator and a strictly positive denominator.
+    /// **Panics** in debug builds if `denom == 0` (the rational is
+    /// undefined). In release the zero-denom construction proceeds
+    /// silently; downstream arithmetic will produce garbage.
+    #[inline]
+    pub fn new(num: Quaternion<LIMBS>, denom: Uint<LIMBS>) -> Self {
+        debug_assert!(
+            denom != Uint::<LIMBS>::from_u64(0),
+            "RationalQuaternion::new: denom must be > 0",
+        );
+        Self { num, denom }
+    }
+
+    /// The rational integer-one element `1/1`.
+    #[inline]
+    pub fn one() -> Self {
+        Self {
+            num: Quaternion::<LIMBS>::one(),
+            denom: Uint::<LIMBS>::ONE,
+        }
+    }
+
+    /// Equality test on the rational representation. Two
+    /// `RationalQuaternion` values are considered equal iff their
+    /// stored numerators and denominators agree exactly (NOT via
+    /// cross-multiplication). For cross-multiplication-based
+    /// equivalence callers should call [`Self::normalize`] on both
+    /// sides first.
+    #[inline]
+    pub fn equals_raw(&self, other: &Self) -> bool {
+        self.num.equals(&other.num) && self.denom == other.denom
+    }
+
+    /// Rational-quaternion multiplication:
+    /// `(a / d_a) · (b / d_b) = (a · b) / (d_a · d_b)`.
+    ///
+    /// Wraps [`Quaternion::mul`] for the numerator and an unsigned
+    /// `wrapping_mul` for the denominator. **Does NOT normalize** —
+    /// callers that need lowest-terms output must call
+    /// [`Self::normalize`] explicitly. This matches the SQIsign C
+    /// reference's `quat_alg_mul` (separate `quat_alg_normalize`).
+    ///
+    /// `p` is the level's prime. Same precondition as
+    /// [`Quaternion::mul`]: `p.bits_vartime() < 64 · LIMBS`.
+    pub fn mul(&self, rhs: &Self, p: &Uint<LIMBS>) -> Self {
+        Self {
+            num: self.num.mul(&rhs.num, p),
+            denom: self.denom.wrapping_mul(&rhs.denom),
+        }
+    }
+
+    /// Rational-quaternion conjugate: numerator conjugated, denominator
+    /// unchanged. `conjugate(a / d) = conjugate(a) / d` because
+    /// `conjugate` is a `Q`-linear involution and the denominator is
+    /// a scalar.
+    ///
+    /// Wraps [`Quaternion::conjugate`].
+    #[inline]
+    pub fn conjugate(&self) -> Self {
+        Self {
+            num: self.num.conjugate(),
+            denom: self.denom,
+        }
+    }
+
+    /// Reduce the rational to lowest terms: divide numerator and
+    /// denominator by `g = gcd(|num.a|, |num.b|, |num.c|, |num.d|,
+    /// denom)`. Returns `self` unchanged when `g ≤ 1` (already
+    /// reduced) or when the numerator is the zero quaternion (no
+    /// reduction is meaningful).
+    ///
+    /// Mirrors the SQIsign C reference's `quat_alg_normalize`. The
+    /// post-condition: `gcd(|num.a|, |num.b|, |num.c|, |num.d|,
+    /// denom) == 1` (or the numerator is zero).
+    ///
+    /// # Variable-time
+    ///
+    /// Calls [`uint_gcd_vartime`](crate::quaternion::represent_integer)
+    /// four times (Euclidean reduction). Variable-time on the
+    /// magnitudes — acceptable per SQIsign 2.0 §8.
+    pub fn normalize(&self) -> Self {
+        use crate::quaternion::hnf::int_div_floor;
+        use crate::quaternion::represent_integer::uint_gcd_vartime;
+
+        let a_abs = self.num.a.abs();
+        let b_abs = self.num.b.abs();
+        let c_abs = self.num.c.abs();
+        let d_abs = self.num.d.abs();
+
+        // gcd over all numerator magnitudes + denominator.
+        let g = uint_gcd_vartime::<LIMBS>(&a_abs, &b_abs);
+        let g = uint_gcd_vartime::<LIMBS>(&g, &c_abs);
+        let g = uint_gcd_vartime::<LIMBS>(&g, &d_abs);
+        let g = uint_gcd_vartime::<LIMBS>(&g, &self.denom);
+
+        // Already in lowest terms (or numerator is zero — gcd(0, denom)
+        // = denom, but dividing both sides by denom collapses the
+        // rational to 0 / 1; semantically a no-op for downstream
+        // callers, so skip the trip through int_div_floor).
+        if g <= Uint::<LIMBS>::ONE {
+            return *self;
+        }
+        if a_abs == Uint::<LIMBS>::from_u64(0)
+            && b_abs == Uint::<LIMBS>::from_u64(0)
+            && c_abs == Uint::<LIMBS>::from_u64(0)
+            && d_abs == Uint::<LIMBS>::from_u64(0)
+        {
+            return *self;
+        }
+
+        // Reinterpret g as a non-negative Int for the signed division.
+        let g_int = *g.as_int();
+        let new_a = int_div_floor::<LIMBS>(&self.num.a, &g_int);
+        let new_b = int_div_floor::<LIMBS>(&self.num.b, &g_int);
+        let new_c = int_div_floor::<LIMBS>(&self.num.c, &g_int);
+        let new_d = int_div_floor::<LIMBS>(&self.num.d, &g_int);
+        // Unsigned division for the denominator.
+        let denom_nz = crypto_bigint::NonZero::new(g)
+            .expect("uint_gcd_vartime returns 0 only if both inputs are 0; guarded above");
+        let new_denom = self.denom.wrapping_div_vartime(&denom_nz);
+
+        Self {
+            num: Quaternion::<LIMBS>::new(new_a, new_b, new_c, new_d),
+            denom: new_denom,
+        }
+    }
+}
+
 /// Marker for the quaternion algebra `B_{p,∞}` at the given parameter set.
 /// Carries no data; provides level-aware helpers via the `Params` trait.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -272,6 +428,137 @@ impl<P: Params> MaximalOrder<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── RationalQuaternion unit tests (S194) ───────────────────────────
+
+    #[test]
+    fn rational_quaternion_one_is_unit_over_unit_denom() {
+        let r = RationalQuaternion::<8>::one();
+        assert_eq!(r.num, Quaternion::<8>::one());
+        assert_eq!(r.denom, Uint::<8>::ONE);
+    }
+
+    #[test]
+    fn rational_quaternion_equals_raw_compares_components() {
+        let a = RationalQuaternion::<8>::new(Quaternion::<8>::i(), Uint::<8>::from_u64(3));
+        let b = RationalQuaternion::<8>::new(Quaternion::<8>::i(), Uint::<8>::from_u64(3));
+        let c = RationalQuaternion::<8>::new(Quaternion::<8>::j(), Uint::<8>::from_u64(3));
+        let d = RationalQuaternion::<8>::new(Quaternion::<8>::i(), Uint::<8>::from_u64(5));
+        assert!(a.equals_raw(&b));
+        assert!(!a.equals_raw(&c));
+        assert!(!a.equals_raw(&d));
+    }
+
+    // ── RationalQuaternion arithmetic (S197) ───────────────────────────
+
+    #[test]
+    fn rational_quaternion_mul_identity_preserves_operand() {
+        let p = Uint::<8>::from_u64(7);
+        let x = RationalQuaternion::<8>::new(Quaternion::<8>::i(), Uint::<8>::from_u64(5));
+        let one = RationalQuaternion::<8>::one();
+        // 1 · x = x (numerator), denom is 1 · 5 = 5.
+        let product = one.mul(&x, &p);
+        assert!(product.num.equals(&x.num));
+        assert_eq!(product.denom, x.denom);
+    }
+
+    #[test]
+    fn rational_quaternion_mul_doubles_denom_and_uses_quaternion_mul() {
+        let p = Uint::<8>::from_u64(7);
+        // (i / 2) · (j / 3) = (i·j) / 6 = k / 6 (at p ≡ 3 mod 4 with k = i·j).
+        let a = RationalQuaternion::<8>::new(Quaternion::<8>::i(), Uint::<8>::from_u64(2));
+        let b = RationalQuaternion::<8>::new(Quaternion::<8>::j(), Uint::<8>::from_u64(3));
+        let product = a.mul(&b, &p);
+        assert!(product.num.equals(&Quaternion::<8>::k()));
+        assert_eq!(product.denom, Uint::<8>::from_u64(6));
+    }
+
+    #[test]
+    fn rational_quaternion_conjugate_negates_b_c_d_keeps_denom() {
+        // (1 + i + j + k) / 7 → (1 - i - j - k) / 7.
+        let num = Quaternion::<8>::new(
+            Int::<8>::from_i64(1),
+            Int::<8>::from_i64(1),
+            Int::<8>::from_i64(1),
+            Int::<8>::from_i64(1),
+        );
+        let r = RationalQuaternion::<8>::new(num, Uint::<8>::from_u64(7));
+        let conj = r.conjugate();
+        assert_eq!(conj.num.a, Int::<8>::from_i64(1));
+        assert_eq!(conj.num.b, Int::<8>::from_i64(-1));
+        assert_eq!(conj.num.c, Int::<8>::from_i64(-1));
+        assert_eq!(conj.num.d, Int::<8>::from_i64(-1));
+        assert_eq!(conj.denom, Uint::<8>::from_u64(7));
+        // Involution: conj(conj(x)) == x.
+        let twice = conj.conjugate();
+        assert!(twice.equals_raw(&r));
+    }
+
+    #[test]
+    fn rational_quaternion_normalize_divides_by_common_gcd() {
+        // (2 + 2i + 0j + 0k) / 4 → (1 + i) / 2.
+        let num = Quaternion::<8>::new(
+            Int::<8>::from_i64(2),
+            Int::<8>::from_i64(2),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+        );
+        let r = RationalQuaternion::<8>::new(num, Uint::<8>::from_u64(4));
+        let n = r.normalize();
+        assert_eq!(n.num.a, Int::<8>::from_i64(1));
+        assert_eq!(n.num.b, Int::<8>::from_i64(1));
+        assert_eq!(n.num.c, Int::<8>::from_i64(0));
+        assert_eq!(n.num.d, Int::<8>::from_i64(0));
+        assert_eq!(n.denom, Uint::<8>::from_u64(2));
+    }
+
+    #[test]
+    fn rational_quaternion_normalize_idempotent_on_lowest_terms() {
+        // (1 + i) / 2 already in lowest terms — no change.
+        let num = Quaternion::<8>::new(
+            Int::<8>::from_i64(1),
+            Int::<8>::from_i64(1),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+        );
+        let r = RationalQuaternion::<8>::new(num, Uint::<8>::from_u64(2));
+        let n = r.normalize();
+        assert!(
+            n.equals_raw(&r),
+            "normalize must be a no-op on lowest-terms input"
+        );
+    }
+
+    #[test]
+    fn rational_quaternion_normalize_handles_negative_numerator_components() {
+        // (-6 + 0i + 0j + 3k) / 9 → (-2 + 0i + 0j + 1k) / 3.
+        // gcd(|-6|, 0, 0, |3|, 9) = gcd(6, 3, 9) = 3.
+        let num = Quaternion::<8>::new(
+            Int::<8>::from_i64(-6),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(3),
+        );
+        let r = RationalQuaternion::<8>::new(num, Uint::<8>::from_u64(9));
+        let n = r.normalize();
+        assert_eq!(n.num.a, Int::<8>::from_i64(-2));
+        assert_eq!(n.num.b, Int::<8>::from_i64(0));
+        assert_eq!(n.num.c, Int::<8>::from_i64(0));
+        assert_eq!(n.num.d, Int::<8>::from_i64(1));
+        assert_eq!(n.denom, Uint::<8>::from_u64(3));
+    }
+
+    #[test]
+    fn rational_quaternion_normalize_preserves_zero_numerator() {
+        // 0 / 5 stays 0 / 5 (no algebraic meaning to reducing further).
+        let zero = Quaternion::<8>::zero();
+        let r = RationalQuaternion::<8>::new(zero, Uint::<8>::from_u64(5));
+        let n = r.normalize();
+        assert!(
+            n.equals_raw(&r),
+            "normalize must preserve zero-numerator rationals as-is"
+        );
+    }
 
     /// LIMBS = 8 (512-bit signed) — plenty for Level-1's 251-bit prime plus
     /// the small integer multipliers used in these algebraic-identity tests.

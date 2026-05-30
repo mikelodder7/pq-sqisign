@@ -71,7 +71,7 @@ impl<F: BaseField> MontgomeryPoint<F> {
     /// or the analogous pair on any Montgomery curve). The
     /// `Z ≠ 0` clause excludes the infinity sentinel `(1 : 0)`.
     ///
-    /// Companion to [`crate::ec::jacobian::JacobianPoint::is_two_torsion`]
+    /// Companion to [`crate::ec::jacobian::JacobianPoint::is_two_torsion_unchecked`]
     /// for the x-only side of the chain layer.
     pub fn is_two_torsion(&self, a: &Fp2<F>) -> Choice {
         // Non-infinity: Z != 0.

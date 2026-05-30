@@ -45,6 +45,7 @@
 //! parametrise on `LIMBS` once KLPT lands.
 
 pub mod algebra;
+pub mod connecting_ideals;
 pub mod cornacchia;
 pub mod hnf;
 pub mod ideal;
@@ -61,7 +62,7 @@ pub mod sign_orchestration;
 pub mod smooth;
 pub mod sqrt_mod;
 
-pub use algebra::{MaximalOrder, OrderBasis, Quaternion, QuaternionAlgebra};
+pub use algebra::{MaximalOrder, OrderBasis, Quaternion, QuaternionAlgebra, RationalQuaternion};
 pub use cornacchia::{cornacchia, cornacchia_classical};
 pub use hnf::hnf_4x4;
 pub use ideal::LeftIdeal;

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+#![allow(rustdoc::private_intra_doc_links)]
 
 //! Splitting isogeny — the dual of the gluing isogeny.
 //!

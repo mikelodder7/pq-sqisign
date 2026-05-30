@@ -210,13 +210,44 @@ pub fn o0_reduced_norm_gram_matrix<const LIMBS: usize>(p: &Uint<LIMBS>) -> [[Int
     let two = Int::<LIMBS>::from_i64(2);
     let four = Int::<LIMBS>::from_i64(4);
     let one = Int::<LIMBS>::from_i64(1);
-    let one_plus_p = one.wrapping_add(p.as_int());
+    // Safe-reinterpret p as a non-negative Int<LIMBS>. Precondition: p's
+    // top bit is zero (structurally true at all SQIsign production LIMBS).
+    let p_int = uint_as_nonneg_int::<LIMBS>(p)
+        .expect("o0_reduced_norm_gram_matrix: p.bits_vartime() must be < 64·LIMBS");
+    let one_plus_p = one.wrapping_add(&p_int);
     [
         [four, zero, zero, two],
         [zero, four, two, zero],
         [zero, two, one_plus_p, zero],
         [two, zero, zero, one_plus_p],
     ]
+}
+
+/// Safely reinterpret a `Uint<LIMBS>` as a non-negative `Int<LIMBS>`.
+///
+/// Returns `None` when `u`'s top bit (bit `64·LIMBS − 1`) is set — i.e.
+/// `*u.as_int()` would interpret the value as a NEGATIVE `Int<LIMBS>`.
+/// This guard prevents the silent sign-flip trap that Forge S184 M3
+/// caught for `uint_inv_mod_vartime` and that S188's security review
+/// surfaced at multiple sites across `algebra.rs`, `o0_mul.rs`, and
+/// `represent_integer.rs`.
+///
+/// **Use this helper at every Uint→Int reinterpretation** rather than
+/// bare `*u.as_int()`. Callers in cryptographic-hot paths can use
+/// `.expect("precondition: u.bits < 64*LIMBS")` when the precondition
+/// is structurally true; callers in fallible API paths can propagate
+/// `None` via `?`.
+pub(crate) fn uint_as_nonneg_int<const LIMBS: usize>(u: &Uint<LIMBS>) -> Option<Int<LIMBS>> {
+    if LIMBS == 0 {
+        // Degenerate but well-defined: zero-width Uint is zero, reinterprets
+        // as zero Int. Defensive against const-generic edge cases.
+        return Some(Int::<LIMBS>::from_i64(0));
+    }
+    let words = u.to_words();
+    if (words[LIMBS - 1] >> 63) & 1 == 1 {
+        return None;
+    }
+    Some(Int::<LIMBS>::from_words(words))
 }
 
 /// Widen a signed `Int<NARROW>` to `Int<WIDE>` by sign-extension.
@@ -260,7 +291,14 @@ pub fn reduced_norm_o0_basis_wide<const NARROW: usize, const WIDE: usize>(
     let c2 = widen_int::<NARROW, WIDE>(&coords[2]);
     let c3 = widen_int::<NARROW, WIDE>(&coords[3]);
     let p_wide: Uint<WIDE> = p.resize::<WIDE>();
-    let p_int = *p_wide.as_int();
+    // Safe-reinterpret p_wide as a non-negative Int<WIDE>. The widened
+    // prime has its top bits cleared by the resize (NARROW < WIDE means
+    // the high LIMBS-NARROW words are zero), so the precondition is
+    // structurally satisfied when NARROW <= WIDE. The helper's check is
+    // defensive against future NARROW > WIDE callers (which would be a
+    // type-level shrink).
+    let p_int = uint_as_nonneg_int::<WIDE>(&p_wide)
+        .expect("reduced_norm_o0_basis_wide: p_wide.bits_vartime() must be < 64·WIDE");
 
     // 2·x in standard (1, i, j, k) basis = (2a + d, 2b + c, c, d).
     let qa = two.wrapping_mul(&c0).wrapping_add(&c3);
@@ -376,6 +414,59 @@ pub fn multiply_o0_basis<const LIMBS: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── uint_as_nonneg_int unit tests (S189) ───────────────────────────
+
+    #[test]
+    fn uint_as_nonneg_int_accepts_small_values() {
+        assert_eq!(
+            uint_as_nonneg_int::<8>(&Uint::from_u64(0)),
+            Some(Int::<8>::from_i64(0)),
+        );
+        assert_eq!(
+            uint_as_nonneg_int::<8>(&Uint::from_u64(1)),
+            Some(Int::<8>::from_i64(1)),
+        );
+        assert_eq!(
+            uint_as_nonneg_int::<8>(&Uint::from_u64(42)),
+            Some(Int::<8>::from_i64(42)),
+        );
+    }
+
+    #[test]
+    fn uint_as_nonneg_int_accepts_top_bit_clear() {
+        // Uint::<8>::MAX has top bit set → should reject. But a value
+        // with bit (64·8 - 2) set and bit 511 clear → should accept.
+        let mut words = [0u64; 8];
+        words[7] = 1u64 << 62; // bit 510 set; bit 511 clear
+        let u: Uint<8> = Uint::from_words(words);
+        let result = uint_as_nonneg_int::<8>(&u);
+        assert!(result.is_some(), "top-bit-clear value must accept");
+    }
+
+    #[test]
+    fn uint_as_nonneg_int_rejects_top_bit_set() {
+        // Uint::MAX has top bit set → reject.
+        assert_eq!(uint_as_nonneg_int::<8>(&Uint::<8>::MAX), None);
+
+        // Just the top bit alone → reject.
+        let mut words = [0u64; 8];
+        words[7] = 1u64 << 63;
+        let u: Uint<8> = Uint::from_words(words);
+        assert_eq!(uint_as_nonneg_int::<8>(&u), None);
+    }
+
+    #[test]
+    fn uint_as_nonneg_int_works_at_l1_l3_l5_widths() {
+        // Reasonable real-prime-scale values: L1 (p ≈ 2^248), L3 (p ≈ 2^383),
+        // L5 (p ≈ 2^505). All have top bit clear at production LIMBS.
+        let p_l1: Uint<8> = crate::params::lvl1::prime().resize::<8>();
+        let p_l3: Uint<12> = crate::params::lvl3::prime().resize::<12>();
+        let p_l5: Uint<16> = crate::params::lvl5::prime().resize::<16>();
+        assert!(uint_as_nonneg_int::<8>(&p_l1).is_some());
+        assert!(uint_as_nonneg_int::<12>(&p_l3).is_some());
+        assert!(uint_as_nonneg_int::<16>(&p_l5).is_some());
+    }
 
     fn n(v: i64) -> Int<8> {
         Int::<8>::from_i64(v)

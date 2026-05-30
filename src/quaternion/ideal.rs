@@ -139,14 +139,71 @@ impl<const LIMBS: usize> LeftIdeal<LIMBS> {
         }
     }
 
-    /// Reduced norm `N(I)` — the cached `[O_0 : I_rational]` value
-    /// maintained by every ideal operation. For integer ideals
-    /// (`denom == 1`) this matches `|det(basis)|`; for rational ideals
-    /// the cached value can diverge from `|det(basis)| / denom^4`
-    /// because the C reference's `lideal_mul` updates the cached norm
-    /// via a separate formula.
+    /// Cached lattice index `[O_0 : I_rational]` = `|det(basis)| / denom^4`
+    /// (for integer ideals, `denom == 1`, this matches `|det(basis)|`).
+    ///
+    /// **NOTE on convention** — this codebase's `cached_norm` is the
+    /// LATTICE INDEX, NOT the quaternion reduced ideal norm. For a
+    /// principal ideal `I = O_0 · γ`:
+    /// - `cached_norm` (lattice index) `= N_red(γ)²`
+    /// - quaternion reduced ideal norm = `N_red(γ)` itself
+    ///
+    /// The two differ by a square. The SQIsign C reference's
+    /// `quat_lideal_normN` returns the reduced ideal norm
+    /// (`N_red(γ)`); when porting any C-ref formula that uses
+    /// `n(ideal)`, callers should use [`Self::reduced_norm_vartime`]
+    /// (which integer-square-roots `cached_norm`) rather than this
+    /// raw cached value.
     pub fn norm(&self) -> Uint<LIMBS> {
         self.cached_norm
+    }
+
+    /// The SQIsign C reference's `quat_lideal_normN(I)` = the
+    /// **reduced quaternion ideal norm** of `I`, distinct from
+    /// [`Self::norm`]'s lattice-index convention.
+    ///
+    /// For principal ideals `I = O_0 · γ` in `B_{p,∞}` (all left
+    /// ideals of `O_0` are principal in this setting):
+    ///
+    /// ```text
+    ///     reduced_norm(I) = N_red(γ) = √(cached_norm)
+    /// ```
+    ///
+    /// Returns `Some(√cached_norm)` when `cached_norm` is a perfect
+    /// square (the principal-ideal case, always true for SQIsign-
+    /// produced ideals); returns `None` otherwise (defensive —
+    /// surfaces an invariant violation in the unlikely event the
+    /// lattice index isn't a square).
+    ///
+    /// # Why this exists
+    ///
+    /// Two ideal operations explicitly use this convention:
+    /// - The Clapotis `find_uv` delta-rescaling step computes
+    ///   `reduced_id = I · conj(δ) / n(I)` where `n(I)` is the
+    ///   reduced ideal norm (NOT the lattice index).
+    /// - The right ideal class manipulations in the alternate-
+    ///   orders loop similarly normalize by the reduced norm.
+    ///
+    /// Without this primitive, the rescaling step's divisibility
+    /// check (`N(I) · N_red(δ) / α_denom²` must be integer) would
+    /// be over-constrained — passing `cached_norm` (= `N²`) as
+    /// `α_denom` requires `N⁴ | N_red(I)·N_red(δ)`, which fails
+    /// for typical inputs. Passing `√cached_norm` (= `N`) requires
+    /// `N² | N_red(I)·N_red(δ)`, which holds for SQIsign-shaped
+    /// principal ideals.
+    ///
+    /// # Variable-time
+    ///
+    /// Uses `crypto_bigint`'s `Uint::floor_sqrt_vartime`. Variable-
+    /// time on the bit length — acceptable per SQIsign 2.0 §8.
+    pub fn reduced_norm_vartime(&self) -> Option<Uint<LIMBS>> {
+        let s = self.cached_norm.floor_sqrt_vartime();
+        let s_squared = s.wrapping_mul(&s);
+        if s_squared == self.cached_norm {
+            Some(s)
+        } else {
+            None
+        }
     }
 
     /// Reduce the basis matrix to Hermite Normal Form. Returns a new
@@ -588,5 +645,72 @@ mod tests {
                 assert_eq!(entry, g[j][i], "G[{i}][{j}] != G[{j}][{i}]");
             }
         }
+    }
+
+    // ── reduced_norm_vartime unit tests (S199) ─────────────────────────
+
+    #[test]
+    fn reduced_norm_full_order_is_one() {
+        // O_0 itself has lattice index 1 → reduced norm 1.
+        let id = Ideal::full_order();
+        let n = id.reduced_norm_vartime();
+        assert_eq!(n, Some(Uint::<8>::from_u64(1)));
+    }
+
+    #[test]
+    fn reduced_norm_scaled_ideal_is_perfect_square_root() {
+        // I = 3·O_0 has cached_norm = 3^4 = 81. Reduced norm = √81 = 9.
+        let id = Ideal::full_order().scale(3);
+        assert_eq!(id.cached_norm, Uint::<8>::from_u64(81));
+        let n = id.reduced_norm_vartime();
+        assert_eq!(
+            n,
+            Some(Uint::<8>::from_u64(9)),
+            "3·O_0 reduced norm = 9 = N_red(3 in B_{{p,∞}})",
+        );
+    }
+
+    #[test]
+    fn reduced_norm_returns_none_for_non_square_cached_norm() {
+        // Construct an ideal manually with a non-square cached_norm —
+        // defensive case that should not arise from any quaternion
+        // ideal operation in practice (all left ideals of O_0 are
+        // principal so cached_norm = N(γ)² always).
+        let basis = [
+            [
+                Int::<8>::from_i64(1),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(1),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(1),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(1),
+            ],
+        ];
+        let bogus = Ideal {
+            basis,
+            denom: Uint::<8>::ONE,
+            cached_norm: Uint::<8>::from_u64(7), // 7 is not a perfect square
+        };
+        assert_eq!(
+            bogus.reduced_norm_vartime(),
+            None,
+            "non-square cached_norm must surface as None",
+        );
     }
 }

@@ -487,6 +487,80 @@ pub fn qf_eval_4x4_wide<const NARROW: usize, const WIDE: usize>(
     qf_eval_4x4::<WIDE>(&c_wide, &g_wide)
 }
 
+/// Matrix-vector multiply over `Z`: `out = m · v` where `m` is 4×4 and
+/// `v` is a 4-vector. Returns the resulting 4-vector with each entry
+/// `out[i] = sum_j m[i][j] · v[j]`.
+///
+/// Mirrors the SQIsign C reference's `ibz_mat_4x4_eval`. Used by
+/// `find_uv` (the Clapotis evaluator's quaternion-side preparation)
+/// to lift integer short-vector coordinates back into quaternion
+/// coordinates via multiplication by the LLL-reduced ideal basis
+/// matrix.
+///
+/// 16 wrapping multiplications + 12 wrapping additions; pure integer
+/// arithmetic. No allocation. The matrix is row-major: `m[i][j]` is
+/// the entry at row `i`, column `j`.
+#[allow(clippy::needless_range_loop)]
+pub fn mat_4x4_eval<const LIMBS: usize>(
+    m: &[[Int<LIMBS>; 4]; 4],
+    v: &[Int<LIMBS>; 4],
+) -> [Int<LIMBS>; 4] {
+    let mut out = [Int::<LIMBS>::from_i64(0); 4];
+    for i in 0..4 {
+        let mut sum = Int::<LIMBS>::from_i64(0);
+        for j in 0..4 {
+            sum = sum.wrapping_add(&m[i][j].wrapping_mul(&v[j]));
+        }
+        out[i] = sum;
+    }
+    out
+}
+
+/// Transpose-vector multiply over `Z`: `out = mᵀ · v` where `m` is 4×4
+/// and `v` is a 4-vector. Returns the resulting 4-vector with each entry
+/// `out[i] = sum_j m[j][i] · v[j]`.
+///
+/// # Why this matters for the lattice/ideal convention
+///
+/// In this codebase, `LeftIdeal::basis` is stored **row-major with
+/// basis vectors as rows**: `basis[r]` is the r-th `Z`-generator of
+/// the ideal in `O_0`-basis coordinates. A lattice element at integer
+/// coordinates `v ∈ Z^4` is therefore
+///
+/// ```text
+///     α[c] = Σ_r v[r] · basis[r][c] = (basisᵀ · v)[c],
+/// ```
+///
+/// **NOT** `(basis · v)[c]`. The Gram matrix produced by
+/// [`pull_back_gram`] (which returns `B · M · Bᵀ`) satisfies
+/// `vᵀ · G_I · v = (Bᵀv)ᵀ · M · (Bᵀv)`, so the lift that recovers
+/// `α` from `v` consistent with the Gram is `mat_4x4_transpose_eval`,
+/// not [`mat_4x4_eval`].
+///
+/// Use [`mat_4x4_eval`] when `m` already encodes a standard left-action
+/// matrix (e.g. a change-of-basis matrix you multiply on the right).
+/// Use this transpose form whenever you are converting integer
+/// coordinates in a row-major-basis lattice back to `O_0`-basis
+/// coordinates.
+///
+/// 16 wrapping multiplications + 12 wrapping additions; pure integer
+/// arithmetic. No allocation.
+#[allow(clippy::needless_range_loop)]
+pub fn mat_4x4_transpose_eval<const LIMBS: usize>(
+    m: &[[Int<LIMBS>; 4]; 4],
+    v: &[Int<LIMBS>; 4],
+) -> [Int<LIMBS>; 4] {
+    let mut out = [Int::<LIMBS>::from_i64(0); 4];
+    for i in 0..4 {
+        let mut sum = Int::<LIMBS>::from_i64(0);
+        for j in 0..4 {
+            sum = sum.wrapping_add(&m[j][i].wrapping_mul(&v[j]));
+        }
+        out[i] = sum;
+    }
+    out
+}
+
 /// Evaluate the quadratic form `Q(c) = cᵀ · G · c` on a 4-D integer
 /// coordinate vector `c` against a 4×4 integer Gram matrix `G`. For
 /// `G = diag(1, 1, p, p)` this returns the reduced quaternion norm
@@ -914,6 +988,183 @@ pub fn size_reduce_4x4<const LIMBS: usize>(input: &[[Int<LIMBS>; 4]; 4]) -> [[In
 mod tests {
     use super::*;
     use crate::quaternion::hnf::hnf_4x4;
+
+    // ── mat_4x4_eval unit tests (S194) ─────────────────────────────────
+
+    #[test]
+    fn mat_4x4_eval_identity_returns_v_unchanged() {
+        let one = Int::<8>::from_i64(1);
+        let zero = Int::<8>::from_i64(0);
+        let identity = [
+            [one, zero, zero, zero],
+            [zero, one, zero, zero],
+            [zero, zero, one, zero],
+            [zero, zero, zero, one],
+        ];
+        let v = [
+            Int::<8>::from_i64(2),
+            Int::<8>::from_i64(-3),
+            Int::<8>::from_i64(5),
+            Int::<8>::from_i64(-7),
+        ];
+        assert_eq!(mat_4x4_eval::<8>(&identity, &v), v);
+    }
+
+    #[test]
+    fn mat_4x4_eval_hand_calculated_case() {
+        // m = [[1, 2, 0, 0], [0, 1, 0, 0], [3, 0, 1, 0], [0, 0, 0, 1]]
+        // v = [4, 5, 6, 7]
+        // out = [1·4 + 2·5 + 0 + 0, 0 + 1·5 + 0 + 0, 3·4 + 0 + 1·6 + 0, 0 + 0 + 0 + 1·7]
+        //     = [14, 5, 18, 7]
+        let m = [
+            [
+                Int::<8>::from_i64(1),
+                Int::<8>::from_i64(2),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(1),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(3),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(1),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(1),
+            ],
+        ];
+        let v = [
+            Int::<8>::from_i64(4),
+            Int::<8>::from_i64(5),
+            Int::<8>::from_i64(6),
+            Int::<8>::from_i64(7),
+        ];
+        let expected = [
+            Int::<8>::from_i64(14),
+            Int::<8>::from_i64(5),
+            Int::<8>::from_i64(18),
+            Int::<8>::from_i64(7),
+        ];
+        assert_eq!(mat_4x4_eval::<8>(&m, &v), expected);
+    }
+
+    #[test]
+    fn mat_4x4_eval_zero_matrix_returns_zero_vector() {
+        let zero = Int::<8>::from_i64(0);
+        let m = [[zero; 4]; 4];
+        let v = [
+            Int::<8>::from_i64(1),
+            Int::<8>::from_i64(2),
+            Int::<8>::from_i64(3),
+            Int::<8>::from_i64(4),
+        ];
+        assert_eq!(mat_4x4_eval::<8>(&m, &v), [zero; 4]);
+    }
+
+    #[test]
+    fn mat_4x4_transpose_eval_identity_matches_mat_4x4_eval() {
+        let one = Int::<8>::from_i64(1);
+        let zero = Int::<8>::from_i64(0);
+        let id = [
+            [one, zero, zero, zero],
+            [zero, one, zero, zero],
+            [zero, zero, one, zero],
+            [zero, zero, zero, one],
+        ];
+        let v = [
+            Int::<8>::from_i64(2),
+            Int::<8>::from_i64(3),
+            Int::<8>::from_i64(5),
+            Int::<8>::from_i64(7),
+        ];
+        // For the identity matrix M = Mᵀ, so transpose-eval == eval.
+        assert_eq!(mat_4x4_transpose_eval::<8>(&id, &v), v);
+        assert_eq!(
+            mat_4x4_transpose_eval::<8>(&id, &v),
+            mat_4x4_eval::<8>(&id, &v)
+        );
+    }
+
+    #[test]
+    fn mat_4x4_transpose_eval_non_symmetric_case_differs_from_mat_4x4_eval() {
+        // Upper-triangular non-symmetric basis:
+        //   B = [[1, 1, 0, 0],
+        //        [0, 1, 0, 0],
+        //        [0, 0, 1, 0],
+        //        [0, 0, 0, 1]]
+        // Bᵀ = [[1, 0, 0, 0],
+        //       [1, 1, 0, 0],
+        //       [0, 0, 1, 0],
+        //       [0, 0, 0, 1]]
+        // v = (1, 0, 0, 0):
+        //   B  · v = (1, 0, 0, 0)
+        //   Bᵀ · v = (1, 1, 0, 0)
+        // Document that B and Bᵀ produce different results on a
+        // non-symmetric matrix — this is exactly the case where the
+        // S195 transpose bug hid (caught by Forge audit).
+        let b = [
+            [
+                Int::<8>::from_i64(1),
+                Int::<8>::from_i64(1),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(1),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(1),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(1),
+            ],
+        ];
+        let v = [
+            Int::<8>::from_i64(1),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+        ];
+        let bv = mat_4x4_eval::<8>(&b, &v);
+        let btv = mat_4x4_transpose_eval::<8>(&b, &v);
+        assert_eq!(
+            bv,
+            [
+                Int::<8>::from_i64(1),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0)
+            ]
+        );
+        assert_eq!(
+            btv,
+            [
+                Int::<8>::from_i64(1),
+                Int::<8>::from_i64(1),
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0)
+            ]
+        );
+        assert_ne!(bv, btv, "non-symmetric B must distinguish B·v from Bᵀ·v");
+    }
 
     fn n(v: i64) -> Int<8> {
         Int::<8>::from_i64(v)

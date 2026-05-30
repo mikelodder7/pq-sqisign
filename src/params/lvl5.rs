@@ -35,6 +35,9 @@ impl Params for Level5 {
     const RESPONSE_BITS: usize = 253;
     const HASH_ITERATIONS: usize = 512;
     const SECURITY_BITS: usize = 256;
+    const FINDUV_BOX_SIZE: i64 = 3;
+    const NUM_ALTERNATE_EXTREMAL_ORDERS: usize = 6;
+    const FINDUV_CUBE_SIZE: u64 = 2400;
 }
 
 /// The Level-5 base prime `p = 27 · 2^500 − 1` as a 512-bit unsigned integer.

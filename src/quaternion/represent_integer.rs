@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+#![allow(rustdoc::private_intra_doc_links)]
 //! Wide-Int β-finder — `quat_represent_integer` port.
 //!
 //! Given target reduced norm `M` and prime `p`, find `β ∈ O_0` with
@@ -74,7 +75,7 @@ use crate::quaternion::cornacchia::cornacchia_classical_uint;
 use crate::quaternion::ideal::LeftIdeal;
 use crate::quaternion::o0_mul::{
     left_ideal_from_element_and_integer_o0, multiply_o0_basis, reduced_norm_o0_basis,
-    standard_to_o0_basis,
+    standard_to_o0_basis, uint_as_nonneg_int,
 };
 use crate::quaternion::primality::is_probable_prime_with_witnesses;
 use crate::quaternion::sample::sample_random_quaternion_o0;
@@ -90,7 +91,10 @@ use crate::quaternion::sqrt_mod::tonelli_shanks_uint;
 /// spec §8 convention, quaternion-side variable-time arithmetic is
 /// acceptable; the constant-time discipline lives at the isogeny /
 /// curve layer.
-fn uint_gcd_vartime<const LIMBS: usize>(a: &Uint<LIMBS>, b: &Uint<LIMBS>) -> Uint<LIMBS> {
+pub(crate) fn uint_gcd_vartime<const LIMBS: usize>(
+    a: &Uint<LIMBS>,
+    b: &Uint<LIMBS>,
+) -> Uint<LIMBS> {
     let zero = Uint::<LIMBS>::from_u64(0);
     let mut x = *a;
     let mut y = *b;
@@ -422,11 +426,20 @@ fn finalize_random_ideal_o0<const LIMBS: usize, R: CryptoRng>(
                 sample_uint_in_one_to_n_vartime::<LIMBS, R>(rng, norm),
                 sample_uint_in_one_to_n_vartime::<LIMBS, R>(rng, norm),
             ];
+            // Safe-reinterpret each [1, norm] Uint as a non-negative Int.
+            // Precision contract: norm < 2^(64·LIMBS − 1) (general-path
+            // bound), so top bit is zero by construction. Use the
+            // centralized helper for defense in depth against future
+            // precision-contract changes.
             let candidate: [Int<LIMBS>; 4] = [
-                Int::from_words(r_coords[0].to_words()),
-                Int::from_words(r_coords[1].to_words()),
-                Int::from_words(r_coords[2].to_words()),
-                Int::from_words(r_coords[3].to_words()),
+                uint_as_nonneg_int::<LIMBS>(&r_coords[0])
+                    .expect("gen_rerand coord 0 fits non-negative Int — precision contract"),
+                uint_as_nonneg_int::<LIMBS>(&r_coords[1])
+                    .expect("gen_rerand coord 1 fits non-negative Int — precision contract"),
+                uint_as_nonneg_int::<LIMBS>(&r_coords[2])
+                    .expect("gen_rerand coord 2 fits non-negative Int — precision contract"),
+                uint_as_nonneg_int::<LIMBS>(&r_coords[3])
+                    .expect("gen_rerand coord 3 fits non-negative Int — precision contract"),
             ];
             let n_int = reduced_norm_o0_basis::<LIMBS>(&candidate, p);
             let n_abs = n_int.abs();
@@ -469,7 +482,7 @@ fn finalize_random_ideal_o0<const LIMBS: usize, R: CryptoRng>(
 /// - **Fast path (`is_prime == true`):** sample standard-basis trace-zero
 ///   `(0, b, c, d)` with `b, c, d ∈ [0, norm)`, compute `n_temp = b² +
 ///   p·(c² + d²)`, find `a` with `a² ≡ -n_temp (mod norm)` via
-///   [`tonelli_shanks_uint`](super::sqrt_mod::tonelli_shanks_uint).
+///   [`tonelli_shanks_uint`].
 ///   Reject when `-n_temp` is a quadratic non-residue (~half of attempts
 ///   on prime norm). Lift to O_0 coords via `standard_to_o0_basis`.
 ///   Requires `norm` prime; on composite `norm` the sqrt step never
@@ -484,7 +497,7 @@ fn finalize_random_ideal_o0<const LIMBS: usize, R: CryptoRng>(
 /// re-randomizes the equivalence class (sampling `gen_rerand` until
 /// `gcd(N_red(gen_rerand), norm) == 1`, then `gen ← gen · gen_rerand`)
 /// and builds the ideal `O_0 · gen + O_0 · norm` via
-/// [`left_ideal_from_element_and_integer_o0`](super::o0_mul::left_ideal_from_element_and_integer_o0),
+/// [`left_ideal_from_element_and_integer_o0`],
 /// finally narrowing the wide `LeftIdeal<LIMBS>` to the public
 /// `LeftIdeal<8>` return contract.
 ///
@@ -634,13 +647,17 @@ pub fn sampling_random_ideal_o0_given_norm_wide<const LIMBS: usize, R: CryptoRng
             };
 
             // Standard (a, b, c, d) → O_0 coords via Quaternion +
-            // standard_to_o0_basis. Reinterpret unsigned magnitudes as
-            // non-negative Ints; safe because each is < norm < 2^(64·LIMBS-1)
-            // per precision contract.
-            let a_i: Int<LIMBS> = Int::from_words(a_u.to_words());
-            let b_i: Int<LIMBS> = Int::from_words(b_u.to_words());
-            let c_i: Int<LIMBS> = Int::from_words(c_u.to_words());
-            let d_i: Int<LIMBS> = Int::from_words(d_u.to_words());
+            // standard_to_o0_basis. Safe-reinterpret unsigned magnitudes
+            // as non-negative Ints via the centralized helper; precision
+            // contract `64·LIMBS ≥ 2·bits(p) + 1` ensures top bit is clear.
+            let a_i: Int<LIMBS> = uint_as_nonneg_int::<LIMBS>(&a_u)
+                .expect("fast-path a fits non-negative Int — precision contract");
+            let b_i: Int<LIMBS> = uint_as_nonneg_int::<LIMBS>(&b_u)
+                .expect("fast-path b fits non-negative Int — precision contract");
+            let c_i: Int<LIMBS> = uint_as_nonneg_int::<LIMBS>(&c_u)
+                .expect("fast-path c fits non-negative Int — precision contract");
+            let d_i: Int<LIMBS> = uint_as_nonneg_int::<LIMBS>(&d_u)
+                .expect("fast-path d fits non-negative Int — precision contract");
             let q_std = Quaternion::<LIMBS>::new(a_i, b_i, c_i, d_i);
             let gen_o0 = standard_to_o0_basis::<LIMBS>(&q_std);
 

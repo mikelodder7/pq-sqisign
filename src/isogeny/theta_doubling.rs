@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+#![allow(rustdoc::private_intra_doc_links)]
 
 //! `(2, 2)`-theta-coord point doubling using the C-reference's
 //! TWO-BLOCK precomputation form.

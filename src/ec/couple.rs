@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+#![allow(rustdoc::private_intra_doc_links)]
 //! Couple-pair primitives for the `(2,2)`-isogeny chain on `E_1 × E_2`.
 //!
 //! These types model points on the elliptic product as two independent
@@ -235,7 +236,7 @@ impl<F: BaseField> CoupleMontgomeryPoint<F> {
     ///
     /// Wraps [`MontgomeryPoint::is_two_torsion`] (S173) per half
     /// with each half's affine A coefficient (`a_1` for E_1, `a_2`
-    /// for E_2). Companion to [`CoupleJacobianPoint::is_two_torsion`]
+    /// for E_2). Companion to [`CoupleJacobianPoint::is_two_torsion_unchecked`]
     /// for the x-only side of the chain.
     #[inline]
     pub fn is_two_torsion(&self, a_1: &Fp2<F>, a_2: &Fp2<F>) -> Choice {

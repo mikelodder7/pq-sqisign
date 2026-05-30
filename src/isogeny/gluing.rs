@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
+#![allow(rustdoc::private_intra_doc_links)]
 //! Gluing isogeny `E_1 × E_2 → A` for the SQIsign 2.0.1 (2,2)-isogeny chain.
 //!
 //! The gluing step is the FIRST isogeny in the higher-dimensional
@@ -22,8 +23,9 @@
 //! via [`CoupleJacobianPoint::double`]) and the Jacobian→XZ projection
 //! (via [`CoupleJacobianPoint::to_couple_xz`]). The mathematically
 //! deep step — `gluing_change_of_basis` deriving the `4×4` isomorphism
-//! `M` and the codomain theta-null — is **not yet implemented** and
-//! returns [`GluingError::NotImplemented`]. The slice exists to
+//! `M` and the codomain theta-null — has since been implemented via
+//! [`gluing_codomain`] (returning [`GluingError::InvalidKernel`] on
+//! malformed inputs). The original vertical slice existed to
 //! validate that the type plumbing between Layer 2 (`couple.rs`) and
 //! the eventual gluing output threads end-to-end at compile time,
 //! per S136 advisor's vertical-slice recommendation.
@@ -39,7 +41,7 @@
 //!   computation; the `4×4` basis-change matrix `M` (as a
 //!   `BasisChangeMatrix<F>` newtype); the image of one kernel
 //!   generator under the gluing map.
-//! - [`gluing_compute`] (analog of C `gluing_compute`): the full
+//! - [`gluing_codomain`] (Rust port of C `gluing_compute`): the full
 //!   constructor; consumes two 8-torsion kernel generators and the
 //!   couple-curve, runs the change-of-basis derivation, validates
 //!   isotropy, returns the codomain.

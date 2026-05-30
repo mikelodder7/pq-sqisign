@@ -33,6 +33,13 @@ pub enum Error {
     Internal(&'static str),
     /// Path not yet implemented in this build of the crate (multi-session port in progress).
     Unimplemented(&'static str),
+    /// Bezout / short-vector search exhausted its budget without finding a
+    /// solution within the configured box / list size. Distinct from
+    /// [`Error::Unimplemented`]: the path IS implemented, the inputs simply
+    /// did not yield a solution. Emitted by the Clapotis `find_uv`
+    /// orchestrator when either the short-vector enumeration returns empty
+    /// OR the Bezout pair search rejects every candidate.
+    NoBezoutSolution(&'static str),
 }
 
 impl fmt::Display for Error {
@@ -51,6 +58,7 @@ impl fmt::Display for Error {
             Error::InvalidSecretKey => f.write_str("invalid secret key encoding"),
             Error::Internal(msg) => write!(f, "internal invariant violated: {msg}"),
             Error::Unimplemented(msg) => write!(f, "not yet implemented: {msg}"),
+            Error::NoBezoutSolution(msg) => write!(f, "no Bezout solution found: {msg}"),
         }
     }
 }

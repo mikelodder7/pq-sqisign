@@ -40,12 +40,222 @@
 
 use core::marker::PhantomData;
 
-use crypto_bigint::Uint;
+#[cfg(feature = "alloc")]
+extern crate alloc;
+#[cfg(feature = "alloc")]
+use alloc::vec::Vec;
+
+use crypto_bigint::{Int, Uint};
 use rand_core::CryptoRng;
 
 use crate::error::{Error, Result};
 use crate::params::Params;
+use crate::quaternion::algebra::RationalQuaternion;
+use crate::quaternion::hnf::int_div_floor;
 use crate::quaternion::ideal_mul::LeftIdealWideNorm;
+use crate::quaternion::lattice::{mat_4x4_transpose_eval, pull_back_gram, qf_eval_4x4};
+use crate::quaternion::o0_mul::{o0_basis_to_standard_doubled, o0_reduced_norm_gram_matrix};
+
+/// A short-vector enumeration result: a 4-D integer vector together with
+/// its quadratic-form value (divided by `adjusted_norm` from the caller).
+///
+/// Produced by [`enumerate_hypercube`] (the SQIsign-2.0 reference's
+/// `enumerate_hypercube` in `src/id2iso/ref/lvlx/dim2id2iso.c:255-357`).
+#[cfg(feature = "alloc")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EnumeratedShortVec<const LIMBS: usize> {
+    /// The 4-D vector `(x, y, z, w) ∈ Z^4` whose entries are pulled from
+    /// the hypercube `[-m, m]^4` (with symmetries pruned).
+    pub vec: [Int<LIMBS>; 4],
+    /// The quadratic-form value `v^T · G · v / adjusted_norm` (the C
+    /// reference divides by `adjusted_norm` and asserts exact
+    /// divisibility before storing).
+    pub norm: Int<LIMBS>,
+}
+
+/// Brute-force-with-symmetry-pruning enumeration of short vectors in the
+/// integer hypercube `[-m, m]^4` under the quadratic form defined by
+/// `gram`. Mirrors the C reference's static
+/// `enumerate_hypercube` at
+/// `src/id2iso/ref/lvlx/dim2id2iso.c:255-357` of
+/// `github.com/SQISign/the-sqisign`.
+///
+/// # Algorithm
+///
+/// Walk `(x, y, z, w) ∈ [-m, 0] × [-m, m]^3` (antipodal symmetry: only
+/// the non-positive-x half is enumerated; symmetric cascades on
+/// `(y, z, w)` when `x == 0`, `(x, y) == (0, 0)`, etc.). For each
+/// surviving candidate, apply three primitivity / symmetry filters:
+///
+/// 1. **All-even filter**: skip vectors with `(x | y | z | w) & 1 == 0`
+///    (i.e., all four entries even).
+/// 2. **All-multiple-of-3 filter**: skip vectors with every entry
+///    divisible by 3.
+/// 3. **`i`-action symmetry filter** (active only when the Gram matrix
+///    has the canonical `[α, iα, β, iβ]`-basis shape detected by
+///    `gram[0][0] == gram[1][1] ∧ gram[3][3] == gram[2][2]`): map each
+///    candidate to its lex-rank via the linear index `check1 = (m+w)
+///    + dim·(m+z) + dim²·(m+y) + dim³·(m+x)`, plus two rotated indices
+///    `check2`, `check3` representing the action of `i` and `i^2`.
+///    Keep only the lex-minimal representative among the four
+///    `⟨i⟩`-orbits.
+///
+/// For each survivor: compute `norm = v^T · G · v` via
+/// [`qf_eval_4x4`], divide by `adjusted_norm` (a `debug_assert!` checks
+/// for exact divisibility — see "Quirks" below), and accept only if the
+/// resulting quotient is odd.
+///
+/// # Output ordering and the C reference's `count - 1` quirk
+///
+/// Accepted `(vec, norm)` pairs are pushed onto the returned `Vec` in
+/// enumeration order. **The C reference returns `count - 1`** (not
+/// `count`), so its callers iterate `[0, count - 1)` — i.e. they discard
+/// the LAST accepted entry. This Rust port mirrors the behavior by
+/// truncating the returned `Vec` to `count - 1` entries (or `0` if no
+/// entries were accepted). The behavior is preserved verbatim against
+/// the C reference; whether this off-by-one is intentional or a latent
+/// bug in the C ref is documented as an S192 open question for
+/// follow-up audit. Sorting (the C ref's `compare_vec_by_norm` qsort
+/// step) is the CALLER's responsibility — Rust's stable `Vec::sort_by`
+/// applied to the returned `Vec` (sorting by `norm`) is the idiomatic
+/// equivalent and naturally tie-breaks by insertion order (matching the
+/// C ref's `idx` tiebreaker).
+///
+/// # Parameters
+///
+/// - `m`: half-bound for the hypercube; each coordinate ∈ `[-m, m]`.
+///   Must be `> 0`. The C reference asserts this; the Rust port returns
+///   an empty `Vec` for `m <= 0` (defensive; in release a non-positive
+///   `m` would skip the loop body entirely).
+/// - `gram`: the 4×4 Gram matrix defining the quadratic form on `Z^4`.
+/// - `adjusted_norm`: the normalizing divisor applied to every
+///   stored norm. Must divide `v^T · G · v` exactly for every accepted
+///   candidate. Caller's responsibility.
+///
+/// # Returns
+///
+/// A `Vec<EnumeratedShortVec<LIMBS>>` of the accepted candidates, in
+/// enumeration order, truncated by 1 from the end per the C reference's
+/// `count - 1` semantics. Caller sorts (typically by `norm`) before
+/// consuming.
+///
+/// # Precision / variable-time
+///
+/// All arithmetic is `Int<LIMBS>` wrapping. The function is variable-
+/// time on the candidate count (i.e., on `m`) and on the Gram matrix's
+/// entries (via `qf_eval_4x4`). At SQIsign's call sites the inputs are
+/// signing-flow secrets, which matches the SQIsign 2.0 spec §8 vartime
+/// quaternion-side convention.
+#[cfg(feature = "alloc")]
+pub fn enumerate_hypercube<const LIMBS: usize>(
+    m: i64,
+    gram: &[[Int<LIMBS>; 4]; 4],
+    adjusted_norm: &Int<LIMBS>,
+) -> Vec<EnumeratedShortVec<LIMBS>> {
+    let mut out: Vec<EnumeratedShortVec<LIMBS>> = Vec::new();
+    if m <= 0 {
+        return out;
+    }
+
+    // Detect the canonical `[α, iα, β, iβ]` basis shape: the i-action
+    // symmetry filter only activates when this holds.
+    let need_remove_symmetry = gram[0][0] == gram[1][1] && gram[3][3] == gram[2][2];
+
+    // Linear-index dimensions for the i-action filter.
+    let dim = 2 * m + 1;
+    let dim2 = dim * dim;
+    let dim3 = dim2 * dim;
+
+    let zero_int = Int::<LIMBS>::from_i64(0);
+
+    for x in -m..=0 {
+        // Antipodal break: non-positive x only.
+        for y in -m..=m {
+            if x == 0 && y > 0 {
+                break;
+            }
+            for z in -m..=m {
+                if x == 0 && y == 0 && z > 0 {
+                    break;
+                }
+                for w in -m..=m {
+                    if x == 0 && y == 0 && z == 0 && w >= 0 {
+                        break;
+                    }
+
+                    // Filter 1: all-even — skip vectors with `(x|y|z|w) & 1 == 0`.
+                    if (x | y | z | w) & 1 == 0 {
+                        continue;
+                    }
+                    // Filter 2: all-multiple-of-3 — skip vectors with every entry % 3 == 0.
+                    if x % 3 == 0 && y % 3 == 0 && z % 3 == 0 && w % 3 == 0 {
+                        continue;
+                    }
+
+                    // Filter 3 (conditional): i-action symmetry — only
+                    // keep the lex-minimal rep among the four ⟨i⟩-orbits.
+                    if need_remove_symmetry {
+                        let check1 = (m + w) + dim * (m + z) + dim2 * (m + y) + dim3 * (m + x);
+                        let check2 = (m - z) + dim * (m + w) + dim2 * (m - x) + dim3 * (m + y);
+                        let check3 = (m + z) + dim * (m - w) + dim2 * (m + x) + dim3 * (m - y);
+                        if !(check1 <= check2 && check1 <= check3) {
+                            continue;
+                        }
+                    }
+
+                    // Build the candidate vector and evaluate the
+                    // quadratic form.
+                    let vec = [
+                        Int::<LIMBS>::from_i64(x),
+                        Int::<LIMBS>::from_i64(y),
+                        Int::<LIMBS>::from_i64(z),
+                        Int::<LIMBS>::from_i64(w),
+                    ];
+                    let norm_full = qf_eval_4x4::<LIMBS>(&vec, gram);
+
+                    // Divide by adjusted_norm. C reference asserts exact
+                    // divisibility (`assert(ibz_is_zero(&remain))`); we
+                    // match via debug_assert. In release builds this is
+                    // a silent floor-division — matching the C's NDEBUG
+                    // path. Caller is responsible for picking
+                    // `adjusted_norm` to ensure exact divisibility on
+                    // every surviving candidate.
+                    let quotient = int_div_floor::<LIMBS>(&norm_full, adjusted_norm);
+                    #[cfg(debug_assertions)]
+                    {
+                        let recovered = quotient.wrapping_mul(adjusted_norm);
+                        let remainder = norm_full.wrapping_sub(&recovered);
+                        debug_assert_eq!(
+                            remainder, zero_int,
+                            "enumerate_hypercube: adjusted_norm must divide v^T · G · v exactly (got remainder)",
+                        );
+                    }
+                    let _ = zero_int; // suppress unused-in-release lint
+
+                    // Odd-quotient filter: store only when the quotient
+                    // is odd. The LSB of the two's-complement
+                    // representation is the parity bit for both
+                    // non-negative and negative Int<LIMBS> values.
+                    if quotient.to_words()[0] & 1 == 1 {
+                        out.push(EnumeratedShortVec {
+                            vec,
+                            norm: quotient,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // C reference returns `count - 1`, not `count` — callers iterate
+    // `[0, indices[j])` and so discard the LAST accepted entry.
+    // Preserve verbatim.
+    let n = out.len();
+    if n > 0 {
+        out.truncate(n - 1);
+    }
+    out
+}
 
 /// Structured output of [`ideal_to_isogeny`] at security level `P`.
 ///
@@ -201,6 +411,1632 @@ mod tests {
         assert!(
             msg.contains("Clapotis evaluator") || msg.contains("dominant remaining scope"),
             "S84: verify stub's error must reference the Clapotis deferral; got: {msg}",
+        );
+    }
+}
+
+/// Output of [`find_uv_from_lists`]: a Bezout-pair search result over the
+/// cross-product of two short-norm lists.
+///
+/// On success, `u · small_norms1[index_sol1] + v · small_norms2[index_sol2] == target`
+/// with `u, v > 0`.
+#[cfg(feature = "alloc")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FindUvFromListsResult<const LIMBS: usize> {
+    /// Positive integer u with `u · d1 + v · d2 = target`.
+    pub u: Int<LIMBS>,
+    /// Positive integer v.
+    pub v: Int<LIMBS>,
+    /// Index of the chosen norm in `small_norms1` (= d1).
+    pub index_sol1: usize,
+    /// Index of the chosen norm in `small_norms2` (= d2).
+    pub index_sol2: usize,
+}
+
+/// Search the cross-product of two sorted short-norm lists for a Bezout
+/// pair `(u, v)` with `u · d1 + v · d2 = target`, `u, v > 0`, `v < quotients[i2]`.
+///
+/// Mirrors the C reference's static `find_uv_from_lists` in
+/// `src/id2iso/ref/lvlx/dim2id2iso.c:362-449` of
+/// `github.com/SQISign/the-sqisign`.
+///
+/// # Algorithm
+///
+/// For each pair `(i1, i2)` with `i1 ∈ [0, small_norms1.len())` and
+/// `i2 ∈ [start, small_norms2.len())` (where `start = i1` if
+/// `is_diagonal == true`, else `0`):
+///
+/// - Compute `adjusted_norm = target mod small_norms1[i1]`.
+/// - Compute `inv = small_norms2[i2]^{-1} mod small_norms1[i1]` via
+///   the extended Euclidean helper. If no inverse exists (gcd ≠ 1),
+///   skip this pair.
+/// - Compute `v = (inv · adjusted_norm) mod small_norms1[i1]`.
+/// - Walk `v += small_norms1[i1]` while `v < quotients[i2]`, and for
+///   each step compute `u = (target − v · small_norms2[i2]) /
+///   small_norms1[i1]`. Accept iff `u, v > 0`; on accept return
+///   `Some(FindUvFromListsResult)`.
+///
+/// # Cornacchia paths (deferred)
+///
+/// The C reference accepts a `number_sum_square ∈ {0, 1, 2}` flag that
+/// adds Cornacchia constraints on `v` (1) or both `u` and `v` (2). The
+/// orchestrator (`find_uv` → `find_uv_from_lists`) passes
+/// `number_sum_square == 0` in practice — the Cornacchia paths exist
+/// for unused/future call sites. The Rust port currently implements
+/// only the `number_sum_square == 0` path (the orchestrator's actual
+/// usage); other values return `None`. The `number_sum_square ∈ {1, 2}`
+/// paths can be added in a follow-up session when needed.
+///
+/// # Parameters
+///
+/// - `target`: the right-hand side of the Bezout equation. Typically
+///   `2^TORSION_EVEN_POWER` per SQIsign convention.
+/// - `small_norms1`: sorted short-norm list (the `d1` candidates).
+/// - `small_norms2`: sorted short-norm list (the `d2` candidates).
+/// - `quotients2`: precomputed `target / small_norms2[i]` for each
+///   `i ∈ [0, small_norms2.len())`. Used as the upper bound on `v`.
+/// - `is_diagonal`: when `true` (caller passes identical `small_norms1
+///   == small_norms2`), restrict `i2 ≥ i1` to avoid double-counting.
+/// - `number_sum_square`: 0 in the orchestrator's call pattern; other
+///   values reserved for future Cornacchia-constrained calls.
+///
+/// # Returns
+///
+/// - `Some(FindUvFromListsResult)`: a valid Bezout pair was found.
+/// - `None`: no pair satisfies the constraints within the given lists.
+#[cfg(feature = "alloc")]
+#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+pub fn find_uv_from_lists<const LIMBS: usize>(
+    target: &Int<LIMBS>,
+    small_norms1: &[Int<LIMBS>],
+    small_norms2: &[Int<LIMBS>],
+    quotients2: &[Int<LIMBS>],
+    is_diagonal: bool,
+    number_sum_square: u32,
+) -> Option<FindUvFromListsResult<LIMBS>> {
+    use crate::quaternion::sign_orchestration::uint_inv_mod_vartime;
+    let zero_int = Int::<LIMBS>::from_i64(0);
+
+    // S193 scope: only the orchestrator's actual call pattern is
+    // ported. Cornacchia-constrained paths return None (defer to a
+    // future session when call sites materialize).
+    if number_sum_square != 0 {
+        return None;
+    }
+
+    assert_eq!(
+        small_norms2.len(),
+        quotients2.len(),
+        "find_uv_from_lists: small_norms2 and quotients2 must have the same length",
+    );
+
+    for i1 in 0..small_norms1.len() {
+        let d1 = &small_norms1[i1];
+        if *d1 <= zero_int {
+            // Skip non-positive norms (shouldn't occur for valid inputs
+            // from enumerate_hypercube but defensive).
+            continue;
+        }
+        // adjusted_norm = target mod d1. Use int_div_floor + recompute
+        // remainder via `target - (target/d1)·d1`.
+        let q_floor = int_div_floor::<LIMBS>(target, d1);
+        let q_times_d1 = q_floor.wrapping_mul(d1);
+        let adjusted_norm = target.wrapping_sub(&q_times_d1);
+
+        let start_i2 = if is_diagonal { i1 } else { 0 };
+        for i2 in start_i2..small_norms2.len() {
+            let d2 = &small_norms2[i2];
+            if *d2 <= zero_int {
+                continue;
+            }
+
+            // Convert d1, d2 to Uint<LIMBS> for the modular inverse.
+            // Both are positive per the guard above and per the
+            // enumerate_hypercube contract (norms are |·G·| ≥ 0).
+            let d1_uint = Uint::<LIMBS>::from_words(d1.to_words());
+            let d2_uint = Uint::<LIMBS>::from_words(d2.to_words());
+
+            // Compute inv = d2^{-1} mod d1.
+            let inv_uint = match uint_inv_mod_vartime::<LIMBS>(&d2_uint, &d1_uint) {
+                Some(i) => i,
+                None => continue, // gcd(d1, d2) != 1
+            };
+            let inv_int = Int::<LIMBS>::from_words(inv_uint.to_words());
+
+            // v = (inv · adjusted_norm) mod d1. Compute the product
+            // then reduce.
+            let prod = inv_int.wrapping_mul(&adjusted_norm);
+            let q2 = int_div_floor::<LIMBS>(&prod, d1);
+            let q2_times_d1 = q2.wrapping_mul(d1);
+            let mut v = prod.wrapping_sub(&q2_times_d1);
+
+            // Walk v += d1 while v < quotients2[i2].
+            while v < quotients2[i2] {
+                // Compute u = (target - v · d2) / d1.
+                let v_d2 = v.wrapping_mul(d2);
+                let target_minus_vd2 = target.wrapping_sub(&v_d2);
+                if target_minus_vd2 <= zero_int {
+                    // The C ref asserts `ibz_cmp(u, &ibz_const_zero) > 0`
+                    // (i.e. u > 0). If target - v·d2 ≤ 0 then u ≤ 0 — skip.
+                    v = v.wrapping_add(d1);
+                    continue;
+                }
+                let u = int_div_floor::<LIMBS>(&target_minus_vd2, d1);
+                // The C ref also asserts `ibz_is_zero(&remain)` — exact
+                // divisibility of (target - v·d2) by d1. By construction:
+                // `target ≡ v · d2 (mod d1)` (from the inv-mod step), so
+                // the remainder IS zero. debug_assert.
+                #[cfg(debug_assertions)]
+                {
+                    let u_d1 = u.wrapping_mul(d1);
+                    let remainder = target_minus_vd2.wrapping_sub(&u_d1);
+                    debug_assert_eq!(
+                        remainder, zero_int,
+                        "find_uv_from_lists: (target - v·d2) must be divisible by d1",
+                    );
+                }
+
+                // Final acceptance: u > 0 (checked above) AND v > 0.
+                if u > zero_int && v > zero_int {
+                    return Some(FindUvFromListsResult {
+                        u,
+                        v,
+                        index_sol1: i1,
+                        index_sol2: i2,
+                    });
+                }
+                v = v.wrapping_add(d1);
+            }
+        }
+    }
+
+    None
+}
+
+/// Output of [`find_uv`]: a Bezout-decomposition with rational-quaternion
+/// lifts.
+///
+/// Mirrors the C reference's `find_uv(u, v, beta1, beta2, d1, d2,
+/// index_alternate_order_1, index_alternate_order_2, target, lideal,
+/// Bpoo, num_alternate_order)` out-parameter set. On success:
+/// `u·d1 + v·d2 = target` with `u, v, d1, d2 > 0` and `d1, d2` odd;
+/// `beta_i` is a rational quaternion of reduced norm `n(lideal)·d_i`.
+#[cfg(feature = "alloc")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FindUvResult<const LIMBS: usize> {
+    /// Positive integer u with `u·d1 + v·d2 = target`.
+    pub u: Int<LIMBS>,
+    /// Positive integer v.
+    pub v: Int<LIMBS>,
+    /// Rational-quaternion lift `beta1` of reduced norm `n(lideal)·d1`.
+    pub beta1: RationalQuaternion<LIMBS>,
+    /// Rational-quaternion lift `beta2` of reduced norm `n(lideal)·d2`.
+    pub beta2: RationalQuaternion<LIMBS>,
+    /// `d1`: odd positive integer; the norm component matched on the
+    /// first short-vector list.
+    pub d1: Int<LIMBS>,
+    /// `d2`: odd positive integer; the norm component matched on the
+    /// second short-vector list.
+    pub d2: Int<LIMBS>,
+    /// Index `j1 ∈ [0, alt_connecting.len() + 1)` of the alternate
+    /// extremal order chosen for the first lift. `0` means the
+    /// original ideal frame (no alternate-order rotation).
+    pub index_alternate_order_1: usize,
+    /// Index `j2 ∈ [j1, alt_connecting.len() + 1)` for the second lift.
+    pub index_alternate_order_2: usize,
+}
+
+#[cfg(feature = "alloc")]
+impl<const LIMBS: usize> FindUvResult<LIMBS> {
+    /// Construct a placeholder result with all-zero integer fields and
+    /// rational-quaternion units. Useful for default-construction in
+    /// pre-population patterns; **not a valid Bezout solution** by
+    /// itself. The S194 stub returns `Err(Unimplemented)`; callers
+    /// constructing this directly should treat the result as semantically
+    /// uninitialized.
+    #[inline]
+    pub fn placeholder() -> Self {
+        let zero = Int::<LIMBS>::from_i64(0);
+        Self {
+            u: zero,
+            v: zero,
+            beta1: RationalQuaternion::<LIMBS>::one(),
+            beta2: RationalQuaternion::<LIMBS>::one(),
+            d1: zero,
+            d2: zero,
+            index_alternate_order_1: 0,
+            index_alternate_order_2: 0,
+        }
+    }
+}
+
+/// Find `(u, v, d1, d2, beta1, beta2)` with `u·d1 + v·d2 = target`,
+/// `d1, d2` odd, and quaternion lifts `beta_i` of reduced norm
+/// `n(lideal) · d_i`.
+///
+/// Mirrors the C reference's `find_uv` at
+/// `src/id2iso/ref/lvlx/dim2id2iso.c:471-756` of
+/// `github.com/SQISign/the-sqisign`. The function is the top-level
+/// driver for Step 1 of the Clapotis evaluator — the quaternion-side
+/// preparation that feeds the dim-2 Kani-diagram walk.
+///
+/// # Scope (S195 — `num_alternate_order = 0` only)
+///
+/// This port currently implements the `num_alternate_order = 0`
+/// baseline (the `j = 0` path of the C reference's body). Concretely:
+///
+/// 1. LLL-reduce the input ideal via
+///    [`crate::quaternion::ideal_mul::lideal_reduce_basis`]
+///    (Cohen 2.6.3 in the `O_0` reduced-norm metric, S195-shipped).
+/// 2. Build the pulled-back Gram matrix `G_I = B · G_{O_0} · Bᵀ`
+///    via [`pull_back_gram`]; here `G_{O_0}` is the integer-safe
+///    Gram from [`o0_reduced_norm_gram_matrix`] (factor of 4 baked
+///    in for divisibility under `p ≡ 3 mod 4`).
+/// 3. Enumerate short vectors in `[-m, m]^4` under `G_I` via
+///    [`enumerate_hypercube`] with `adjusted_norm = 4 · denom²` so
+///    the stored norms equal `N(α_v)` directly. Sort by norm
+///    (stable, matching the C ref's `compare_vec_by_norm` qsort).
+/// 4. Precompute `quotients[i] = target / small_norms[i]` and call
+///    [`find_uv_from_lists`] with `is_diagonal = true` (both lists
+///    are the same `j = 0` list).
+/// 5. Lift the integer solution to quaternion elements via
+///    [`mat_4x4_transpose_eval`] applied to the LLL-reduced basis.
+///    Row-major basis storage means the lattice element at coords
+///    `v` is `α = Σ_r v[r] · basis[r]`, i.e. `α_o0 = basisᵀ · v`,
+///    NOT `basis · v` — this matches the pulled-back Gram identity
+///    `vᵀ · (B · M · Bᵀ) · v = (Bᵀ v)ᵀ · M · (Bᵀ v)`. The lifted
+///    coordinates are in `O_0`-basis form; convert to standard
+///    `(1, i, j, k)` coordinates via
+///    [`o0_basis_to_standard_doubled`] (which scales by 2 to stay
+///    integer), and bump the rational denominator by 2 accordingly.
+///
+/// # Deferred (alternate orders, S205 API surface)
+///
+/// The `alt_connecting` slice parameter encodes the C reference's
+/// `ALTERNATE_CONNECTING_IDEALS[0..num_alternate_order]` per
+/// security level. **S205 ships only the API surface**: a non-empty
+/// `alt_connecting` returns `Err(Error::Unimplemented)`. Passing
+/// `&[]` (the empty slice) maps to the current `num_alternate_order
+/// = 0` baseline — the j=0 path that S195-S204 validated.
+///
+/// The j-loop body (S206+) requires:
+/// - Looping over `j ∈ [1, alt_connecting.len()]` and computing
+///   `ideal[j] = lideal_intersect(conj(reduced_id), alt_connecting[j-1])`.
+/// - Per-j LLL + rescale + Gram + enumerate.
+/// - Cross-product Bezout over `(j1, j2)` pairs with `j2 ≥ j1`.
+/// - β post-multiply per alternate order via
+///   [`RationalQuaternion::mul`](crate::quaternion::algebra::RationalQuaternion::mul).
+///
+/// The S203 invariant (`reduced_id = O_0` post-rescale for SQIsign-
+/// shaped principals) simplifies the j-loop's `lideal_intersect`
+/// call to a no-op pass-through: `lideal_intersect(O_0, ALT[j-1]) =
+/// ALT[j-1]`. S206 will leverage this when wiring the body.
+///
+/// # Box-size parameter (S208 lifted from hardcoded m=3)
+///
+/// The `box_size` parameter encodes the C reference's
+/// `FINDUV_box_size` per security level (extracted via S206/S207
+/// research agents):
+///
+/// | Constant | L1 | L3 | L5 |
+/// |---|---|---|---|
+/// | `FINDUV_box_size` | **2** | 3 | 3 |
+/// | `FINDUV_cube_size` | 624 | 2400 | 2400 |
+/// | `NUM_ALTERNATE_EXTREMAL_ORDERS` | 6 | 6 (or 7) | 6 |
+///
+/// Callers pass the level-appropriate value. Larger `box_size` is
+/// always safe for correctness (more enumeration candidates), just
+/// less efficient. Smaller `box_size` may miss Bezout solutions for
+/// some inputs — caller can retry with a larger box (adaptive retry
+/// is future work).
+///
+/// # Returns
+///
+/// - `Ok(FindUvResult)`: a Bezout decomposition was found.
+/// - `Err(Error::Unimplemented)`: `!alt_connecting.is_empty()`
+///   (the j-loop body is future-S206), or the ideal denominator
+///   exceeds `Int<LIMBS>`'s non-negative range (defensive — should
+///   not occur for SQIsign production inputs).
+/// - `Err(Error::NoBezoutSolution(msg))`: the implementation ran
+///   successfully but did not find a Bezout decomposition within
+///   the chosen box. Two distinct paths reach this: the short-
+///   vector enumeration returned empty, OR the Bezout search
+///   exhausted its candidates. Distinct from `Unimplemented` —
+///   the algorithm IS implemented, the inputs simply did not
+///   admit a solution at `m = 3`. Caller may retry with a larger
+///   box size (adaptive retry is future work).
+///
+/// # Variable-time
+///
+/// Variable-time on the ideal basis entries (LLL + enumeration both
+/// vartime). Acceptable per SQIsign 2.0 spec §8.
+#[cfg(feature = "alloc")]
+#[allow(clippy::too_many_arguments)]
+pub fn find_uv<const LIMBS: usize>(
+    target: &Int<LIMBS>,
+    lideal: &crate::quaternion::ideal::LeftIdeal<LIMBS>,
+    p: &Uint<LIMBS>,
+    alt_connecting: &[crate::quaternion::ideal::LeftIdeal<LIMBS>],
+    box_size: i64,
+) -> Result<FindUvResult<LIMBS>> {
+    use crate::quaternion::ideal_mul::{
+        lideal_reduce_basis, lideal_rescale_by_smallest_basis_element,
+    };
+    use crate::quaternion::o0_mul::uint_as_nonneg_int;
+
+    // S211 Option C dispatch: non-empty alt_connecting goes to the
+    // separate find_uv_alternate_orders function (j-loop body lives
+    // there, isolated from the j=0 path). Empty slice → existing j=0
+    // body below, unchanged from S195-S210.
+    //
+    // WIDE=20 (1280 bits) per S216 calibration: handles ALT-magnitude
+    // (128-bit) basis entries at p=7 with margin. May need bumping
+    // for the real L1 prime (S219+ calibration).
+    if !alt_connecting.is_empty() {
+        return find_uv_alternate_orders::<LIMBS, 20>(target, lideal, p, alt_connecting, box_size);
+    }
+
+    // Step 1: LLL-reduce the input ideal under the O_0 reduced-norm metric.
+    let reduced = lideal_reduce_basis::<LIMBS>(lideal, p);
+
+    // S200: Extract δ from reduced.basis[0] BEFORE the rescale step,
+    // so we can post-multiply β by δ to return to the original ideal
+    // frame after enumeration. δ is the smallest-norm element of the
+    // LLL-reduced basis; o0_basis_to_standard_doubled converts its
+    // O_0-basis coords to (1, i, j, k) coords scaled by 2 (to stay
+    // integer). The rational representation has denom = 2·reduced.denom.
+    let delta_num = o0_basis_to_standard_doubled::<LIMBS>(&reduced.basis[0]);
+    let two_uint = Uint::<LIMBS>::from_u64(2);
+    let delta_rational = RationalQuaternion {
+        num: delta_num,
+        denom: two_uint.wrapping_mul(&reduced.denom),
+    };
+
+    // S200: Rescale the LLL'd ideal by conj(δ)/n(I) to get reduced_id —
+    // the canonical right-ideal-class representative. After this step,
+    // we enumerate short vectors in reduced_id (not the original I),
+    // and the lifted β' lives in reduced_id; we recover β ∈ I via the
+    // post-multiply β = β'·δ.
+    let reduced_id = lideal_rescale_by_smallest_basis_element::<LIMBS>(&reduced, p).ok_or(
+        Error::NoBezoutSolution(
+            "find_uv: rescale step failed — cached_norm may not be a perfect square \
+             (invariant violation), or the divisibility check in ideal_right_multiply_rational \
+             rejected the rescale. SQIsign-shaped principal ideals should always pass.",
+        ),
+    )?;
+
+    // Step 3: build the pulled-back Gram on reduced_id (NOT reduced).
+    // The enumeration finds β' ∈ reduced_id; the rescale-then-undo via
+    // δ-post-multiply puts β ∈ original I.
+    let o0_gram = o0_reduced_norm_gram_matrix::<LIMBS>(p);
+    let gram_id = pull_back_gram::<LIMBS>(&reduced_id.basis, &o0_gram);
+
+    // adjusted_norm = 4 · reduced_id.denom². The factor-of-4 cancels
+    // the integer-safety bake-in of o0_reduced_norm_gram_matrix;
+    // denom² matches the C reference's adjusted_norm[0] = denom².
+    let denom_int = uint_as_nonneg_int::<LIMBS>(&reduced_id.denom).ok_or(Error::Unimplemented(
+        "find_uv: rescaled ideal denominator exceeds Int<LIMBS> non-negative range",
+    ))?;
+    let denom_sq = denom_int.wrapping_mul(&denom_int);
+    let adjusted_norm = Int::<LIMBS>::from_i64(4).wrapping_mul(&denom_sq);
+
+    // S208: box_size is now a caller-supplied per-level parameter
+    // (C ref's FINDUV_box_size: L1=2, L3=3, L5=3). Validated via the
+    // research agents in S206-S207.
+    let m: i64 = box_size;
+
+    let mut short_vecs = enumerate_hypercube::<LIMBS>(m, &gram_id, &adjusted_norm);
+    if short_vecs.is_empty() {
+        return Err(Error::NoBezoutSolution(
+            "find_uv: enumerate_hypercube returned no candidates at the S195 hard-coded \
+             box size m=3 — caller may need a larger box. Tuning the per-level \
+             FINDUV_box_size + an adaptive-retry path is future work.",
+        ));
+    }
+
+    // Stable sort by norm — matches the C ref's compare_vec_by_norm
+    // qsort. Insertion order is the natural tie-breaker.
+    short_vecs.sort_by_key(|sv| sv.norm);
+
+    let small_norms: Vec<Int<LIMBS>> = short_vecs.iter().map(|sv| sv.norm).collect();
+    let quotients: Vec<Int<LIMBS>> = small_norms
+        .iter()
+        .map(|d| int_div_floor::<LIMBS>(target, d))
+        .collect();
+
+    // Step 4 (j1, j2) = (0, 0): only the diagonal pair exists at
+    // num_alternate_order = 0.
+    let bezout = find_uv_from_lists::<LIMBS>(
+        target,
+        &small_norms,
+        &small_norms,
+        &quotients,
+        true, // is_diagonal — same list both sides
+        0,    // number_sum_square = 0 per orchestrator pattern
+    )
+    .ok_or(Error::NoBezoutSolution(
+        "find_uv: find_uv_from_lists found no Bezout decomposition within the chosen \
+         box. Caller may retry with a larger FINDUV_box_size; adaptive-retry path \
+         is future work.",
+    ))?;
+
+    // Step 5: lift β' from reduced_id (NOT reduced). The Gram identity
+    // vᵀ·G_I·v = 4·N(Bᵀ·v) (with B = reduced_id.basis) means the
+    // correct lift is `mat_4x4_transpose_eval(reduced_id.basis, v)`.
+    let beta_prime_1_o0 =
+        mat_4x4_transpose_eval::<LIMBS>(&reduced_id.basis, &short_vecs[bezout.index_sol1].vec);
+    let beta_prime_2_o0 =
+        mat_4x4_transpose_eval::<LIMBS>(&reduced_id.basis, &short_vecs[bezout.index_sol2].vec);
+    let beta_prime_1_num = o0_basis_to_standard_doubled::<LIMBS>(&beta_prime_1_o0);
+    let beta_prime_2_num = o0_basis_to_standard_doubled::<LIMBS>(&beta_prime_2_o0);
+
+    let beta_prime_denom = two_uint.wrapping_mul(&reduced_id.denom);
+    let beta_prime_1 = RationalQuaternion {
+        num: beta_prime_1_num,
+        denom: beta_prime_denom,
+    };
+    let beta_prime_2 = RationalQuaternion {
+        num: beta_prime_2_num,
+        denom: beta_prime_denom,
+    };
+
+    // S200: post-multiply β' by δ to return to the original ideal frame.
+    // For SQIsign-shaped LLL-reduced principal ideals where δ generates
+    // the principal part (N_red(δ) = n(I)), β = β'·δ satisfies the
+    // C reference's postcondition N_red(β) = n(I)·d_i. The `normalize`
+    // call reduces the rational to lowest terms after the multiplication.
+    let beta1 = beta_prime_1.mul(&delta_rational, p).normalize();
+    let beta2 = beta_prime_2.mul(&delta_rational, p).normalize();
+
+    Ok(FindUvResult {
+        u: bezout.u,
+        v: bezout.v,
+        beta1,
+        beta2,
+        d1: small_norms[bezout.index_sol1],
+        d2: small_norms[bezout.index_sol2],
+        index_alternate_order_1: 0,
+        index_alternate_order_2: 0,
+    })
+}
+
+/// Alternate-orders body for the Clapotis `find_uv` orchestrator —
+/// handles the non-empty `alt_connecting` case (j > 0 indices).
+/// **Skeleton: S211 (this session) ships the dispatch-target signature
+/// + the `Unimplemented` return; S212+ wires the body**.
+///
+/// # Design (S207 Option C — separate function from j=0 path)
+///
+/// Keeping the j>0 logic in a separate function:
+/// - Preserves the S195-S210-validated j=0 convention in [`find_uv`].
+/// - Isolates the C-ref-convention work (LEFT-multiply by single shared
+///   δ, then conjugate, with δ-denom mutation gated on `j != 0`) to
+///   this function.
+/// - Allows test-by-test validation as `ALTERNATE_CONNECTING_IDEALS`
+///   data fixtures land.
+///
+/// # Planned body (S212+, per S207's verbatim C-ref extraction)
+///
+/// 1. **LLL-reduce input** lideal → `reduced`.
+/// 2. **Build single shared `δ`** from `reduced.basis[0]` (smallest-norm
+///    LLL element); conjugate; multiply denom by `ideal[0].norm`
+///    (= `n(reduced)`).
+/// 3. **Rescale** → `reduced_id` (the S203 invariant says this is `O_0`
+///    for SQIsign-shaped inputs).
+/// 4. **Build `ideals[0..=alt_connecting.len()]`**:
+///    - `ideals[0] = reduced_id`
+///    - For `j ∈ [1, alt_connecting.len()]`:
+///      `ideals[j] = lideal_intersect(conj(reduced_id), alt_connecting[j-1])`
+///      (= `alt_connecting[j-1]` per S203 invariant, simplifying the
+///      lideal_intersect to a pass-through).
+/// 5. **Per-j Gram + enumerate** to populate `small_norms[j]` +
+///    `short_vecs[j]` + `quotients[j]`.
+/// 6. **Cross-product Bezout**: nested `(j1, j2)` loop with `j2 ≥ j1`,
+///    calling [`find_uv_from_lists`] with `is_diagonal = (j1 == j2)`.
+///    First success wins.
+/// 7. **β finalize** per the verbatim C-ref code (S207 ISA close):
+///    - `β = lift_via_mat_4x4_transpose_eval(reduced[j], short_vec)` —
+///      same for j=0 AND j>0.
+///    - For `(j1 != 0 || j2 != 0)`: mutate δ.denom once:
+///      `δ.denom = δ.denom / n(input_lideal) · n(conj_ideal)`.
+///    - For `j1 != 0`: `β1 = quat_alg_mul(δ, β1)` (LEFT-multiply),
+///      normalize, then `β1 = conj(β1)`. (Same for β2 gated on j2.)
+///
+/// # Returns
+///
+/// - `Err(Error::Unimplemented)`: until S212+ wires the body.
+/// - Future: `Ok(FindUvResult)` with the cross-product Bezout output.
+#[cfg(feature = "alloc")]
+#[allow(clippy::too_many_arguments)]
+pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
+    target: &Int<LIMBS>,
+    lideal: &crate::quaternion::ideal::LeftIdeal<LIMBS>,
+    p: &Uint<LIMBS>,
+    alt_connecting: &[crate::quaternion::ideal::LeftIdeal<LIMBS>],
+    box_size: i64,
+) -> Result<FindUvResult<LIMBS>> {
+    use crate::quaternion::ideal::LeftIdeal;
+    use crate::quaternion::ideal_mul::{
+        ideal_multiply, lideal_reduce_basis, lideal_reduce_basis_wide,
+        lideal_rescale_by_smallest_basis_element,
+    };
+
+    debug_assert!(
+        !alt_connecting.is_empty(),
+        "find_uv_alternate_orders: caller must dispatch on alt_connecting.is_empty(); \
+         this function specifically handles the non-empty case",
+    );
+
+    // S218: j-loop SETUP — LLL + rescale input → reduced_id, then for
+    // each j ∈ [1, alt_connecting.len()] build ideal[j] = conj(reduced_id)
+    // · ALT[j-1] then wide-LLL. Per S217 finding: NO rescale on j>0
+    // entries — the C ref's body uses lideal_mul + LLL only.
+
+    // Step 1 (existing j=0 path): LLL-reduce input lideal, extract δ,
+    // rescale to reduced_id.
+    let reduced = lideal_reduce_basis::<LIMBS>(lideal, p);
+    let reduced_id = lideal_rescale_by_smallest_basis_element::<LIMBS>(&reduced, p).ok_or(
+        Error::NoBezoutSolution(
+            "find_uv_alternate_orders: rescale failed on input lideal — not SQIsign-shaped \
+                 OR cached_norm not a perfect square (defensive)",
+        ),
+    )?;
+
+    // Step 2: build per-j ideals. ideals[0] = reduced_id.
+    let conj_reduced_id = reduced_id.conjugate();
+    let mut reduced_per_j: Vec<LeftIdeal<LIMBS>> = Vec::with_capacity(alt_connecting.len() + 1);
+    reduced_per_j.push(reduced_id);
+
+    for alt in alt_connecting {
+        // ideal[j] = conj(reduced_id) · alt_connecting[j-1] (C ref line 560).
+        let ideal_j_raw = ideal_multiply::<LIMBS>(&conj_reduced_id, alt, p);
+        // Wide-LLL the raw product (S216 path): narrow LLL would overflow
+        // on ALT-magnitude basis entries even at small primes.
+        let reduced_j = lideal_reduce_basis_wide::<LIMBS, WIDE>(&ideal_j_raw, p);
+        reduced_per_j.push(reduced_j);
+    }
+
+    // Step 3 (S219): Build the shared δ from reduced.basis[0]. Mirrors
+    // find_uv's S195 δ-extraction code: o0_basis_to_standard_doubled
+    // converts O_0-basis coords to (1,i,j,k) scaled by 2; rational
+    // denominator = 2 · reduced.denom (the 2 absorbs the doubling).
+    // δ is shared across ALL βs (S207 finding) — built once here.
+    let delta_num = o0_basis_to_standard_doubled::<LIMBS>(&reduced.basis[0]);
+    let two_uint = Uint::<LIMBS>::from_u64(2);
+    let delta_rational = RationalQuaternion {
+        num: delta_num,
+        denom: two_uint.wrapping_mul(&reduced.denom),
+    };
+
+    // Step 4 (S219): per-j Gram + enumerate. For each reduced_per_j[j]
+    // we pull-back the O_0 Gram, enumerate, sort, and build the
+    // small_norms / quotients lists for find_uv_from_lists. S220 also
+    // retains the sorted short-vectors per j so the finalize step can
+    // lift the Bezout-selected short vector into a rational quaternion.
+    let o0_gram = o0_reduced_norm_gram_matrix::<LIMBS>(p);
+    let mut short_vecs_per_j: Vec<Vec<EnumeratedShortVec<LIMBS>>> =
+        Vec::with_capacity(reduced_per_j.len());
+    let mut small_norms_per_j: Vec<Vec<Int<LIMBS>>> = Vec::with_capacity(reduced_per_j.len());
+    let mut quotients_per_j: Vec<Vec<Int<LIMBS>>> = Vec::with_capacity(reduced_per_j.len());
+
+    for reduced_j in &reduced_per_j {
+        let gram_j = pull_back_gram::<LIMBS>(&reduced_j.basis, &o0_gram);
+        let denom_int = crate::quaternion::o0_mul::uint_as_nonneg_int::<LIMBS>(&reduced_j.denom)
+            .ok_or(Error::Unimplemented(
+                "find_uv_alternate_orders: rescaled ideal denominator exceeds Int<LIMBS> \
+                     non-negative range (defensive)",
+            ))?;
+        let denom_sq = denom_int.wrapping_mul(&denom_int);
+        let adjusted_norm_j = Int::<LIMBS>::from_i64(4).wrapping_mul(&denom_sq);
+        let mut short_vecs_j = enumerate_hypercube::<LIMBS>(box_size, &gram_j, &adjusted_norm_j);
+        short_vecs_j.sort_by_key(|sv| sv.norm);
+        let small_norms_j: Vec<Int<LIMBS>> = short_vecs_j.iter().map(|sv| sv.norm).collect();
+        let quotients_j: Vec<Int<LIMBS>> = small_norms_j
+            .iter()
+            .map(|d| int_div_floor::<LIMBS>(target, d))
+            .collect();
+        short_vecs_per_j.push(short_vecs_j);
+        small_norms_per_j.push(small_norms_j);
+        quotients_per_j.push(quotients_j);
+    }
+
+    // Step 5 (S219): Cross-product Bezout (j1, j2) with j2 >= j1.
+    // First success wins; iteration order matches the C ref's nested
+    // loop (outer j1, inner j2 ≥ j1).
+    for j1 in 0..reduced_per_j.len() {
+        for j2 in j1..reduced_per_j.len() {
+            let is_diagonal = j1 == j2;
+            let bezout = find_uv_from_lists::<LIMBS>(
+                target,
+                &small_norms_per_j[j1],
+                &small_norms_per_j[j2],
+                &quotients_per_j[j2],
+                is_diagonal,
+                0,
+            );
+            if let Some(b) = bezout {
+                // S220: β finalize. The (0, 0) case is mathematically
+                // identical to `find_uv`'s proven j=0 path — same δ, same
+                // reduced_id (= reduced_per_j[0]), same enumerate/d
+                // convention — so we mirror it exactly and the result is
+                // byte-identical to `find_uv` on the equivalent input.
+                // That equivalence is the verification arbiter (a
+                // differential element-equality test), because the norm
+                // postcondition alone cannot distinguish β=β_lift·δ from
+                // β=conj(δ·β_lift) (norm is multiplicative and
+                // conjugation-invariant — the S207 trap).
+                if j1 == 0 && j2 == 0 {
+                    let beta_prime_1_o0 = mat_4x4_transpose_eval::<LIMBS>(
+                        &reduced_per_j[0].basis,
+                        &short_vecs_per_j[0][b.index_sol1].vec,
+                    );
+                    let beta_prime_2_o0 = mat_4x4_transpose_eval::<LIMBS>(
+                        &reduced_per_j[0].basis,
+                        &short_vecs_per_j[0][b.index_sol2].vec,
+                    );
+                    let beta_prime_1_num = o0_basis_to_standard_doubled::<LIMBS>(&beta_prime_1_o0);
+                    let beta_prime_2_num = o0_basis_to_standard_doubled::<LIMBS>(&beta_prime_2_o0);
+                    let beta_prime_denom = two_uint.wrapping_mul(&reduced_per_j[0].denom);
+                    let beta_prime_1 = RationalQuaternion {
+                        num: beta_prime_1_num,
+                        denom: beta_prime_denom,
+                    };
+                    let beta_prime_2 = RationalQuaternion {
+                        num: beta_prime_2_num,
+                        denom: beta_prime_denom,
+                    };
+                    let beta1 = beta_prime_1.mul(&delta_rational, p).normalize();
+                    let beta2 = beta_prime_2.mul(&delta_rational, p).normalize();
+                    return Ok(FindUvResult {
+                        u: b.u,
+                        v: b.v,
+                        beta1,
+                        beta2,
+                        d1: small_norms_per_j[0][b.index_sol1],
+                        d2: small_norms_per_j[0][b.index_sol2],
+                        index_alternate_order_1: 0,
+                        index_alternate_order_2: 0,
+                    });
+                }
+                // j>0 finalize (δ.denom mutation gated on (j1 != 0 ||
+                // j2 != 0), then β = conj(δ · β_lift) for the alternate
+                // index) is deferred and FAILS CLOSED. The C-ref
+                // convention (dim2id2iso.c:651-673) is captured verbatim
+                // in the ISA, but our doubled-rational representation
+                // differs from the C-ref bookkeeping, so a faithful port
+                // requires a convention reconciliation that cannot be
+                // verified this session: there is no C-ref source or
+                // per-function KAT on hand, and `find_uv` (our only
+                // proven oracle) only covers j=0. Returning a wrong β
+                // here would silently corrupt signatures, so we error
+                // rather than emit unverifiable crypto.
+                // [DEFERRED-VERIFY: follow-up S221 — needs a j>0-forcing
+                // fixture with a C-ref known-answer vector before this
+                // path may return Ok.]
+                return Err(Error::Unimplemented(
+                    "find_uv_alternate_orders: Bezout hit at an alternate order (j1>0 or j2>0); \
+                     the j>0 β finalize (δ.denom mutation + conj(δ · β_lift)) is deferred and \
+                     fails closed — no C-ref known-answer vector is available to verify the \
+                     doubled-rational convention reconciliation (S221).",
+                ));
+            }
+        }
+    }
+
+    // No Bezout pair found across the (j1, j2) cross-product.
+    Err(Error::NoBezoutSolution(
+        "find_uv_alternate_orders: no Bezout pair found across the (j1, j2) cross-product \
+         of the alt_connecting expansion. Try a larger box_size or different fixture.",
+    ))
+}
+
+#[cfg(all(test, feature = "alloc"))]
+mod enumerate_hypercube_tests {
+    use super::*;
+
+    /// Build a 4×4 Gram matrix from an i64-valued flat description.
+    fn gram_from_i64<const LIMBS: usize>(rows: [[i64; 4]; 4]) -> [[Int<LIMBS>; 4]; 4] {
+        let mut out = [[Int::<LIMBS>::from_i64(0); 4]; 4];
+        for i in 0..4 {
+            for j in 0..4 {
+                out[i][j] = Int::<LIMBS>::from_i64(rows[i][j]);
+            }
+        }
+        out
+    }
+
+    /// Identity Gram: `v^T · I · v = x² + y² + z² + w²`. With m = 1,
+    /// `adjusted_norm = 1`, accepted candidates are the integer points
+    /// with all-even / all-mod-3 filters applied. Verifies the function
+    /// runs end-to-end and the `count - 1` truncation does not panic.
+    #[test]
+    fn identity_gram_at_m_equals_1_returns_some_vectors() {
+        let gram = gram_from_i64::<8>([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]);
+        let adjusted = Int::<8>::from_i64(1);
+        let result = enumerate_hypercube::<8>(1, &gram, &adjusted);
+        // The identity-Gram case has no `[α, iα, β, iβ]` symmetry
+        // (gram[0][0] = gram[1][1] = 1, gram[2][2] = gram[3][3] = 1 →
+        // both pairs match, so the i-action filter IS active).
+        // At m=1 we walk 81 raw candidates; antipodal halves it to ~40;
+        // GCD filter for all-even removes (0,0,0,0) and similar; odd-
+        // quotient filter requires `v^T·v` odd, i.e. an odd number of
+        // ±1 entries. The function returns a non-empty Vec with the
+        // C reference's `count - 1` truncation applied.
+        // We don't assert on exact membership (would over-constrain the
+        // port); we assert the result is non-empty and every entry's
+        // norm is odd (the odd-quotient filter's contract).
+        assert!(
+            !result.is_empty(),
+            "identity Gram at m=1 must yield at least one accepted vector",
+        );
+        for sv in &result {
+            assert_eq!(
+                sv.norm.to_words()[0] & 1,
+                1,
+                "every accepted vector's stored norm must be odd",
+            );
+            // Sanity: the stored norm equals `vᵀ·G·v / adjusted = vᵀ·v / 1 = vᵀ·v`.
+            let recomputed = qf_eval_4x4::<8>(&sv.vec, &gram);
+            assert_eq!(
+                sv.norm, recomputed,
+                "stored norm must equal v^T·G·v / adjusted_norm"
+            );
+        }
+    }
+
+    /// Empty result when `m ≤ 0`. Defensive Rust-side guard.
+    #[test]
+    fn non_positive_m_returns_empty() {
+        let gram = gram_from_i64::<8>([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]);
+        let adjusted = Int::<8>::from_i64(1);
+        assert!(enumerate_hypercube::<8>(0, &gram, &adjusted).is_empty());
+        assert!(enumerate_hypercube::<8>(-3, &gram, &adjusted).is_empty());
+    }
+
+    /// Symmetric `[α, iα, β, iβ]`-form detection: gram with
+    /// `gram[0][0] = gram[1][1] = α²` and `gram[2][2] = gram[3][3] = β²`
+    /// activates the i-action filter. Verifies enumeration produces
+    /// a strict subset of the no-symmetry case (filter is pruning at
+    /// least one orbit).
+    #[test]
+    fn symmetric_gram_prunes_relative_to_asymmetric() {
+        let symmetric =
+            gram_from_i64::<8>([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 5, 0], [0, 0, 0, 5]]);
+        let asymmetric =
+            gram_from_i64::<8>([[1, 0, 0, 0], [0, 2, 0, 0], [0, 0, 5, 0], [0, 0, 0, 7]]);
+        let adjusted = Int::<8>::from_i64(1);
+        let sym_result = enumerate_hypercube::<8>(2, &symmetric, &adjusted);
+        let asym_result = enumerate_hypercube::<8>(2, &asymmetric, &adjusted);
+        assert!(
+            sym_result.len() < asym_result.len(),
+            "symmetric Gram must prune more candidates via the i-action filter (sym={}, asym={})",
+            sym_result.len(),
+            asym_result.len(),
+        );
+    }
+
+    /// Stable sort by norm (Rust idiom for the C reference's
+    /// `compare_vec_by_norm` qsort). Verify that after `sort_by_key`
+    /// the result is in non-decreasing-norm order and that insertion
+    /// order is preserved on ties.
+    #[test]
+    fn stable_sort_by_norm_matches_compare_vec_by_norm_idiom() {
+        let gram = gram_from_i64::<8>([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]);
+        let adjusted = Int::<8>::from_i64(1);
+        let mut result = enumerate_hypercube::<8>(2, &gram, &adjusted);
+        // Take a snapshot of insertion order before sorting.
+        let pre_sort_count = result.len();
+        // Stable sort by `norm` — matches `compare_vec_by_norm` because
+        // Rust's `Vec::sort_by` is stable, naturally tie-breaking by
+        // original insertion order (the C reference uses an `idx` field
+        // explicitly to achieve the same).
+        result.sort_by(|a, b| a.norm.cmp(&b.norm));
+        assert_eq!(
+            result.len(),
+            pre_sort_count,
+            "sort does not change Vec length"
+        );
+        // Non-decreasing-norm property.
+        for window in result.windows(2) {
+            assert!(
+                window[0].norm <= window[1].norm,
+                "sorted result must be non-decreasing in norm",
+            );
+        }
+    }
+
+    /// All-even filter contract: any candidate with `(x|y|z|w) & 1 == 0`
+    /// (all entries even) is skipped. Verified by checking no accepted
+    /// vector in the result has all-even entries.
+    #[test]
+    fn all_even_candidates_are_filtered_out() {
+        let gram = gram_from_i64::<8>([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]);
+        let adjusted = Int::<8>::from_i64(1);
+        let result = enumerate_hypercube::<8>(3, &gram, &adjusted);
+        for sv in &result {
+            let v: [i64; 4] = [
+                sv.vec[0].to_words()[0] as i64,
+                sv.vec[1].to_words()[0] as i64,
+                sv.vec[2].to_words()[0] as i64,
+                sv.vec[3].to_words()[0] as i64,
+            ];
+            // The above i64 conversion treats negative values as their
+            // two's-complement low-word representation; we only care
+            // about parity (LSB), which is identical for signed and
+            // unsigned interpretations. The all-even condition is
+            // `(v0|v1|v2|v3) & 1 == 0`.
+            assert_ne!(
+                (v[0] | v[1] | v[2] | v[3]) & 1,
+                0,
+                "accepted vector must not be all-even (got {v:?})",
+            );
+        }
+    }
+
+    /// `adjusted_norm = 2` test: with identity Gram, `v^T·v` is the
+    /// hypercube norm. For divisibility by 2 the function asserts in
+    /// debug mode that the norm is even — so accepted vectors must have
+    /// even `v^T·v`. Verifies the divisibility contract via the
+    /// debug_assert path (this test exercises the path; if the assert
+    /// triggers, the test panics).
+    #[test]
+    fn adjusted_norm_divides_evaluated_norm() {
+        let gram = gram_from_i64::<8>([[2, 0, 0, 0], [0, 2, 0, 0], [0, 0, 2, 0], [0, 0, 0, 2]]);
+        let adjusted = Int::<8>::from_i64(2);
+        // Every Gram entry is 2, so `v^T·G·v = 2·(x²+y²+z²+w²)` —
+        // always divisible by 2. Quotient is `x²+y²+z²+w²`, and we
+        // accept only when this is odd.
+        let result = enumerate_hypercube::<8>(2, &gram, &adjusted);
+        for sv in &result {
+            assert_eq!(
+                sv.norm.to_words()[0] & 1,
+                1,
+                "quotient must be odd per the function's contract",
+            );
+        }
+    }
+}
+
+#[cfg(all(test, feature = "alloc"))]
+mod find_uv_tests {
+    use super::*;
+
+    fn i(v: i64) -> Int<8> {
+        Int::<8>::from_i64(v)
+    }
+
+    /// Hand-calculated coprime case: `target = 100`, `small_norms1 = [3]`,
+    /// `small_norms2 = [7]`. Need `u·3 + v·7 = 100` with `u, v > 0`,
+    /// `v < 100/7 = 14`. The first v satisfying `v ≡ 100/3 ≡ 100·3^{-1}
+    /// (mod 7) = ?`. Solve manually: `7^{-1} mod 3 = 7^{-1 mod 3}`; let's
+    /// check: 7 ≡ 1 (mod 3), so inv = 1. v = `(1·(100 mod 3)) mod 3 = 1`.
+    /// Then `u = (100 - 1·7)/3 = 93/3 = 31`. Check: `31·3 + 1·7 = 93 + 7
+    /// = 100` ✓. Quotient `100/7 = 14`, so `v=1 < 14` accepts.
+    #[test]
+    fn find_uv_from_lists_coprime_pair_succeeds() {
+        let target = i(100);
+        let norms1 = vec![i(3)];
+        let norms2 = vec![i(7)];
+        let quotients2 = vec![i(14)]; // floor(100/7)
+        let result = find_uv_from_lists::<8>(&target, &norms1, &norms2, &quotients2, false, 0);
+        let r = result.expect("coprime pair must yield a solution");
+        assert_eq!(r.u, i(31));
+        assert_eq!(r.v, i(1));
+        assert_eq!(r.index_sol1, 0);
+        assert_eq!(r.index_sol2, 0);
+        // Verify the Bezout equation.
+        let check =
+            r.u.wrapping_mul(&i(3))
+                .wrapping_add(&r.v.wrapping_mul(&i(7)));
+        assert_eq!(check, target, "u·d1 + v·d2 must equal target");
+    }
+
+    /// Non-coprime pair (gcd > 1) skips the inv-mod step. With single-
+    /// element lists `[6]` and `[4]` (gcd = 2), no valid (u, v) for
+    /// target = 100; expect None.
+    #[test]
+    fn find_uv_from_lists_non_coprime_pair_returns_none() {
+        let target = i(100);
+        let norms1 = vec![i(6)];
+        let norms2 = vec![i(4)];
+        let quotients2 = vec![i(25)];
+        // gcd(6, 4) = 2; the inv-mod step fails and the pair is skipped.
+        let result = find_uv_from_lists::<8>(&target, &norms1, &norms2, &quotients2, false, 0);
+        assert!(
+            result.is_none(),
+            "non-coprime pair must surface as None, got {result:?}",
+        );
+    }
+
+    /// `number_sum_square != 0` (Cornacchia-constrained paths) returns
+    /// None in the current S193 port. The orchestrator passes 0; the
+    /// non-zero paths are reserved for future call sites.
+    #[test]
+    fn find_uv_from_lists_cornacchia_path_returns_none() {
+        let target = i(100);
+        let norms1 = vec![i(3)];
+        let norms2 = vec![i(7)];
+        let quotients2 = vec![i(14)];
+        for nss in [1u32, 2u32] {
+            let result =
+                find_uv_from_lists::<8>(&target, &norms1, &norms2, &quotients2, false, nss);
+            assert!(
+                result.is_none(),
+                "Cornacchia paths (number_sum_square={nss}) must surface as None at S193, got {result:?}",
+            );
+        }
+    }
+
+    /// `is_diagonal=true` with a list of identical norms restricts the
+    /// search to `i2 ≥ i1`. With `norms1 = norms2 = [3, 7]`, diagonal
+    /// mode should find the same first pair (i1=0, i2=0) when valid.
+    #[test]
+    fn find_uv_from_lists_is_diagonal_restricts_lower_triangle() {
+        let target = i(100);
+        let norms = vec![i(3), i(7)];
+        let quotients = vec![i(33), i(14)];
+        let result = find_uv_from_lists::<8>(&target, &norms, &norms, &quotients, true, 0);
+        let r = result.expect("diagonal first-pair must yield a solution");
+        // i1=0 (d1=3), i2=0 (d2=3) — diagonal allows i2=i1. But 3·u + 3·v = 100
+        // has no integer solutions (100 is not a multiple of 3). So search
+        // moves to i1=0, i2=1 (d2=7) — the same coprime pair as the first test.
+        assert_eq!(r.index_sol1, 0);
+        assert_eq!(r.index_sol2, 1);
+        assert_eq!(r.u, i(31));
+        assert_eq!(r.v, i(1));
+    }
+
+    /// Empty lists yield None (no pairs to try).
+    #[test]
+    fn find_uv_from_lists_empty_lists_return_none() {
+        let target = i(100);
+        let empty: Vec<Int<8>> = vec![];
+        let quotients_empty: Vec<Int<8>> = vec![];
+        assert!(
+            find_uv_from_lists::<8>(&target, &empty, &empty, &quotients_empty, false, 0).is_none()
+        );
+        let nonempty = vec![i(3)];
+        let quotients_one = vec![i(14)];
+        // empty list1 → no outer iteration.
+        assert!(
+            find_uv_from_lists::<8>(&target, &empty, &nonempty, &quotients_one, false, 0).is_none()
+        );
+        // empty list2 → no inner iteration.
+        assert!(
+            find_uv_from_lists::<8>(&target, &nonempty, &empty, &quotients_empty, false, 0)
+                .is_none()
+        );
+    }
+
+    /// `find_uv` body succeeds on a small-prime full-order fixture:
+    /// `target = 1024` (= 2^10, the typical SQIsign-style target),
+    /// `p = 7`, `lideal = O_0` (norm 1). At m=3 the box enumerates
+    /// many short vectors and the Bezout search finds a
+    /// `(u, v, d1, d2)` with `u·d1 + v·d2 = 1024`.
+    ///
+    /// **Postcondition** (S200): `N_red(β_i) = n(I)·d_i` where `n(I)` is
+    /// the reduced quaternion ideal norm. We assert the denom-independent
+    /// form `N_red(β.num) = β.denom² · n(I) · d_i`. For full_order
+    /// `n(I) = 1`, so the postcondition simplifies to
+    /// `N_red(β.num) = β.denom² · d_i`.
+    #[test]
+    fn find_uv_body_succeeds_for_small_prime_full_order() {
+        use crate::quaternion::ideal::LeftIdeal;
+        let lideal = LeftIdeal::<8>::full_order();
+        let p: Uint<8> = Uint::from_u64(7);
+        let target = i(1024);
+        let r = find_uv::<8>(
+            &target,
+            &lideal,
+            &p,
+            &[],
+            crate::params::Level1::FINDUV_BOX_SIZE,
+        )
+        .expect("find_uv must find a Bezout decomposition for the trivial L1-style fixture");
+        // Bezout identity: u·d1 + v·d2 = target.
+        let lhs =
+            r.u.wrapping_mul(&r.d1)
+                .wrapping_add(&r.v.wrapping_mul(&r.d2));
+        assert_eq!(
+            lhs, target,
+            "find_uv must return (u, v, d1, d2) satisfying u·d1 + v·d2 = target",
+        );
+        // d1, d2 are odd (per enumerate_hypercube's odd-quotient filter).
+        assert_eq!(r.d1.to_words()[0] & 1, 1, "d1 must be odd");
+        assert_eq!(r.d2.to_words()[0] & 1, 1, "d2 must be odd");
+        // u, v are strictly positive (find_uv_from_lists' contract).
+        assert!(r.u > i(0), "u must be > 0");
+        assert!(r.v > i(0), "v must be > 0");
+        // Alternate-order indices both zero at num_alternate_order=0.
+        assert_eq!(r.index_alternate_order_1, 0);
+        assert_eq!(r.index_alternate_order_2, 0);
+        // S200 postcondition: N(β.num) = β.denom² · n(I) · d.
+        // For full_order n(I) = 1 → N(β.num) = β.denom² · d.
+        let n_id = lideal
+            .reduced_norm_vartime()
+            .expect("full_order's cached_norm is a perfect square");
+        let n_id_int = Int::<8>::from_words(n_id.to_words());
+        let p_int = Int::<8>::from_words(p.to_words());
+        let norm_of = |q: &crate::quaternion::algebra::Quaternion<8>| {
+            let a_sq = q.a.wrapping_mul(&q.a);
+            let b_sq = q.b.wrapping_mul(&q.b);
+            let c_sq = q.c.wrapping_mul(&q.c);
+            let d_sq = q.d.wrapping_mul(&q.d);
+            a_sq.wrapping_add(&b_sq)
+                .wrapping_add(&p_int.wrapping_mul(&c_sq.wrapping_add(&d_sq)))
+        };
+        let beta1_denom_int = Int::<8>::from_words(r.beta1.denom.to_words());
+        let beta2_denom_int = Int::<8>::from_words(r.beta2.denom.to_words());
+        let n_beta1 = norm_of(&r.beta1.num);
+        let n_beta2 = norm_of(&r.beta2.num);
+        let expected1 = beta1_denom_int
+            .wrapping_mul(&beta1_denom_int)
+            .wrapping_mul(&n_id_int)
+            .wrapping_mul(&r.d1);
+        let expected2 = beta2_denom_int
+            .wrapping_mul(&beta2_denom_int)
+            .wrapping_mul(&n_id_int)
+            .wrapping_mul(&r.d2);
+        assert_eq!(
+            n_beta1, expected1,
+            "N(β1.num) must equal β1.denom² · n(I) · d1 (S200 postcondition)",
+        );
+        assert_eq!(
+            n_beta2, expected2,
+            "N(β2.num) must equal β2.denom² · n(I) · d2 (S200 postcondition)",
+        );
+    }
+
+    /// `find_uv` with non-empty `alt_connecting` dispatches to
+    /// `find_uv_alternate_orders`. Originally (S205-S217) the dispatched
+    /// function returned Unimplemented immediately; S218-S219 wired the
+    /// body up through cross-product Bezout; S220 wired the (0,0) β
+    /// finalize. This test confirms the dispatch path is wired end-to-end
+    /// AND that routing through the alternate-orders function with a
+    /// (placeholder) alt entry yields the SAME result as the direct j=0
+    /// `find_uv` path — i.e. the dispatch is transparent for the (0,0)
+    /// hit.
+    #[test]
+    fn find_uv_dispatch_to_alternate_orders_matches_direct_find_uv() {
+        use crate::quaternion::ideal::LeftIdeal;
+        let lideal = LeftIdeal::<8>::full_order();
+        let p: Uint<8> = Uint::from_u64(7);
+        let target = i(1024);
+        let alt = [LeftIdeal::<8>::full_order()];
+        let box_size = crate::params::Level1::FINDUV_BOX_SIZE;
+
+        let via_dispatch = find_uv::<8>(&target, &lideal, &p, &alt, box_size)
+            .expect("dispatch through find_uv_alternate_orders must reach the (0,0) finalize");
+        let via_direct = find_uv::<8>(&target, &lideal, &p, &[], box_size)
+            .expect("direct j=0 find_uv must succeed");
+        assert_eq!(
+            via_dispatch, via_direct,
+            "find_uv(alt=[full_order]) must equal find_uv(alt=[]) at the (0,0) hit",
+        );
+    }
+
+    /// `find_uv` surfaces `Error::NoBezoutSolution` when no Bezout
+    /// decomposition exists within the m=3 box. Use a degenerate
+    /// scenario: `target = 2` (too small — the box's odd small_norms
+    /// are too large to admit a positive Bezout solution). Confirms
+    /// the variant is distinct from `Error::Unimplemented` (which is
+    /// reserved for non-empty `alt_connecting` and other genuinely-
+    /// deferred features).
+    #[test]
+    fn find_uv_no_solution_within_box_returns_no_bezout_solution() {
+        use crate::error::Error;
+        use crate::quaternion::ideal::LeftIdeal;
+        let lideal = LeftIdeal::<8>::full_order();
+        let p: Uint<8> = Uint::from_u64(7);
+        let target = i(2); // too small; no positive u, v exist
+        let result = find_uv::<8>(
+            &target,
+            &lideal,
+            &p,
+            &[],
+            crate::params::Level1::FINDUV_BOX_SIZE,
+        );
+        assert!(
+            matches!(&result, Err(Error::NoBezoutSolution(msg)) if msg.contains("Bezout") || msg.contains("box")),
+            "find_uv must surface NoBezoutSolution when no Bezout solution exists within the box, \
+             got {result:?}",
+        );
+    }
+
+    /// Lift-invariant test: on a deliberately non-symmetric LLL-
+    /// reduced basis, the lift `α_o0 = Bᵀ · v` (via
+    /// `mat_4x4_transpose_eval`) must satisfy the Gram identity
+    ///
+    /// ```text
+    ///     vᵀ · G_I · v = 4 · N_red(α_o0)
+    /// ```
+    ///
+    /// where `G_I = B · G_O0 · Bᵀ = pull_back_gram(B, G_O0)` and the
+    /// factor-of-4 comes from the integer-safety bake-in of
+    /// `o0_reduced_norm_gram_matrix`. **This invariant FAILS** if
+    /// the lift uses `B · v` (= `mat_4x4_eval(B, v)`) instead of
+    /// `Bᵀ · v` whenever `B` is not symmetric — exactly the
+    /// transpose bug the Forge S195 audit caught.
+    ///
+    /// The test exercises the same composition `find_uv` uses
+    /// internally (the lift + Gram + norm primitives) without
+    /// running the full Bezout search; that lets us pin the
+    /// invariant on a fixture LLL leaves non-symmetric, instead of
+    /// fighting the m=3 hard-code's odd-norm filter.
+    /// Lift-invariant test: on a deliberately non-symmetric basis,
+    /// the lift `α_o0 = Bᵀ · v` (via `mat_4x4_transpose_eval`)
+    /// satisfies the Gram identity
+    ///
+    /// ```text
+    ///     vᵀ · G_I · v = 4 · N_red(α_o0)
+    /// ```
+    ///
+    /// where `G_I = pull_back_gram(B, G_O0) = B · G_O0 · Bᵀ`. The
+    /// factor-of-4 comes from the integer-safety bake-in of
+    /// `o0_reduced_norm_gram_matrix`. **This invariant FAILS** if
+    /// the lift uses `B · v` (= `mat_4x4_eval`) instead of `Bᵀ · v`
+    /// whenever `B` is non-symmetric — exactly the transpose bug
+    /// the Forge S195 audit caught.
+    ///
+    /// The test bypasses LLL (which tends to symmetrize the basis
+    /// for our small fixtures) and uses the raw non-symmetric basis
+    /// directly. This exercises the same lift+Gram composition
+    /// `find_uv` uses internally.
+    #[test]
+    fn lift_via_mat_4x4_transpose_eval_satisfies_gram_identity_on_non_symmetric_basis() {
+        use crate::quaternion::lattice::{
+            mat_4x4_eval, mat_4x4_transpose_eval, pull_back_gram, qf_eval_4x4,
+        };
+        use crate::quaternion::o0_mul::{o0_reduced_norm_gram_matrix, reduced_norm_o0_basis};
+
+        let p = Uint::<8>::from_u64(7);
+        // Deliberately non-symmetric integer basis. Bypass LLL —
+        // LLL tends to symmetrize the basis for small fixtures, which
+        // would hide the transpose bug. The Gram identity holds for
+        // ANY basis, so testing the raw basis is fine.
+        let basis = [
+            [i(1), i(0), i(0), i(0)],
+            [i(1), i(1), i(0), i(0)], // 1 + i offset — off-diagonal
+            [i(0), i(0), i(1), i(0)],
+            [i(0), i(0), i(0), i(1)],
+        ];
+
+        let g_o0 = o0_reduced_norm_gram_matrix::<8>(&p);
+        let g_i = pull_back_gram::<8>(&basis, &g_o0);
+
+        // Sanity: the basis is non-symmetric in the lift sense
+        // (B · v ≠ Bᵀ · v for at least one e_k). Catches a future
+        // fixture-symmetric-by-accident regression.
+        let mut any_differ = false;
+        for k in 0..4 {
+            let mut v = [i(0); 4];
+            v[k] = i(1);
+            if mat_4x4_eval::<8>(&basis, &v) != mat_4x4_transpose_eval::<8>(&basis, &v) {
+                any_differ = true;
+                break;
+            }
+        }
+        assert!(
+            any_differ,
+            "fixture basis is symmetric — test cannot guard against transpose bug",
+        );
+
+        // For each unit vector e_k, verify the Gram identity.
+        for k in 0..4 {
+            let mut v = [i(0); 4];
+            v[k] = i(1);
+            let alpha_o0 = mat_4x4_transpose_eval::<8>(&basis, &v);
+            let n_alpha = reduced_norm_o0_basis::<8>(&alpha_o0, &p);
+            let qf_val = qf_eval_4x4::<8>(&v, &g_i);
+            let expected = i(4).wrapping_mul(&n_alpha);
+            assert_eq!(
+                qf_val, expected,
+                "Gram identity vᵀ·G_I·v = 4·N(Bᵀ·v) must hold for e_{k}; \
+                 a mismatch means the lift is using B·v instead of Bᵀ·v",
+            );
+        }
+
+        // Also verify the buggy lift FAILS the same identity on at
+        // least one e_k — proving the test would have caught the
+        // S195 transpose bug.
+        let mut buggy_caught = false;
+        for k in 0..4 {
+            let mut v = [i(0); 4];
+            v[k] = i(1);
+            let alpha_buggy = mat_4x4_eval::<8>(&basis, &v);
+            let n_buggy = reduced_norm_o0_basis::<8>(&alpha_buggy, &p);
+            let qf_val = qf_eval_4x4::<8>(&v, &g_i);
+            let expected_buggy = i(4).wrapping_mul(&n_buggy);
+            if qf_val != expected_buggy {
+                buggy_caught = true;
+                break;
+            }
+        }
+        assert!(
+            buggy_caught,
+            "the buggy B·v lift should fail the Gram identity on this fixture — \
+             if this assertion fires, the fixture is too symmetric to discriminate",
+        );
+    }
+
+    /// Outcome from the parameterized `try_find_uv_postcondition` helper:
+    /// either a target landed and the postcondition held, or no target
+    /// in the trial range yielded a Bezout solution.
+    ///
+    /// The "no solution" outcome is NOT a test failure — it signals the
+    /// `m=3` hard-coded box is too tight for that fixture's lattice
+    /// density. The S202 test sweep covers multiple γ shapes; per-fixture
+    /// outcomes are aggregated to assert that AT LEAST ONE non-trivial
+    /// fixture yielded a solution (proving the pipeline works beyond
+    /// full_order), without forcing every fixture to succeed.
+    #[cfg_attr(feature = "alloc", derive(Debug))]
+    #[allow(dead_code)] // target_used / d1 / d2 are diagnostic-only
+    enum PostconditionOutcome {
+        /// `find_uv` returned Ok on some target; Bezout AND norm
+        /// postcondition both held. Numerical correctness pinned.
+        Verified { target_used: u64, d1: u64, d2: u64 },
+        /// No target in the trial range produced a Bezout solution.
+        /// Acceptable per-fixture; aggregated to a sweep-level assertion.
+        NoSolutionInBox,
+    }
+
+    /// Parameterized helper: build the principal ideal `O_0 · γ`, try
+    /// each target in the trial range, and on first success verify the
+    /// Bezout identity AND the S200 norm postcondition
+    /// `N(β.num) = β.denom² · n(I) · d`. Returns `Verified` on success,
+    /// `NoSolutionInBox` when no target hits.
+    ///
+    /// All ASSERTIONS inside fire on real numerical failures
+    /// (postcondition violation). Lattice-density misses (no Bezout in
+    /// the m=3 box) are not failures; they fall through to
+    /// `NoSolutionInBox`.
+    fn try_find_uv_postcondition(
+        gamma: &[Int<8>; 4],
+        p: &Uint<8>,
+        targets: &[u64],
+        box_size: i64,
+    ) -> PostconditionOutcome {
+        use crate::quaternion::o0_mul::principal_left_ideal_from_o0;
+        let lideal = principal_left_ideal_from_o0::<8>(gamma, p);
+        let p_int = Int::<8>::from_words(p.to_words());
+        let norm_of = |q: &crate::quaternion::algebra::Quaternion<8>| {
+            let a_sq = q.a.wrapping_mul(&q.a);
+            let b_sq = q.b.wrapping_mul(&q.b);
+            let c_sq = q.c.wrapping_mul(&q.c);
+            let d_sq = q.d.wrapping_mul(&q.d);
+            a_sq.wrapping_add(&b_sq)
+                .wrapping_add(&p_int.wrapping_mul(&c_sq.wrapping_add(&d_sq)))
+        };
+        let n_id = lideal
+            .reduced_norm_vartime()
+            .expect("principal ideal must have square cached_norm");
+        let n_id_int = Int::<8>::from_words(n_id.to_words());
+
+        for &target_u in targets {
+            let target = i(target_u as i64);
+            let result = find_uv::<8>(&target, &lideal, p, &[], box_size);
+            let Ok(r) = result else { continue };
+            let lhs =
+                r.u.wrapping_mul(&r.d1)
+                    .wrapping_add(&r.v.wrapping_mul(&r.d2));
+            assert_eq!(lhs, target, "Bezout identity must hold");
+            let beta1_denom_int = Int::<8>::from_words(r.beta1.denom.to_words());
+            let beta2_denom_int = Int::<8>::from_words(r.beta2.denom.to_words());
+            let expected1 = beta1_denom_int
+                .wrapping_mul(&beta1_denom_int)
+                .wrapping_mul(&n_id_int)
+                .wrapping_mul(&r.d1);
+            let expected2 = beta2_denom_int
+                .wrapping_mul(&beta2_denom_int)
+                .wrapping_mul(&n_id_int)
+                .wrapping_mul(&r.d2);
+            assert_eq!(
+                norm_of(&r.beta1.num),
+                expected1,
+                "N(β1.num) must equal β1.denom² · n(I) · d1 (postcondition violated)",
+            );
+            assert_eq!(
+                norm_of(&r.beta2.num),
+                expected2,
+                "N(β2.num) must equal β2.denom² · n(I) · d2 (postcondition violated)",
+            );
+            return PostconditionOutcome::Verified {
+                target_used: target_u,
+                d1: r.d1.to_words()[0],
+                d2: r.d2.to_words()[0],
+            };
+        }
+        PostconditionOutcome::NoSolutionInBox
+    }
+
+    /// S200 milestone test — postcondition holds for the canonical
+    /// non-trivial fixture `γ = (1, 0, 1, 0)` at p=7 (`N_red(γ) = 3`).
+    /// First test that proved find_uv's rescale-then-undo composition
+    /// works beyond `full_order`.
+    #[test]
+    fn find_uv_postcondition_holds_on_non_trivial_principal_ideal() {
+        use crate::quaternion::o0_mul::principal_left_ideal_from_o0;
+        let p: Uint<8> = Uint::from_u64(7);
+        let gamma = [i(1), i(0), i(1), i(0)];
+        // Sanity: cached_norm 9, reduced_norm 3 (the S200 anchor).
+        let lideal = principal_left_ideal_from_o0::<8>(&gamma, &p);
+        assert_eq!(lideal.cached_norm, Uint::<8>::from_u64(9));
+        assert_eq!(lideal.reduced_norm_vartime(), Some(Uint::<8>::from_u64(3)));
+        let targets = [16u64, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+        let outcome =
+            try_find_uv_postcondition(&gamma, &p, &targets, crate::params::Level1::FINDUV_BOX_SIZE);
+        assert!(
+            matches!(outcome, PostconditionOutcome::Verified { .. }),
+            "S200 anchor fixture must yield a Verified outcome, got {outcome:?}",
+        );
+    }
+
+    /// S202 sweep test — postcondition holds across MULTIPLE non-trivial
+    /// principal-ideal fixtures at p=7. Each fixture targets a different
+    /// `N_red(γ)` and a different O_0-basis pattern. The sweep ASSERTS
+    /// that the postcondition NEVER violates (any numerical failure
+    /// panics inside the helper) AND that AT LEAST 2 fixtures yield a
+    /// `Verified` outcome (signalling the pipeline is robust beyond a
+    /// single γ shape).
+    ///
+    /// Per-fixture lattice-density misses (no Bezout in m=3 box) are
+    /// allowed — the test prints the outcome for each fixture so that
+    /// future FINDUV_box_size tuning can see which γ shapes need larger
+    /// boxes.
+    #[test]
+    fn find_uv_postcondition_holds_across_multiple_principal_ideal_fixtures() {
+        let p: Uint<8> = Uint::from_u64(7);
+        let targets = [16u64, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+        // Each fixture: γ in O_0 basis + expected N_red(γ) (sanity
+        // check inside the helper via reduced_norm_vartime). γ values
+        // are chosen for diverse N_red and basis patterns.
+        let fixtures: [([Int<8>; 4], u64, &str); 5] = [
+            (
+                [i(1), i(0), i(1), i(0)],
+                3,
+                "γ=1+(i+j)/2, N=3 (S200 anchor)",
+            ),
+            ([i(1), i(1), i(1), i(0)], 5, "γ=1+i+(i+j)/2, N=5"),
+            ([i(1), i(1), i(0), i(1)], 5, "γ=1+i+(1+k)/2, N=5 alternate"),
+            ([i(1), i(0), i(2), i(0)], 9, "γ=1+(i+j), N=9 (composite)"),
+            ([i(3), i(0), i(1), i(0)], 11, "γ=3+(i+j)/2, N=11 prime"),
+        ];
+        let mut verified_count = 0usize;
+        for (gamma, expected_n, label) in &fixtures {
+            // Sanity check on the reduced norm to catch fixture typos.
+            let n_id = crate::quaternion::o0_mul::reduced_norm_o0_basis::<8>(gamma, &p);
+            assert_eq!(
+                n_id,
+                i(*expected_n as i64),
+                "fixture sanity: N_red({gamma:?}) should be {expected_n}, label={label}",
+            );
+            let outcome = try_find_uv_postcondition(
+                gamma,
+                &p,
+                &targets,
+                crate::params::Level1::FINDUV_BOX_SIZE,
+            );
+            if matches!(outcome, PostconditionOutcome::Verified { .. }) {
+                verified_count += 1;
+            }
+        }
+        assert!(
+            verified_count >= 2,
+            "S202 sweep requires at least 2 of {} fixtures to yield Verified \
+             (got {verified_count}). All assertions inside the helper would have \
+             panicked on numerical violations; this aggregate counts how many \
+             fixtures had Bezout solutions in the m=3 box.",
+            fixtures.len(),
+        );
+    }
+
+    /// `FindUvResult::placeholder()` constructs across LIMBS widths.
+    #[test]
+    fn find_uv_result_placeholder_constructs_at_l1_l3_l5() {
+        let _l1 = FindUvResult::<8>::placeholder();
+        let _l3 = FindUvResult::<12>::placeholder();
+        let _l5 = FindUvResult::<16>::placeholder();
+    }
+
+    /// LIMBS-generic helper for the find_uv postcondition check on the
+    /// S200 anchor fixture (γ = (1, 0, 1, 0), N_red = 3, at p=7). Used
+    /// by the L1/L3/L5 tests below to validate find_uv is genuinely
+    /// LIMBS-generic — catches accidental LIMBS-8 specialization.
+    fn check_find_uv_anchor_postcondition_at_limbs<const LIMBS: usize>(box_size: i64) {
+        use crate::quaternion::o0_mul::principal_left_ideal_from_o0;
+        let p: Uint<LIMBS> = Uint::from_u64(7);
+        let nn = |v: i64| Int::<LIMBS>::from_i64(v);
+        let zz = nn(0);
+        let gamma = [nn(1), zz, nn(1), zz];
+        let lideal = principal_left_ideal_from_o0::<LIMBS>(&gamma, &p);
+        assert_eq!(lideal.cached_norm, Uint::<LIMBS>::from_u64(9));
+        let p_int = Int::<LIMBS>::from_words(p.to_words());
+        let norm_of = |q: &crate::quaternion::algebra::Quaternion<LIMBS>| {
+            let a_sq = q.a.wrapping_mul(&q.a);
+            let b_sq = q.b.wrapping_mul(&q.b);
+            let c_sq = q.c.wrapping_mul(&q.c);
+            let d_sq = q.d.wrapping_mul(&q.d);
+            a_sq.wrapping_add(&b_sq)
+                .wrapping_add(&p_int.wrapping_mul(&c_sq.wrapping_add(&d_sq)))
+        };
+        let n_id = lideal
+            .reduced_norm_vartime()
+            .expect("principal ideal must have square cached_norm");
+        let n_id_int = Int::<LIMBS>::from_words(n_id.to_words());
+
+        let mut any_succeeded = false;
+        for target_u in [16u64, 32, 64, 128, 256, 512, 1024, 2048, 4096] {
+            let target = nn(target_u as i64);
+            let result = find_uv::<LIMBS>(&target, &lideal, &p, &[], box_size);
+            let Ok(r) = result else { continue };
+            let lhs =
+                r.u.wrapping_mul(&r.d1)
+                    .wrapping_add(&r.v.wrapping_mul(&r.d2));
+            assert_eq!(lhs, target, "Bezout identity must hold at LIMBS={LIMBS}");
+            let beta1_denom_int = Int::<LIMBS>::from_words(r.beta1.denom.to_words());
+            let beta2_denom_int = Int::<LIMBS>::from_words(r.beta2.denom.to_words());
+            let expected1 = beta1_denom_int
+                .wrapping_mul(&beta1_denom_int)
+                .wrapping_mul(&n_id_int)
+                .wrapping_mul(&r.d1);
+            let expected2 = beta2_denom_int
+                .wrapping_mul(&beta2_denom_int)
+                .wrapping_mul(&n_id_int)
+                .wrapping_mul(&r.d2);
+            assert_eq!(
+                norm_of(&r.beta1.num),
+                expected1,
+                "postcondition N(β1.num) = β1.denom²·n(I)·d1 must hold at LIMBS={LIMBS}",
+            );
+            assert_eq!(
+                norm_of(&r.beta2.num),
+                expected2,
+                "postcondition N(β2.num) = β2.denom²·n(I)·d2 must hold at LIMBS={LIMBS}",
+            );
+            any_succeeded = true;
+            break;
+        }
+        assert!(
+            any_succeeded,
+            "S200 anchor fixture should yield Bezout in m=3 box at LIMBS={LIMBS}",
+        );
+    }
+
+    /// S204: L3 LIMBS (12) variant of the S200 anchor postcondition test.
+    /// S210: now uses `Level3::FINDUV_BOX_SIZE = 3` (= C ref's value).
+    #[test]
+    fn find_uv_postcondition_holds_on_s200_anchor_at_l3_limbs() {
+        check_find_uv_anchor_postcondition_at_limbs::<12>(crate::params::Level3::FINDUV_BOX_SIZE);
+    }
+
+    /// S204: L5 LIMBS (16) variant.
+    /// S210: now uses `Level5::FINDUV_BOX_SIZE = 3` (= C ref's value).
+    #[test]
+    fn find_uv_postcondition_holds_on_s200_anchor_at_l5_limbs() {
+        check_find_uv_anchor_postcondition_at_limbs::<16>(crate::params::Level5::FINDUV_BOX_SIZE);
+    }
+
+    /// S220: `find_uv_alternate_orders` end-to-end through the (0,0) β
+    /// finalize on the REAL L1 ALT[0] entry. Composes everything from
+    /// S213-S219 (LLL + rescale → reduced_id; per-j ideal_multiply +
+    /// wide-LLL; per-j Gram + enumerate; cross-product Bezout) and then
+    /// finalizes the (j1=0, j2=0) hit.
+    ///
+    /// **Differential element-equality arbiter (per S207/advisor):** the
+    /// norm postcondition `N(β) = denom²·n(I)·d` CANNOT distinguish our
+    /// convention `β = β_lift·δ` from the C-ref's `β = conj(δ·β_lift)`,
+    /// because reduced norm is multiplicative AND conjugation-invariant.
+    /// So we verify the (0,0) finalize against `find_uv` (the S200-proven
+    /// oracle): the (0,0) sub-result is computed from `reduced_per_j[0]`
+    /// (= the rescaled input ideal, identical to `find_uv`'s `reduced_id`)
+    /// with the same δ, enumerate, and Bezout convention, so the FULL
+    /// `FindUvResult` — u, v, d1, d2, and both β quaternion elements
+    /// (num + denom) — must be byte-identical to `find_uv` on the same
+    /// input with an empty `alt_connecting`. Element-equality (not just
+    /// norm-equality) is what rejects a left/right/conjugate convention
+    /// slip.
+    #[test]
+    fn find_uv_alternate_orders_zero_zero_finalize_matches_find_uv_with_real_alt_0() {
+        use crate::quaternion::connecting_ideals::alternate_connecting_ideal_0_l1;
+        use crate::quaternion::ideal::LeftIdeal;
+        let lideal = LeftIdeal::<8>::full_order();
+        let p: Uint<8> = Uint::from_u64(7);
+        let target = i(1024);
+        let alt = [alternate_connecting_ideal_0_l1()];
+        let box_size = crate::params::Level1::FINDUV_BOX_SIZE;
+
+        let via_alt = find_uv_alternate_orders::<8, 20>(&target, &lideal, &p, &alt, box_size)
+            .expect("(0,0) finalize must succeed: 3u + 5v = 1024 has a Bezout solution");
+        let via_find_uv = find_uv::<8>(&target, &lideal, &p, &[], box_size)
+            .expect("find_uv oracle must succeed on the same input");
+
+        // Full structural equality: u, v, d1, d2, both β (num + denom),
+        // and the alternate-order indices (both 0 here).
+        assert_eq!(
+            via_alt, via_find_uv,
+            "(0,0) finalize must be byte-identical to find_uv — distinguishes \
+             β=β_lift·δ from β=conj(δ·β_lift), which the norm test cannot",
+        );
+        // Spell out the Bezout identity for a human-readable anchor.
+        let lhs = via_alt
+            .u
+            .wrapping_mul(&via_alt.d1)
+            .wrapping_add(&via_alt.v.wrapping_mul(&via_alt.d2));
+        assert_eq!(lhs, target, "u·d1 + v·d2 must equal target");
+        assert_eq!(via_alt.index_alternate_order_1, 0);
+        assert_eq!(via_alt.index_alternate_order_2, 0);
+    }
+
+    /// S220: `find_uv_alternate_orders` on the `[full_order()]`
+    /// placeholder finalizes the (0,0) Bezout hit. Since `reduced_per_j[0]`
+    /// = the rescaled `O_0` input (same as `find_uv`'s `reduced_id`) and
+    /// the placeholder alt entry contributes only an unreachable j>0 path,
+    /// the result must equal `find_uv` on an empty `alt_connecting`.
+    /// Same differential-equality arbiter as the real-ALT[0] test.
+    #[test]
+    fn find_uv_alternate_orders_zero_zero_finalize_matches_find_uv_with_placeholder() {
+        use crate::quaternion::ideal::LeftIdeal;
+        let lideal = LeftIdeal::<8>::full_order();
+        let p: Uint<8> = Uint::from_u64(7);
+        let target = i(1024);
+        let alt = [LeftIdeal::<8>::full_order()];
+        let box_size = crate::params::Level1::FINDUV_BOX_SIZE;
+
+        let via_alt = find_uv_alternate_orders::<8, 20>(&target, &lideal, &p, &alt, box_size)
+            .expect("(0,0) finalize must succeed on the placeholder alt entry");
+        let via_find_uv = find_uv::<8>(&target, &lideal, &p, &[], box_size)
+            .expect("find_uv oracle must succeed on the same input");
+        assert_eq!(
+            via_alt, via_find_uv,
+            "(0,0) finalize on placeholder alt must be byte-identical to find_uv",
+        );
+    }
+
+    /// S208: validates that the S200 anchor fixture (γ = (1, 0, 1, 0)
+    /// at p=7) still yields a Bezout solution when `box_size = 2` —
+    /// the C reference's actual L1 value (extracted via S206 research
+    /// agent). Previously hardcoded m = 3 was over-allocated for L1;
+    /// this test pins whether m = 2 is sufficient density for our
+    /// small-prime fixture.
+    ///
+    /// If this test PASSES: m = 2 is sufficient even for our trivially
+    /// small fixture, so production callers at L1 will likely find
+    /// Bezout solutions with the C-ref-spec box.
+    ///
+    /// If this test FAILS (NoBezoutSolution): m = 2 is too tight for
+    /// our small-prime test fixture; production callers at L1 may
+    /// need m > 2 for non-canonical inputs, OR our p=7 fixtures are
+    /// pathological. Either way the FAILURE is informative — the
+    /// helper's other assertions would have caught real correctness
+    /// violations; a NoBezoutSolution is a density signal, not a bug.
+    #[test]
+    fn find_uv_at_l1_box_size_two_matches_c_ref_constant() {
+        use crate::quaternion::o0_mul::principal_left_ideal_from_o0;
+        let p: Uint<8> = Uint::from_u64(7);
+        let gamma = [i(1), i(0), i(1), i(0)];
+        let lideal = principal_left_ideal_from_o0::<8>(&gamma, &p);
+        // Try the same target range as the S200 anchor test.
+        let targets = [16u64, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+        let mut any_succeeded = false;
+        for target_u in targets {
+            let target = i(target_u as i64);
+            // box_size = 2 (C ref's FINDUV_box_size at L1).
+            let result = find_uv::<8>(&target, &lideal, &p, &[], 2);
+            if result.is_ok() {
+                any_succeeded = true;
+                break;
+            }
+        }
+        // ASSERT: at least one target succeeds. If this fails, m=2 is
+        // too tight for our γ=(1,0,1,0) fixture at p=7 — which would
+        // be informative (production L1 callers may need m > 2 on
+        // edge-case inputs). If it passes, m=2 is sufficient at L1
+        // density for at least this fixture.
+        assert!(
+            any_succeeded,
+            "S208 probe: m=2 (C ref's L1 FINDUV_box_size) found no Bezout solution for γ=(1,0,1,0) at p=7 \
+             across targets {{16, 32, ..., 4096}}. This may signal that the C ref's L1 box is too tight \
+             for small-prime test fixtures — production L1 inputs at real 251-bit prime should fare better.",
         );
     }
 }

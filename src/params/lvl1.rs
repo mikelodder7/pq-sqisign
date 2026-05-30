@@ -37,6 +37,9 @@ impl Params for Level1 {
     const RESPONSE_BITS: usize = 126;
     const HASH_ITERATIONS: usize = 64;
     const SECURITY_BITS: usize = 128;
+    const FINDUV_BOX_SIZE: i64 = 2;
+    const NUM_ALTERNATE_EXTREMAL_ORDERS: usize = 6;
+    const FINDUV_CUBE_SIZE: u64 = 624;
 }
 
 /// The Level-1 base prime `p = 5 · 2^248 − 1` as a 256-bit unsigned integer.
