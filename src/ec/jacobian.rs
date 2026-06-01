@@ -435,6 +435,124 @@ impl<F: BaseField> ConditionallySelectable for JacobianPoint<F> {
     }
 }
 
+/// Recover the Y-coordinate of a Montgomery-curve point from its affine
+/// x via `y² = x³ + A·x² + x` (B = 1; the supersingular/twist convention
+/// of the SQIsign C ref). Returns `(y, on_curve)` where `on_curve` is
+/// `Choice::TRUE` iff `y²` was a square (the point is on the curve, not
+/// the twist). The sqrt branch is the principal one from [`Fp2::sqrt`] —
+/// this is the single FREE sign choice for a lifted basis (see
+/// [`lift_basis`]).
+///
+/// Mirrors the C ref's `ec_recover_y` (`src/ec/ref/lvlx/basis.c:6-19`).
+#[allow(dead_code)]
+fn ec_recover_y<F: BaseField>(x_aff: &Fp2<F>, curve_a: &Fp2<F>) -> (Fp2<F>, Choice) {
+    let x_sq = x_aff.square();
+    let y_sq = x_sq.mul(x_aff).add(&curve_a.mul(&x_sq)).add(x_aff); // x³ + A·x² + x
+    let y_opt = y_sq.sqrt();
+    (y_opt.unwrap_or(Fp2::zero()), y_opt.is_some())
+}
+
+/// Lift an x-only Montgomery basis `(x(P), x(Q), x(P−Q))` to a pair of
+/// full Jacobian points `(P, Q)` whose signs are MUTUALLY CONSISTENT:
+/// `P − Q` reduces to the supplied `x(P−Q)`.
+///
+/// # Why a naive double-lift is wrong
+///
+/// Lifting P and Q independently (each via its own [`Fp2::sqrt`] branch,
+/// e.g. [`JacobianPoint::from_montgomery_xz`]) chooses their Y-signs
+/// INDEPENDENTLY — but a basis requires the relative sign such that
+/// `P − Q` matches `x(P−Q)`. The SQIsign C ref does NOT lift-then-compare:
+/// it lifts P with one free sqrt branch, then derives Q's full
+/// coordinates (Y-sign included) DETERMINISTICALLY from P's chosen sign
+/// via the **Okeya-Sakurai differential y-recovery** formula, which
+/// consumes `x(P−Q)`. Consistency holds by construction — there is no
+/// sign comparison or conditional negate.
+///
+/// Mirrors `lift_basis` + `lift_basis_normalized`
+/// (`src/ec/ref/lvlx/basis.c:76-138`). Our [`crate::ec::montgomery::MontgomeryCurve`]
+/// stores `a` already as `A/C` (affine, C = 1 implicit), so the C ref's
+/// curve normalization is a no-op here; we normalize P by its own `z`.
+///
+/// # Returns
+///
+/// `Ok((P, Q))` — both full Jacobian points whose signs are mutually
+/// consistent with the supplied `x(P−Q)`. `P` is affine (`z = 1`); `Q` is
+/// a general Jacobian point. Returns `Err(LiftError::NotOnCurve)` if `x(P)`
+/// is on the twist (its `y²` is a non-square).
+///
+/// The Q-lift is the Okeya-Sakurai differential y-recovery ported verbatim
+/// from the C ref. Note `x(P−Q)` here is the *Montgomery x-only* difference;
+/// when constructing it from full points, recover it via the `ADDComponents`
+/// differential triple `(u, v, w)` as `x(P−Q) = (u + v) / w` — NOT by
+/// treating the triple as a Jacobian point.
+// Consumed by the theta-chain orchestration (S250+); only tests exercise it
+// until then, so the lib target sees it as unused.
+#[allow(dead_code, clippy::many_single_char_names)]
+pub(crate) fn lift_basis<F: BaseField>(
+    basis: &crate::ec::couple::EcBasis<F>,
+    curve: &crate::ec::montgomery::MontgomeryCurve<F>,
+) -> Result<(JacobianPoint<F>, JacobianPoint<F>), LiftError> {
+    let a = curve.a;
+
+    // P-lift: normalize x(P) to affine (z = 1), then recover y.
+    let p_z_inv = basis.p.z.invert().unwrap_or(Fp2::zero());
+    let px = basis.p.x.mul(&p_z_inv);
+    let (py, on_curve) = ec_recover_y::<F>(&px, &a);
+    if !bool::from(on_curve) {
+        return Err(LiftError::NotOnCurve);
+    }
+
+    // Q and P−Q stay PROJECTIVE (z not assumed 1), matching the C ref's
+    // general `lift_basis_normalized` path.
+    let qx = basis.q.x;
+    let qz = basis.q.z;
+    let pmq_x = basis.p_minus_q.x;
+    let pmq_z = basis.p_minus_q.z;
+
+    // Okeya-Sakurai y-recovery for Q (C-ref `lift_basis_normalized`,
+    // basis.c:90-116, verbatim op order). `py` is P's chosen sign; this
+    // derives Q's full coordinates deterministically from it.
+    let mut v1 = px.mul(&qz);
+    let v2 = qx.add(&v1);
+    let mut v3 = qx.sub(&v1);
+    v3 = v3.square();
+    v3 = v3.mul(&pmq_x);
+    v1 = a.add(&a); // 2A
+    v1 = v1.mul(&qz); // 2A·qz
+    let mut v2 = v2.add(&v1); // (qx + px·qz) + 2A·qz
+    let mut v4 = px.mul(&qx);
+    v4 = v4.add(&qz); // px·qx + qz
+    v2 = v2.mul(&v4);
+    v1 = v1.mul(&qz); // 2A·qz²
+    v2 = v2.sub(&v1);
+    v2 = v2.mul(&pmq_z);
+    let mut q_y = v3.sub(&v2);
+    v1 = py.add(&py); // 2·py
+    v1 = v1.mul(&qz); // 2·py·qz
+    v1 = v1.mul(&pmq_z); // 2·py·qz·PmQ.z
+    let mut q_x = qx.mul(&v1);
+    let mut q_z = qz.mul(&v1);
+
+    // Transform Q from homogeneous (X:Y:Z) to Jacobian: Y *= Z², X *= Z.
+    let zz = q_z.square();
+    q_y = q_y.mul(&zz);
+    q_x = q_x.mul(&q_z);
+    let _ = &mut q_z;
+
+    let p_jac = JacobianPoint::new(px, py, Fp2::one());
+    let q_jac = JacobianPoint::new(q_x, q_y, q_z);
+    Ok((p_jac, q_jac))
+}
+
+/// Failure modes for [`lift_basis`].
+#[allow(dead_code)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum LiftError {
+    /// `x(P)` does not correspond to an on-curve point (its `y²` is a
+    /// non-square — the point is on the twist).
+    NotOnCurve,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1062,5 +1180,93 @@ mod tests {
     fn infinity_randomize_stays_infinity_at_lvl5() {
         use crate::params::lvl5::Fp5Element;
         check_infinity_randomize_stays_infinity::<Fp5Element>();
+    }
+
+    /// S249: `lift_basis` produces a sign-CONSISTENT pair. Build two real
+    /// on-curve points P, Q on E_0, derive their x-onlies and the genuine
+    /// `x(P−Q)` (via the `ADDComponents` differential triple, `(u+v)/w`),
+    /// feed the three x-onlies to `lift_basis`, and check:
+    ///   (a) Ok (P lifts on-curve),
+    ///   (b) both lifted points satisfy the affine curve equation,
+    ///   (c) the CONSISTENCY claim: `x(lift_P − lift_Q) == x(P−Q)` — the
+    ///       Okeya-Sakurai guarantee a naive independent double-lift misses.
+    ///
+    /// NOTE the S248→S249 fix: `add_components` returns the DIFFERENTIAL
+    /// TRIPLE `(u, v, w)`, NOT a Jacobian point. `x(P−Q) = (u + v) / w`.
+    /// The S248 fixture wrongly wrapped `(u, v, w)` as a Jacobian point,
+    /// feeding a garbage `x(P−Q)` — which made the (correct) OS port look
+    /// off-curve. The port was faithful all along.
+    fn check_lift_basis_consistency<F: BaseField>() {
+        let curve = MontgomeryCurve::<F>::e0();
+        let a = curve.a;
+
+        // P from a small liftable x; lift its y via ec_recover_y so the
+        // fixture's P sign matches the sign lift_basis will choose.
+        let (mp, _) = first_liftable_point_on_e0::<F>();
+        let px = mp.x;
+        let (py, _) = ec_recover_y::<F>(&px, &a);
+        let p_jac = JacobianPoint::new(px, py, Fp2::<F>::one());
+
+        // A second, distinct liftable x for Q.
+        let mut q_pair = None;
+        for n in 3..=30 {
+            let cand = small_fp2::<F>(n);
+            if bool::from(cand.ct_eq(&px)) {
+                continue;
+            }
+            let (qy, oc) = ec_recover_y::<F>(&cand, &a);
+            if bool::from(oc) {
+                q_pair = Some((cand, qy));
+                break;
+            }
+        }
+        let (qx, qy) = q_pair.expect("a second distinct liftable point on E_0");
+        let q_jac = JacobianPoint::new(qx, qy, Fp2::<F>::one());
+
+        // Genuine x(P−Q) = (u+v)/w from the ADDComponents triple.
+        let (u, v, w) = p_jac.add_components(&q_jac, &a);
+        let w_inv = w.invert().unwrap_or(Fp2::<F>::zero());
+        let pmq_x = u.add(&v).mul(&w_inv);
+
+        let basis = crate::ec::couple::EcBasis::new(
+            MontgomeryPoint::new(px, Fp2::<F>::one()),
+            MontgomeryPoint::new(qx, Fp2::<F>::one()),
+            MontgomeryPoint::new(pmq_x, Fp2::<F>::one()),
+        );
+        let (lp, lq) = lift_basis::<F>(&basis, &curve).expect("P lifts on-curve");
+
+        // (b) both lifts satisfy y² = x³ + A·x² + x (affine-normalised).
+        let on_curve_eq = |pt: &JacobianPoint<F>| -> bool {
+            let aff = pt.to_affine();
+            let rhs = aff
+                .x
+                .square()
+                .mul(&aff.x)
+                .add(&a.mul(&aff.x.square()))
+                .add(&aff.x);
+            bool::from(aff.y.square().ct_eq(&rhs))
+        };
+        assert!(on_curve_eq(&lp), "lifted P on curve");
+        assert!(on_curve_eq(&lq), "lifted Q on curve");
+
+        // (c) sign consistency: x(lift_P − lift_Q) == x(P−Q).
+        let (u2, v2, w2) = lp.add_components(&lq, &a);
+        let w2_inv = w2.invert().unwrap_or(Fp2::<F>::zero());
+        let lifted_pmq_x = u2.add(&v2).mul(&w2_inv);
+        assert!(
+            bool::from(lifted_pmq_x.ct_eq(&pmq_x)),
+            "lift_basis sign consistency: x(lift_P − lift_Q) must equal x(P−Q)",
+        );
+    }
+
+    #[test]
+    fn s249_lift_basis_consistency_at_lvl1() {
+        check_lift_basis_consistency::<Fp1Element>();
+    }
+
+    #[test]
+    fn s249_lift_basis_consistency_at_lvl3() {
+        use crate::params::lvl3::Fp3Element;
+        check_lift_basis_consistency::<Fp3Element>();
     }
 }

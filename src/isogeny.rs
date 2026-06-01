@@ -16,6 +16,7 @@ pub mod clapotis;
 pub mod gluing;
 pub mod splitting;
 pub mod theta;
+pub mod theta_chain;
 pub mod theta_doubling;
 pub mod theta_isogeny;
 pub mod two;

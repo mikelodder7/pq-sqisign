@@ -330,6 +330,34 @@ pub fn pull_back_gram<const LIMBS: usize>(
     out
 }
 
+/// Wide-precision variant of [`pull_back_gram`]: widens `basis` and
+/// `metric` from `Int<NARROW>` to `Int<WIDE>` and computes the pullback
+/// `Bᵀ·M·B` entirely in `WIDE` precision, returning an `Int<WIDE>` Gram.
+///
+/// Required at real-prime scale: with `B ~ 2^249` (rescaled-ideal basis)
+/// and `M ~ 2^251` (`o0_reduced_norm_gram_matrix`), the `Bᵀ·M·B`
+/// INTERMEDIATE products reach ~`2^749`, which wraps `Int<8>` (511-bit
+/// signed) even though the final Gram entries are small enough to fit.
+/// S230 proved a `WIDE`-precision pullback restores the exact
+/// `denom² | vᵀGv` divisibility the narrow path silently corrupts.
+/// Mirrors [`qf_eval_4x4_wide`]'s widen-then-compute shape.
+#[allow(clippy::needless_range_loop)]
+pub fn pull_back_gram_wide<const NARROW: usize, const WIDE: usize>(
+    basis: &[[Int<NARROW>; 4]; 4],
+    metric: &[[Int<NARROW>; 4]; 4],
+) -> [[Int<WIDE>; 4]; 4] {
+    let zero_w = Int::<WIDE>::from_i64(0);
+    let mut basis_w = [[zero_w; 4]; 4];
+    let mut metric_w = [[zero_w; 4]; 4];
+    for i in 0..4 {
+        for j in 0..4 {
+            basis_w[i][j] = widen_int_lattice::<NARROW, WIDE>(&basis[i][j]);
+            metric_w[i][j] = widen_int_lattice::<NARROW, WIDE>(&metric[i][j]);
+        }
+    }
+    pull_back_gram::<WIDE>(&basis_w, &metric_w)
+}
+
 /// Cohen-style integer Gram–Schmidt orthogonalization on a 4×4 *Gram
 /// matrix* directly (skipping the `gram_matrix_4x4` step that
 /// [`integer_gso_4x4`] performs internally). Identical semantics

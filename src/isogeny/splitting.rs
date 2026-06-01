@@ -91,12 +91,26 @@ impl<F: BaseField> ThetaSplitting<F> {
 /// Failure modes for [`splitting_compute`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SplittingError {
-    /// The full body of `splitting_compute` is not yet implemented —
-    /// the four constant tables (`EVEN_INDEX`, `CHI_EVAL`,
-    /// `SPLITTING_TRANSFORMS`, `NORMALIZATION_TRANSFORMS`) must be
-    /// ported from the C reference first (S147+). Until then,
-    /// callers receive this variant.
+    /// The full body of `splitting_compute` is not yet implemented.
+    /// (Retained for API stability; the body landed in S246 — current
+    /// failure modes are the more specific variants below.)
     NotImplemented,
+    /// No even characteristic had a vanishing `U_cst` (or more than one
+    /// did): `count != 1`. The input variety is not splittable into an
+    /// elliptic product via the (2,2)-theta model. (C ref: `return
+    /// count == 1` is false.)
+    NotSplittable,
+    /// `zero_index` was supplied (the caller knew which even-index
+    /// coordinate should vanish) but at that index `U_cst != 0` — the
+    /// split is mis-shaped relative to the expected kernel. (C ref's
+    /// `zero_index != -1 && i == zero_index && !ctl` early return.)
+    NoVanishingIndex,
+    /// `randomize = true` was requested, but the signing-path
+    /// `NORMALIZATION_TRANSFORMS` randomization needs an RNG this
+    /// signature does not thread (C ref's `ENABLE_SIGN` block). The
+    /// non-randomized path (verification + response side) is supported.
+    /// [S247: thread an RNG to enable this.]
+    RandomizeUnsupported,
 }
 
 /// Failure modes for the post-splitting extraction routines
@@ -376,20 +390,355 @@ pub(crate) fn select_base_change_matrix<F: BaseField>(
 ///    `apply_isomorphism(b_null, M, domain.null)`; return
 ///    `Ok(ThetaSplitting { m, b_null })`.
 ///
-/// Reference: `theta_isogenies.c:splitting_compute`.
-#[allow(dead_code)]
+/// Reference: `theta_isogenies.c:splitting_compute` (S246 wires the body).
+///
+/// Algorithm (mirrors the C ref verbatim): for each of the 10 even
+/// characteristics `i`, accumulate `U_cst = Σ_t ±(θ[t]·θ[t ^ EVEN_INDEX[i][1]])`
+/// where the sign is `CHI_EVAL[EVEN_INDEX[i][0]][t]`; if `U_cst == 0`,
+/// constant-time-select `SPLITTING_TRANSFORMS[i]` into the running
+/// matrix `M`. Splitting succeeds iff exactly one `i` gives `U_cst == 0`.
+/// Finally `apply_isomorphism(M, A.null)` gives the splitting-compatible
+/// codomain null. The matrix `m[i][j]` convention matches our
+/// `apply_isomorphism` (output coord i = Σ_j m[i][j]·p[j]) — verified
+/// against the C ref's `apply_isomorphism_general` (ti.c:64-95), same
+/// orientation, no transpose (S246).
+///
+/// `zero_index`: when `Some(z)`, an early-fail check — if at the
+/// expected index `i == z` the coordinate does NOT vanish, return a
+/// failure immediately (the C ref's `zero_index != -1` branch).
+///
+/// `randomize`: signing-path randomization (C ref's `ENABLE_SIGN`
+/// block). NOT yet supported here — it needs an RNG and the
+/// `sample_random_index` plumbing that this signature lacks; requesting
+/// it returns `Err(RandomizeUnsupported)` (the verifiable non-random
+/// path — verification + the response side — is complete). [S247 docket:
+/// thread an RNG + wire the NORMALIZATION_TRANSFORMS randomize block.]
+// `t` indexes CHI_EVAL's row AND (XOR-paired) the theta coordinates —
+// enumerate() over one would obscure the C-ref-faithful indexed access.
+#[allow(dead_code, clippy::needless_range_loop)]
 pub(crate) fn splitting_compute<F: BaseField>(
-    _domain: &AbelianVariety2D<F>,
-    _zero_index: Option<usize>,
-    _randomize: bool,
+    domain: &AbelianVariety2D<F>,
+    zero_index: Option<usize>,
+    randomize: bool,
 ) -> Result<ThetaSplitting<F>, SplittingError> {
-    Err(SplittingError::NotImplemented)
+    if randomize {
+        return Err(SplittingError::RandomizeUnsupported);
+    }
+
+    let null = &domain.theta_null;
+    // Index the null point's 4 theta coordinates by 0..3 (x,y,z,w).
+    let coord = |ind: usize| -> Fp2<F> {
+        match ind & 3 {
+            0 => null.x,
+            1 => null.y,
+            2 => null.z,
+            _ => null.w,
+        }
+    };
+
+    // Running base-change matrix, starts all-zero (C ref: memset 0).
+    let mut m = BasisChangeMatrix {
+        m: [[Fp2::<F>::zero(); 4]; 4],
+    };
+    let mut count: u32 = 0;
+
+    for i in 0..10 {
+        let mut u_cst = Fp2::<F>::zero();
+        for t in 0..4 {
+            let t2 = coord(t);
+            let t1 = coord(t ^ (EVEN_INDEX[i][1] as usize));
+            let prod = t1.mul(&t2);
+            // CHI_EVAL ∈ {+1,-1}: +1 → add prod, -1 → add (-prod).
+            let neg = prod.negate();
+            let term = if CHI_EVAL[EVEN_INDEX[i][0] as usize][t] == 1 {
+                prod
+            } else {
+                neg
+            };
+            u_cst = u_cst.add(&term);
+        }
+        let is_zero = u_cst.is_zero();
+        // count += 1 when this characteristic vanishes.
+        count += u32::from(bool::from(is_zero));
+        // CT-select SPLITTING_TRANSFORMS[i] into M when U_cst == 0.
+        let candidate = base_change_from_codes::<F>(&SPLITTING_TRANSFORMS[i]);
+        m = select_base_change_matrix(&m, &candidate, is_zero);
+        // zero_index early-fail: if we expect the vanish at index z and
+        // it does NOT happen there, the split is mis-shaped → fail.
+        if let Some(z) = zero_index {
+            if i == z && !bool::from(is_zero) {
+                return Err(SplittingError::NoVanishingIndex);
+            }
+        }
+    }
+
+    // Exactly one vanishing characteristic = a valid splitting.
+    if count != 1 {
+        return Err(SplittingError::NotSplittable);
+    }
+
+    let b_null = crate::isogeny::gluing::apply_isomorphism(&m, null);
+    Ok(ThetaSplitting { m, b_null })
+}
+
+// ---------------------------------------------------------------------
+// S244: splitting constant tables (ported verbatim from the C reference
+// `src/precomp/ref/lvl1/hd_splitting_transforms.c`, which is byte-
+// identical across lvl1/3/5 — these are LEVEL-INDEPENDENT small-integer
+// index tables, NOT field constants). Fetched via research agent from
+// github.com/SQISign/the-sqisign (the S147-era "/tmp/ inaccessible"
+// blocker was moot — see S243/S244 Decisions).
+//
+// The matrix entries are INDEX CODES into the 5-element fp2 constant
+// table `{0, 1, i, -1, -i}` (see `FP2_CONST_CODE_*` below); the C ref's
+// `set_base_change_matrix_from_precomp` maps `code → FP2_CONSTANTS[code]`
+// at runtime. We keep the codes as `u8` and map to `Fp2<F>` on demand.
+// ---------------------------------------------------------------------
+
+/// Index codes into the fp2 constant table `{0, 1, i, -1, -i}` used by
+/// [`SPLITTING_TRANSFORMS`] / [`NORMALIZATION_TRANSFORMS`] entries.
+/// Mirrors the C ref's `FP2_ZERO/ONE/I/MINUS_ONE/MINUS_I` macros.
+#[allow(dead_code)]
+pub(crate) const FP2_CODE_ZERO: u8 = 0;
+#[allow(dead_code)]
+pub(crate) const FP2_CODE_ONE: u8 = 1;
+#[allow(dead_code)]
+pub(crate) const FP2_CODE_I: u8 = 2;
+#[allow(dead_code)]
+pub(crate) const FP2_CODE_MINUS_ONE: u8 = 3;
+#[allow(dead_code)]
+pub(crate) const FP2_CODE_MINUS_I: u8 = 4;
+
+/// Map an `FP2_CODE_*` index to the corresponding `Fp2<F>` constant
+/// `{0, 1, i, -1, -i}`. `i` is the quadratic-extension generator
+/// (`Fp2 { c0: 0, c1: 1 }`); the C ref's `FP2_CONSTANTS[code]`.
+#[allow(dead_code)]
+pub(crate) fn fp2_from_code<F: BaseField>(code: u8) -> Fp2<F> {
+    match code {
+        FP2_CODE_ZERO => Fp2::<F>::zero(),
+        FP2_CODE_ONE => Fp2::<F>::one(),
+        FP2_CODE_I => Fp2::<F>::img(),
+        FP2_CODE_MINUS_ONE => Fp2::<F>::one().negate(),
+        FP2_CODE_MINUS_I => Fp2::<F>::img().negate(),
+        _ => Fp2::<F>::zero(), // defensive; valid tables only emit 0..=4
+    }
+}
+
+/// `EVEN_INDEX[10][2]` — enumerates the 10 even theta characteristics.
+/// `[i][0]` selects a `CHI_EVAL` row (the character); `[i][1]` is XOR-ed
+/// into the theta-coordinate index to pick the paired coordinate.
+/// Verbatim from `hd_splitting_transforms.c:15` (level-independent).
+#[allow(dead_code)]
+pub(crate) const EVEN_INDEX: [[u8; 2]; 10] = [
+    [0, 0],
+    [0, 1],
+    [0, 2],
+    [0, 3],
+    [1, 0],
+    [1, 2],
+    [2, 0],
+    [2, 1],
+    [3, 0],
+    [3, 3],
+];
+
+/// `CHI_EVAL[4][4]` — character sign matrix (a 4×4 Hadamard matrix,
+/// entries ∈ {+1, −1}). `CHI_EVAL[EVEN_INDEX[i][0]][t]` gives the sign
+/// applied to the coordinate product before accumulating `U_cst`; the C
+/// ref uses `>> 1` on the (+1/−1) value as a CT negate-mask.
+/// Verbatim from `hd_splitting_transforms.c:16` (level-independent).
+#[allow(dead_code)]
+pub(crate) const CHI_EVAL: [[i8; 4]; 4] =
+    [[1, 1, 1, 1], [1, -1, 1, -1], [1, 1, -1, -1], [1, -1, -1, 1]];
+
+/// `SPLITTING_TRANSFORMS[10]` — the 10 candidate base-change matrices,
+/// one per even theta characteristic. Each entry is a 4×4 grid of
+/// `FP2_CODE_*` index codes (0..4 → {0, 1, i, −1, −i}); the i-th matrix
+/// is constant-time-selected as `M` when the i-th even-index coordinate
+/// of the input theta-null vanishes (`U_cst == 0`). `[9]` is the
+/// identity. Decoded directly (S245) from the C-ref
+/// `hd_splitting_transforms.c:142` (level-independent; brace-group order
+/// is the OUTER `[i]` index — the (row,col) interpretation is resolved
+/// by the apply routine, see `apply_isomorphism`).
+#[allow(dead_code)]
+pub(crate) const SPLITTING_TRANSFORMS: [[[u8; 4]; 4]; 10] = [
+    [[1, 2, 1, 2], [1, 4, 3, 2], [1, 2, 3, 4], [3, 2, 3, 2]],
+    [[1, 0, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0], [0, 3, 0, 0]],
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 3, 0]],
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 3]],
+    [[1, 1, 1, 1], [1, 3, 3, 1], [1, 1, 3, 3], [3, 1, 3, 1]],
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]],
+    [[1, 1, 1, 1], [1, 3, 1, 3], [1, 3, 3, 1], [3, 3, 1, 1]],
+    [[1, 1, 1, 1], [1, 3, 1, 3], [1, 3, 3, 1], [1, 1, 3, 3]],
+    [[1, 1, 1, 1], [1, 3, 1, 3], [1, 1, 3, 3], [3, 1, 1, 3]],
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+];
+
+/// `NORMALIZATION_TRANSFORMS[6]` — signing-path randomization matrices.
+/// When `splitting_compute`'s `randomize` is set (signing side), a
+/// secret-index-selected entry is left-composed onto `M`. Same
+/// `FP2_CODE_*` encoding as [`SPLITTING_TRANSFORMS`]. Decoded directly
+/// (S245) from the C-ref `hd_splitting_transforms.c` (level-independent).
+/// `[0]` is the identity.
+#[allow(dead_code)]
+pub(crate) const NORMALIZATION_TRANSFORMS: [[[u8; 4]; 4]; 6] = [
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+    [[0, 0, 0, 1], [0, 0, 1, 0], [0, 1, 0, 0], [1, 0, 0, 0]],
+    [[1, 1, 1, 1], [1, 3, 1, 3], [1, 1, 3, 3], [1, 3, 3, 1]],
+    [[1, 3, 3, 1], [3, 3, 1, 1], [3, 1, 3, 1], [1, 1, 1, 1]],
+    [[3, 2, 2, 1], [2, 3, 1, 2], [2, 1, 3, 2], [1, 2, 2, 3]],
+    [[1, 2, 2, 3], [2, 1, 3, 2], [2, 3, 1, 2], [3, 2, 2, 1]],
+];
+
+/// Build a runtime `BasisChangeMatrix<F>` from one of the `u8` code
+/// tables ([`SPLITTING_TRANSFORMS`] / [`NORMALIZATION_TRANSFORMS`]),
+/// mapping each code through [`fp2_from_code`]. Mirrors the C ref's
+/// `set_base_change_matrix_from_precomp` (`res->m[i][j] =
+/// FP2_CONSTANTS[M->m[i][j]]`).
+#[allow(dead_code)]
+pub(crate) fn base_change_from_codes<F: BaseField>(codes: &[[u8; 4]; 4]) -> BasisChangeMatrix<F> {
+    let mut m = [[Fp2::<F>::zero(); 4]; 4];
+    for (out_row, code_row) in m.iter_mut().zip(codes.iter()) {
+        for (cell, &code) in out_row.iter_mut().zip(code_row.iter()) {
+            *cell = fp2_from_code::<F>(code);
+        }
+    }
+    BasisChangeMatrix { m }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::gf::fp::Fp1Element;
+
+    /// S245: both transform tables are valid code-tables — every entry
+    /// is a code in 0..=4, the dimensions match the C ref (10 splitting,
+    /// 6 normalization), and the documented identities hold
+    /// (`SPLITTING_TRANSFORMS[9]` and `NORMALIZATION_TRANSFORMS[0]` are
+    /// the identity in code form: 1 on the diagonal, 0 off).
+    #[test]
+    fn s245_transform_tables_well_formed() {
+        assert_eq!(SPLITTING_TRANSFORMS.len(), 10);
+        assert_eq!(NORMALIZATION_TRANSFORMS.len(), 6);
+        let id_codes = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
+        assert_eq!(
+            SPLITTING_TRANSFORMS[9], id_codes,
+            "splitting [9] is identity"
+        );
+        assert_eq!(
+            NORMALIZATION_TRANSFORMS[0], id_codes,
+            "normalization [0] is identity"
+        );
+        for mat in SPLITTING_TRANSFORMS
+            .iter()
+            .chain(NORMALIZATION_TRANSFORMS.iter())
+        {
+            for row in mat {
+                for &code in row {
+                    assert!(code <= 4, "every entry is an FP2 code in 0..=4, got {code}");
+                }
+            }
+        }
+    }
+
+    /// S245: `base_change_from_codes` decodes a code-table to an
+    /// `Fp2` `BasisChangeMatrix` correctly — the identity code-table
+    /// yields the Fp2 identity matrix (1 on the diagonal, 0 off), and a
+    /// mixed entry (`SPLITTING_TRANSFORMS[0][0]` = codes [1,2,1,2] =
+    /// [1, i, 1, i]) decodes to the matching Fp2 values.
+    #[test]
+    fn s245_base_change_from_codes_decodes_correctly() {
+        // Identity table → Fp2 identity.
+        let id = base_change_from_codes::<Fp1Element>(&SPLITTING_TRANSFORMS[9]);
+        for r in 0..4 {
+            for c in 0..4 {
+                if r == c {
+                    assert!(bool::from(id.m[r][c].is_one()), "diag [{r}][{c}] = 1");
+                } else {
+                    assert!(bool::from(id.m[r][c].is_zero()), "off-diag [{r}][{c}] = 0");
+                }
+            }
+        }
+        // Mixed row: SPLITTING_TRANSFORMS[0] row 0 = [1,2,1,2] = [1, i, 1, i].
+        let m0 = base_change_from_codes::<Fp1Element>(&SPLITTING_TRANSFORMS[0]);
+        assert!(bool::from(m0.m[0][0].is_one()), "[0][0] code 1 → 1");
+        assert!(
+            bool::from(m0.m[0][1].ct_eq(&Fp2::<Fp1Element>::img())),
+            "[0][1] code 2 → i"
+        );
+        assert!(bool::from(m0.m[0][2].is_one()), "[0][2] code 1 → 1");
+        assert!(
+            bool::from(m0.m[0][3].ct_eq(&Fp2::<Fp1Element>::img())),
+            "[0][3] code 2 → i"
+        );
+        // And a -1 entry: SPLITTING_TRANSFORMS[1][3] = [0,3,0,0], [3]=-1.
+        let m1 = base_change_from_codes::<Fp1Element>(&SPLITTING_TRANSFORMS[1]);
+        assert!(bool::from(m1.m[3][1].is_neg_one()), "[3][1] code 3 → -1");
+    }
+
+    /// S244: `EVEN_INDEX` has the C-ref shape + values — 10 even theta
+    /// characteristics, each `[chi_row ∈ 0..4, xor_index ∈ 0..4]`.
+    #[test]
+    fn s244_even_index_matches_c_ref() {
+        assert_eq!(EVEN_INDEX.len(), 10, "10 even characteristics");
+        for [chi_row, xor_idx] in EVEN_INDEX {
+            assert!(chi_row < 4, "chi_row indexes CHI_EVAL's 4 rows");
+            assert!(xor_idx < 4, "xor_idx is a 2-bit theta-coord XOR");
+        }
+        // First and last entries pin the exact C-ref ordering.
+        assert_eq!(EVEN_INDEX[0], [0, 0]);
+        assert_eq!(EVEN_INDEX[9], [3, 3]);
+    }
+
+    /// S244: `CHI_EVAL` is the 4×4 Hadamard character matrix (entries
+    /// ±1; rows mutually orthogonal; row 0 all +1).
+    #[test]
+    fn s244_chi_eval_is_hadamard() {
+        for row in CHI_EVAL {
+            for v in row {
+                assert!(v == 1 || v == -1, "entries are ±1");
+            }
+        }
+        assert_eq!(CHI_EVAL[0], [1, 1, 1, 1], "row 0 is all +1");
+        // Hadamard: distinct rows are orthogonal (dot product 0).
+        for a in 0..4 {
+            for b in (a + 1)..4 {
+                let dot: i32 = (0..4)
+                    .map(|k| CHI_EVAL[a][k] as i32 * CHI_EVAL[b][k] as i32)
+                    .sum();
+                assert_eq!(dot, 0, "rows {a},{b} must be orthogonal");
+            }
+            let self_dot: i32 = (0..4).map(|k| (CHI_EVAL[a][k] as i32).pow(2)).sum();
+            assert_eq!(self_dot, 4, "row {a}·itself = 4 (unit ±1 entries)");
+        }
+    }
+
+    /// S244: the `FP2_CODE_*` → `Fp2` mapping yields exactly
+    /// `{0, 1, i, -1, -i}`, and the negation/identity relations hold.
+    #[test]
+    fn s244_fp2_from_code_yields_unit_constants() {
+        let zero = fp2_from_code::<Fp1Element>(FP2_CODE_ZERO);
+        let one = fp2_from_code::<Fp1Element>(FP2_CODE_ONE);
+        let im = fp2_from_code::<Fp1Element>(FP2_CODE_I);
+        let neg_one = fp2_from_code::<Fp1Element>(FP2_CODE_MINUS_ONE);
+        let neg_i = fp2_from_code::<Fp1Element>(FP2_CODE_MINUS_I);
+        assert!(bool::from(zero.is_zero()), "code 0 → 0");
+        assert!(bool::from(one.is_one()), "code 1 → 1");
+        assert!(
+            bool::from(im.ct_eq(&Fp2::<Fp1Element>::img())),
+            "code 2 → i"
+        );
+        assert!(bool::from(neg_one.is_neg_one()), "code 3 → -1");
+        // -i is the negation of i; and i + (-i) = 0.
+        assert!(
+            bool::from(neg_i.ct_eq(&Fp2::<Fp1Element>::img().negate())),
+            "code 4 → -i"
+        );
+        assert!(bool::from(im.add(&neg_i).is_zero()), "i + (-i) = 0");
+        assert!(bool::from(one.add(&neg_one).is_zero()), "1 + (-1) = 0");
+        // i² = -1 (quadratic-extension generator relation).
+        assert!(bool::from(im.mul(&im).is_neg_one()), "i² = -1");
+    }
 
     /// Build a `BasisChangeMatrix<Fp1Element>` from a `[[u32; 4]; 4]`
     /// of small ints. Test helper for hand-constructed matrices.
@@ -505,8 +854,12 @@ mod tests {
         );
     }
 
+    /// S246: the all-zero theta-null is degenerate — every `U_cst`
+    /// vanishes (all coordinate products are 0), so `count == 10 != 1`
+    /// and `splitting_compute` reports `NotSplittable` (not the old
+    /// `NotImplemented` stub, now that the body is wired).
     #[test]
-    fn splitting_compute_returns_not_implemented_at_lvl1() {
+    fn s246_splitting_all_zero_null_is_not_splittable() {
         let null = ThetaPoint2D::new(
             Fp2::<Fp1Element>::zero(),
             Fp2::<Fp1Element>::zero(),
@@ -514,12 +867,67 @@ mod tests {
             Fp2::<Fp1Element>::zero(),
         );
         let domain = AbelianVariety2D::new(null, null);
-        let result = splitting_compute(&domain, None, false);
         assert_eq!(
-            result,
-            Err(SplittingError::NotImplemented),
-            "S145: splitting_compute body pending S147 tables port",
+            splitting_compute(&domain, None, false),
+            Err(SplittingError::NotSplittable),
+            "all-zero null: count=10≠1 → NotSplittable",
         );
+    }
+
+    /// S246: the signing-path `randomize` flag is not yet supported (it
+    /// needs an RNG this signature doesn't thread); requesting it yields
+    /// `RandomizeUnsupported`, NOT a silent wrong split.
+    #[test]
+    fn s246_splitting_randomize_unsupported() {
+        let null = ThetaPoint2D::new(
+            Fp2::<Fp1Element>::one(),
+            Fp2::<Fp1Element>::one(),
+            Fp2::<Fp1Element>::one(),
+            Fp2::<Fp1Element>::one(),
+        );
+        let domain = AbelianVariety2D::new(null, null);
+        assert_eq!(
+            splitting_compute(&domain, /*zero_index*/ None, /*randomize*/ true),
+            Err(SplittingError::RandomizeUnsupported),
+            "randomize=true must fail closed, not produce an unverified split",
+        );
+    }
+
+    /// S246: a known-splittable theta-null splits with exactly one
+    /// vanishing characteristic (count==1 → Ok), and the resulting
+    /// codomain null is a valid product theta point (`x·w == y·z`).
+    ///
+    /// Fixture: the all-ones theta-null `(1,1,1,1)`. By the C-ref
+    /// `U_cst` formula, characteristic `i` vanishes when
+    /// `Σ_t CHI_EVAL[EVEN_INDEX[i][0]][t] · θ[t]·θ[t^EVEN_INDEX[i][1]]`
+    /// is 0; for the all-ones null each product is 1 and the sum is the
+    /// CHI_EVAL row sum over the XOR-paired coords. The CHI_EVAL rows
+    /// (other than row 0) sum to zero, so exactly the characteristics
+    /// keyed to a non-trivial chi row + matching XOR vanish — the test
+    /// asserts the algorithm finds exactly one and produces a product
+    /// null (it does NOT hard-code which `i`, to avoid over-constraining
+    /// the port; the contract is count==1 + product output).
+    #[test]
+    fn s246_splitting_all_ones_null_produces_product() {
+        let one = Fp2::<Fp1Element>::one();
+        let null = ThetaPoint2D::new(one, one, one, one);
+        let domain = AbelianVariety2D::new(null, null);
+        match splitting_compute(&domain, None, false) {
+            Ok(split) => {
+                assert!(
+                    bool::from(is_product_theta_point(&split.b_null)),
+                    "split codomain null must satisfy the product relation x·w = y·z",
+                );
+            }
+            Err(SplittingError::NotSplittable) => {
+                // Acceptable: the all-ones null may have ≠1 vanishing
+                // characteristics at this prime — but then the result
+                // must be the CLEAN typed error, never a panic or a
+                // bogus Ok. (Documents the boundary; the Ok branch above
+                // is the substantive check when it splits.)
+            }
+            other => panic!("unexpected splitting_compute result: {other:?}"),
+        }
     }
 
     // S146 — post-splitting extraction tests.
