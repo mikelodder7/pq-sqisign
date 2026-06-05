@@ -534,4 +534,43 @@ mod tests {
         use crate::params::lvl5::Fp5Element;
         check_fp_random_invert_yields_identity::<Fp5Element>();
     }
+
+    /// PK-encode byte convention: `Fp1Element::to_bytes_le` must be canonical
+    /// (Montgomery→normal) little-endian, byte-IDENTICAL to the C `fp_encode`
+    /// (`gf/ref/lvl1/fp_p5248_64.c`: `redc` then 32 bytes low-to-high). The
+    /// input is the SAME value a standalone C `fp_encode` oracle round-tripped
+    /// (out == in, decode_ok = 0xffffffff). Canonical-LE of an integer < p is
+    /// unambiguous, so a correct round-trip on both sides ⇒ byte-equal output.
+    /// `ONE → 01 00…` additionally guards the Montgomery convention (a leaked
+    /// Montgomery value would encode `R mod p`, not 1). This is the
+    /// math-oracle-invisible PK-serialization checkpoint for the keygen KAT
+    /// (C `proj_to_bytes` = `fp2_encode(A·C⁻¹)` = `fp_encode(re)||fp_encode(im)`).
+    #[test]
+    fn fp_encode_matches_c_canonical_le() {
+        // Byte i = (i·17 + 3) mod 256 for i<16, high 16 zero (< p). Matches the
+        // C oracle input 031425364758697a8b9cadbecfe0f102 0…0.
+        let mut input = [0u8; 32];
+        for (i, b) in input.iter_mut().take(16).enumerate() {
+            *b = (i * 17 + 3).to_le_bytes()[0];
+        }
+        let v = Fp1Element::from_bytes_le(&input)
+            .into_option()
+            .expect("value is canonical (< p)");
+        let mut out = [0u8; 32];
+        v.to_bytes_le(&mut out);
+        assert_eq!(
+            out, input,
+            "Fp1 to_bytes_le must be canonical little-endian (== C fp_encode)",
+        );
+
+        // ONE encodes as canonical 1 = 01 00 … 00 (Montgomery-leak guard).
+        let mut one_le = [0u8; 32];
+        <Fp1Element as BaseField>::one().to_bytes_le(&mut one_le);
+        let mut expected_one = [0u8; 32];
+        expected_one[0] = 1;
+        assert_eq!(
+            one_le, expected_one,
+            "ONE must encode as canonical 1 (no Montgomery leak)",
+        );
+    }
 }

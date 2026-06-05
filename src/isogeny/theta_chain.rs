@@ -46,13 +46,16 @@ use crate::isogeny::gluing::{
     gluing_eval_point_special_case,
 };
 use crate::isogeny::splitting::{
-    splitting_compute, theta_point_to_montgomery_point, theta_product_structure_to_elliptic_product,
+    splitting_compute, splitting_compute_randomized, theta_point_to_montgomery_point,
+    theta_product_structure_to_elliptic_product,
 };
 use crate::isogeny::theta::{AbelianVariety2D, ThetaPoint2D};
+use crate::isogeny::theta_doubling::{double_iter, theta_precomputation};
 use crate::isogeny::theta_isogeny::{
     ThetaIsogeny, theta_isogeny_compute, theta_isogeny_compute_2, theta_isogeny_compute_4,
     theta_isogeny_eval,
 };
+use rand_core::CryptoRng;
 
 /// Upper bound on the doubling-descent stack depth. The C reference sizes the
 /// stack as `space = 1 + ⌊log₂(n−1)⌋ + 1`; for every SQIsign level (`n ≤ 248`
@@ -146,6 +149,7 @@ pub(crate) fn chain_space(n: u32) -> usize {
 pub(crate) fn drive_theta_chain<V: ChainVisitor>(
     n: u32,
     extra_torsion: bool,
+    verify: bool,
     visitor: &mut V,
 ) -> bool {
     let extra: u32 = if extra_torsion { HD_EXTRA_TORSION } else { 0 };
@@ -205,14 +209,16 @@ pub(crate) fn drive_theta_chain<V: ChainVisitor>(
         // penultimate/ultimate branches only fire on the extra-torsion path;
         // on the no-extra-torsion path the finals (Phase D) play those roles
         // and the loop never reaches i == n-2.
-        let (h1, h2, verify) = if i == n - 2 {
-            (false, false, true)
+        // C-ref: penultimate (0,0) + interior (0,1) use the caller's `verify`
+        // flag; the ultimate (1,0) always uses false.
+        let (h1, h2, step_verify) = if i == n - 2 {
+            (false, false, verify)
         } else if i == n - 1 {
             (true, false, false)
         } else {
-            (false, true, true)
+            (false, true, verify)
         };
-        if !visitor.step(i, slot(current), h1, h2, verify) {
+        if !visitor.step(i, slot(current), h1, h2, step_verify) {
             return false;
         }
 
@@ -257,7 +263,7 @@ pub(crate) const MAX_CHAIN_EVAL_POINTS: usize = 8;
 /// reference's `lift_basis` step happens one level up (when the kernel bundle
 /// is constructed, via [`crate::ec::jacobian::lift_basis`]). The caller is
 /// responsible for the sign-consistency of `t1`, `t2`, `t1_minus_t2`.
-pub(crate) struct ChainExecutor<F: BaseField> {
+pub(crate) struct ChainExecutor<'r, F: BaseField> {
     curves: CoupleCurve<F>,
     /// Gluing-phase kernel stacks (couple-Jacobian), slot-indexed by `current`.
     jac_q1: [CoupleJacobianPoint<F>; MAX_CHAIN_SPACE],
@@ -281,9 +287,23 @@ pub(crate) struct ChainExecutor<F: BaseField> {
     /// Sticky failure latch — any fallible sub-step that errors sets this so
     /// `split` returns `false` and the chain reports failure overall.
     failed: bool,
+    /// Optional RNG for the signing-path randomized final split. `None` =
+    /// the deterministic (keygen/verification) split; `Some` routes the
+    /// last step through `splitting_compute_randomized`.
+    split_rng: Option<&'r mut dyn CryptoRng>,
 }
 
-impl<F: BaseField> ChainExecutor<F> {
+/// Wrap a codomain theta-null into an `AbelianVariety2D` for the chain's
+/// running codomain. Doubling constants are derived (Riemann) when the null is
+/// non-degenerate (needed for the next step's descent); for the FINAL step the
+/// codomain is a product (a zero coordinate makes the constants undefined) so a
+/// placeholder is used — splitting reads only the null, and no descent follows.
+fn set_codomain<F: BaseField>(null: ThetaPoint2D<F>) -> AbelianVariety2D<F> {
+    AbelianVariety2D::from_theta_null(null)
+        .unwrap_or_else(|| AbelianVariety2D::new(null, ThetaPoint2D::default()))
+}
+
+impl<'r, F: BaseField> ChainExecutor<'r, F> {
     /// Seed the executor: kernel slot 0 holds `(T₁, T₂)` directly (our kernel
     /// is already couple-Jacobian), and the transported points are copied in.
     fn new(
@@ -317,6 +337,7 @@ impl<F: BaseField> ChainExecutor<F> {
             out_pts: [CoupleMontgomeryPoint::infinity(); MAX_CHAIN_EVAL_POINTS],
             e34: None,
             failed: false,
+            split_rng: None,
         }
     }
 
@@ -328,16 +349,20 @@ impl<F: BaseField> ChainExecutor<F> {
     }
 }
 
-impl<F: BaseField> ChainVisitor for ChainExecutor<F> {
+impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
     fn descend_couple(&mut self, from: usize, to: usize, num_dbls: u32) {
         self.jac_q1[to] = self.jac_q1[from].double_iter(num_dbls, &self.curves);
         self.jac_q2[to] = self.jac_q2[from].double_iter(num_dbls, &self.curves);
     }
 
     fn descend_theta(&mut self, from: usize, to: usize, num_dbls: u32) {
-        let av = *self.variety(); // AbelianVariety2D is Copy; end the borrow
-        self.theta_q1[to] = av.double_iterated(&self.theta_q1[from], num_dbls);
-        self.theta_q2[to] = av.double_iterated(&self.theta_q2[from], num_dbls);
+        // Use the C-reference theta doubling (theta_precomputation + double_iter
+        // with dual_block/null_block constants), NOT AbelianVariety2D::double
+        // (which is a different, non-C-reference doubling map).
+        let precomp = theta_precomputation(&self.variety().theta_null);
+        let n = num_dbls as usize;
+        self.theta_q1[to] = double_iter(&precomp, &self.theta_q1[from], n);
+        self.theta_q2[to] = double_iter(&precomp, &self.theta_q2[from], n);
     }
 
     fn glue(&mut self, at: usize) -> bool {
@@ -388,7 +413,7 @@ impl<F: BaseField> ChainVisitor for ChainExecutor<F> {
         };
         let st = match st {
             Ok(st) => st,
-            Err(_) => {
+            Err(_e) => {
                 self.failed = true;
                 return false;
             }
@@ -396,13 +421,12 @@ impl<F: BaseField> ChainVisitor for ChainExecutor<F> {
         for j in 0..self.num_p {
             self.pts[j] = theta_isogeny_eval(&st, &self.pts[j]);
         }
-        match AbelianVariety2D::from_theta_null(st.codomain_null) {
-            Some(av) => self.theta = Some(av),
-            None => {
-                self.failed = true;
-                return false;
-            }
-        }
+        // Store the codomain null. Doubling constants are computed when the
+        // null is non-degenerate (needed for the NEXT step's descent); the
+        // FINAL step's codomain is a product (has a zero coordinate) so
+        // `from_theta_null` returns None — that is expected, as no further
+        // descent follows and splitting uses only the null point.
+        self.theta = Some(set_codomain(st.codomain_null));
         self.step = Some(st);
         true
     }
@@ -437,10 +461,7 @@ impl<F: BaseField> ChainVisitor for ChainExecutor<F> {
         for j in 0..self.num_p {
             self.pts[j] = theta_isogeny_eval(&st, &self.pts[j]);
         }
-        match AbelianVariety2D::from_theta_null(st.codomain_null) {
-            Some(av) => self.theta = Some(av),
-            None => self.failed = true,
-        }
+        self.theta = Some(set_codomain(st.codomain_null));
         self.step = Some(st);
     }
 
@@ -462,10 +483,7 @@ impl<F: BaseField> ChainVisitor for ChainExecutor<F> {
         for j in 0..self.num_p {
             self.pts[j] = theta_isogeny_eval(&st, &self.pts[j]);
         }
-        match AbelianVariety2D::from_theta_null(st.codomain_null) {
-            Some(av) => self.theta = Some(av),
-            None => self.failed = true,
-        }
+        self.theta = Some(set_codomain(st.codomain_null));
         self.step = Some(st);
     }
 
@@ -474,9 +492,17 @@ impl<F: BaseField> ChainVisitor for ChainExecutor<F> {
             return false;
         }
         let zero_index = if extra_torsion { Some(8) } else { None };
-        let last = match splitting_compute(self.variety(), zero_index, false) {
+        // Take the RNG out first (releases the &mut self borrow) so the
+        // subsequent `self.variety()` immutable borrow is allowed.
+        let split_result = match self.split_rng.take() {
+            Some(mut rng) => splitting_compute_randomized(self.variety(), zero_index, &mut rng),
+            None => splitting_compute(self.variety(), zero_index, false),
+        };
+        let last = match split_result {
             Ok(last) => last,
-            Err(_) => return false,
+            Err(_e) => {
+                return false;
+            }
         };
         // The product extraction + point conversion read only the codomain
         // theta-null; the doubling constants are irrelevant here (and a split
@@ -521,7 +547,40 @@ pub(crate) fn theta_chain_compute_and_eval<F: BaseField>(
     debug_assert_eq!(eval_points.len(), out_points.len());
     debug_assert!(eval_points.len() <= MAX_CHAIN_EVAL_POINTS);
     let mut exec = ChainExecutor::new(e12, ker, eval_points);
-    if !drive_theta_chain(n, extra_torsion, &mut exec) {
+    // Plain (proving/keygen) variant: the kernel is trusted, so verify = false
+    // (mirrors the C reference's `theta_chain_compute_and_eval`; the
+    // verify = true path is the signature-verification variant).
+    if !drive_theta_chain(n, extra_torsion, false, &mut exec) {
+        return None;
+    }
+    let num_p = exec.num_p;
+    out_points[..num_p].copy_from_slice(&exec.out_pts[..num_p]);
+    exec.e34
+}
+
+/// Signing-path randomized variant of [`theta_chain_compute_and_eval`].
+///
+/// Identical to the deterministic chain except the FINAL splitting step
+/// routes through [`splitting_compute_randomized`], which left-multiplies
+/// the splitting base-change by a randomly chosen normalization matrix.
+/// The codomain elliptic product is the same (the normalization preserves
+/// the product structure); the randomization hides which kernel was
+/// walked, which the signing flow requires. Mirrors the C reference's
+/// `theta_chain_compute_and_eval_randomized`.
+pub(crate) fn theta_chain_compute_and_eval_randomized<F: BaseField, R: CryptoRng>(
+    n: u32,
+    e12: &CoupleCurve<F>,
+    ker: &ThetaKernelCouplePoints<F>,
+    extra_torsion: bool,
+    eval_points: &[CoupleMontgomeryPoint<F>],
+    out_points: &mut [CoupleMontgomeryPoint<F>],
+    rng: &mut R,
+) -> Option<CoupleCurve<F>> {
+    debug_assert_eq!(eval_points.len(), out_points.len());
+    debug_assert!(eval_points.len() <= MAX_CHAIN_EVAL_POINTS);
+    let mut exec = ChainExecutor::new(e12, ker, eval_points);
+    exec.split_rng = Some(rng);
+    if !drive_theta_chain(n, extra_torsion, false, &mut exec) {
         return None;
     }
     let num_p = exec.num_p;
@@ -590,7 +649,7 @@ mod tests {
 
     fn run(n: u32, extra: bool) -> RecordingVisitor {
         let mut v = RecordingVisitor::default();
-        let ok = drive_theta_chain(n, extra, &mut v);
+        let ok = drive_theta_chain(n, extra, true, &mut v);
         assert!(ok, "driver should not abort with the recording visitor");
         v
     }
@@ -739,5 +798,124 @@ mod tests {
     fn executor_threads_and_fails_closed_at_lvl3() {
         use crate::params::lvl3::Fp3Element;
         check_executor_threads_and_fails_closed::<Fp3Element>();
+    }
+
+    /// Real-chain verification of the randomized split entry. Needs a
+    /// valid Kani kernel (built via `RepresentInteger`, like `φ`), so it
+    /// is kat-gated (`NistPqcRng` is the only in-tree `CryptoRng`).
+    #[cfg(feature = "kat")]
+    mod randomized_chain {
+        use super::super::{theta_chain_compute_and_eval, theta_chain_compute_and_eval_randomized};
+        use crate::ec::couple::{
+            CoupleCurve, CoupleJacobianPoint, EcBasis, ThetaKernelCouplePoints,
+        };
+        use crate::ec::jacobian::lift_basis;
+        use crate::ec::montgomery::MontgomeryCurve;
+        use crate::isogeny::endomorphism::{basis_e0_lvl1, endomorphism_application_o0_coords};
+        use crate::params::lvl1::Fp1Element;
+        use crate::rng::NistPqcRng;
+        use crypto_bigint::{Int, Uint};
+        use subtle::ConstantTimeEq;
+
+        const QL: usize = 12;
+
+        /// Build a real `2^246` Kani kernel on `E0 × E0` for a given odd
+        /// `u` (the kernel-construction half of `φ`, S259/S264).
+        fn build_kernel(
+            u: u64,
+            rng: &mut NistPqcRng,
+        ) -> Option<(ThetaKernelCouplePoints<Fp1Element>, CoupleCurve<Fp1Element>)> {
+            let length = 246u32;
+            let f_basis = 248usize;
+            let witnesses = [
+                Uint::<QL>::from_u64(2),
+                Uint::from_u64(3),
+                Uint::from_u64(5),
+                Uint::from_u64(7),
+                Uint::from_u64(11),
+            ];
+            let u12 = Uint::<QL>::from_u64(u);
+            let two_len = Uint::<QL>::ONE.shl_vartime(length);
+            let target = u12.wrapping_mul(&two_len.wrapping_sub(&u12));
+            let p = crate::params::lvl1::prime().resize::<QL>();
+
+            let theta_o0 =
+                crate::quaternion::represent_integer::find_quaternion_in_full_order_with_norm_wide::<
+                    QL,
+                    _,
+                >(&target, &p, 64, 1 << 14, &witnesses, rng)?;
+
+            let modulus = Uint::<QL>::ONE.shl_vartime(length + 2);
+            let u_inv =
+                crate::quaternion::sign_orchestration::uint_inv_mod_vartime::<QL>(&u12, &modulus)?;
+            let u_inv_i = Int::<QL>::from_words(u_inv.to_words());
+            let mut theta = theta_o0;
+            for c in theta.iter_mut() {
+                *c = c.wrapping_mul(&u_inv_i);
+            }
+
+            let curve = MontgomeryCurve::<Fp1Element>::e0();
+            let a24 = curve.a24();
+            let (bp, bq, bpmq) = basis_e0_lvl1();
+            let (rp, rq, rpmq) =
+                endomorphism_application_o0_coords::<QL>(&bp, &bq, &bpmq, &theta, f_basis, &a24)?;
+
+            let bas1 = EcBasis::new(bp, bq, bpmq);
+            let bas2 = EcBasis::new(rp, rq, rpmq);
+            let (p1, q1) = lift_basis(&bas1, &curve).ok()?;
+            let (p2, q2) = lift_basis(&bas2, &curve).ok()?;
+
+            let ker = ThetaKernelCouplePoints::new(
+                CoupleJacobianPoint::new(p1, p2),
+                CoupleJacobianPoint::new(q1, q2),
+                CoupleJacobianPoint::infinity(),
+            );
+            Some((ker, CoupleCurve::e0_e0()))
+        }
+
+        /// The randomized chain produces the SAME codomain elliptic
+        /// product (same unordered `{j(E3), j(E4)}`) as the deterministic
+        /// chain on the same kernel — the randomized final split only
+        /// changes the symplectic representative, not the curves.
+        #[test]
+        fn randomized_chain_matches_deterministic_codomain() {
+            let mut rng = NistPqcRng::new(&[0x5Au8; 48]);
+            let big = 1u64 << 40;
+
+            let mut kernel = None;
+            for u in [big | 1, big | 3, big | 5, big | 7, big | 9, big | 11] {
+                if let Some(k) = build_kernel(u, &mut rng) {
+                    kernel = Some(k);
+                    break;
+                }
+            }
+            let (ker, e12) = kernel.expect("a valid Kani kernel for some large odd u");
+
+            let length = 246u32;
+            let e34a = theta_chain_compute_and_eval(length, &e12, &ker, true, &[], &mut [])
+                .expect("deterministic chain produces a codomain");
+
+            // Fresh RNG state for the randomization draws.
+            let mut rng2 = NistPqcRng::new(&[0xC7u8; 48]);
+            let e34b = theta_chain_compute_and_eval_randomized(
+                length,
+                &e12,
+                &ker,
+                true,
+                &[],
+                &mut [],
+                &mut rng2,
+            )
+            .expect("randomized chain produces a codomain");
+
+            let ja = [e34a.e1.j_invariant(), e34a.e2.j_invariant()];
+            let jb = [e34b.e1.j_invariant(), e34b.e2.j_invariant()];
+            let same = bool::from(jb[0].ct_eq(&ja[0])) && bool::from(jb[1].ct_eq(&ja[1]));
+            let swapped = bool::from(jb[0].ct_eq(&ja[1])) && bool::from(jb[1].ct_eq(&ja[0]));
+            assert!(
+                same || swapped,
+                "randomized chain must yield the same {{j(E3), j(E4)}} as the deterministic chain"
+            );
+        }
     }
 }

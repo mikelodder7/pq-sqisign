@@ -51,6 +51,7 @@ use crate::gf::fp::BaseField;
 use crate::gf::fp2::Fp2;
 use crate::isogeny::gluing::BasisChangeMatrix;
 use crate::isogeny::theta::{AbelianVariety2D, ThetaPoint2D};
+use rand_core::CryptoRng;
 
 /// Splitting-isogeny per-step state.
 ///
@@ -105,11 +106,11 @@ pub enum SplittingError {
     /// split is mis-shaped relative to the expected kernel. (C ref's
     /// `zero_index != -1 && i == zero_index && !ctl` early return.)
     NoVanishingIndex,
-    /// `randomize = true` was requested, but the signing-path
-    /// `NORMALIZATION_TRANSFORMS` randomization needs an RNG this
-    /// signature does not thread (C ref's `ENABLE_SIGN` block). The
-    /// non-randomized path (verification + response side) is supported.
-    /// [S247: thread an RNG to enable this.]
+    /// `randomize = true` was requested on the no-RNG entry
+    /// [`splitting_compute`], which cannot run the signing-path
+    /// `NORMALIZATION_TRANSFORMS` randomization. Call
+    /// [`splitting_compute_randomized`] (which threads a `CryptoRng`)
+    /// for the signing path; this variant just guards the wrong entry.
     RandomizeUnsupported,
 }
 
@@ -415,16 +416,73 @@ pub(crate) fn select_base_change_matrix<F: BaseField>(
 /// thread an RNG + wire the NORMALIZATION_TRANSFORMS randomize block.]
 // `t` indexes CHI_EVAL's row AND (XOR-paired) the theta coordinates —
 // enumerate() over one would obscure the C-ref-faithful indexed access.
-#[allow(dead_code, clippy::needless_range_loop)]
+#[allow(dead_code)]
 pub(crate) fn splitting_compute<F: BaseField>(
     domain: &AbelianVariety2D<F>,
     zero_index: Option<usize>,
     randomize: bool,
 ) -> Result<ThetaSplitting<F>, SplittingError> {
+    // This no-RNG entry cannot run the signing-path randomization; the
+    // randomized split lives in `splitting_compute_randomized`.
     if randomize {
         return Err(SplittingError::RandomizeUnsupported);
     }
 
+    let m = splitting_build_matrix(domain, zero_index)?;
+    let b_null = crate::isogeny::gluing::apply_isomorphism(&m, &domain.theta_null);
+    Ok(ThetaSplitting { m, b_null })
+}
+
+/// Signing-path randomized splitting (C ref's `ENABLE_SIGN` block).
+///
+/// Builds the same vanishing-characteristic base-change matrix as
+/// [`splitting_compute`], then left-multiplies by a randomly chosen
+/// `NORMALIZATION_TRANSFORMS[k]` (`k ∈ [0, 6)`). The normalization
+/// matrices preserve the product structure, so the resulting split
+/// extracts to the same elliptic product as the non-random one — the
+/// randomization only changes the symplectic representative, hiding
+/// which kernel was walked.
+// The index `i` drives both NORMALIZATION_TRANSFORMS lookup AND the
+// constant-time `i == secret` selection — enumerate() would obscure the
+// C-ref-faithful indexed comparison.
+#[allow(dead_code, clippy::needless_range_loop)]
+pub(crate) fn splitting_compute_randomized<F: BaseField, R: CryptoRng>(
+    domain: &AbelianVariety2D<F>,
+    zero_index: Option<usize>,
+    rng: &mut R,
+) -> Result<ThetaSplitting<F>, SplittingError> {
+    let m = splitting_build_matrix(domain, zero_index)?;
+
+    // Constant-time pick of NORMALIZATION_TRANSFORMS[secret] (C ref:
+    // start at index 0, select index i when i == secret).
+    let secret = sample_random_index(rng);
+    let mut m_random = base_change_from_codes::<F>(&NORMALIZATION_TRANSFORMS[0]);
+    for i in 1..6 {
+        let pick = Choice::from(u8::from(i == secret));
+        let candidate = base_change_from_codes::<F>(&NORMALIZATION_TRANSFORMS[i]);
+        m_random = select_base_change_matrix(&m_random, &candidate, pick);
+    }
+    let m = base_change_matrix_multiplication(&m_random, &m);
+
+    let b_null = crate::isogeny::gluing::apply_isomorphism(&m, &domain.theta_null);
+    Ok(ThetaSplitting { m, b_null })
+}
+
+/// Build the splitting base-change matrix: enumerate the 10 even
+/// characteristics, accumulate the one whose `U_cst` vanishes, and
+/// require exactly one such vanishing (else the variety does not split).
+///
+/// Shared core of [`splitting_compute`] and
+/// [`splitting_compute_randomized`] — the value-independent part of the
+/// C ref `splitting_compute` before the optional randomization and the
+/// final `apply_isomorphism`.
+#[allow(clippy::needless_range_loop)]
+// `t` indexes CHI_EVAL's row AND (XOR-paired) the theta coordinates —
+// enumerate() over one would obscure the C-ref-faithful indexed access.
+fn splitting_build_matrix<F: BaseField>(
+    domain: &AbelianVariety2D<F>,
+    zero_index: Option<usize>,
+) -> Result<BasisChangeMatrix<F>, SplittingError> {
     let null = &domain.theta_null;
     // Index the null point's 4 theta coordinates by 0..3 (x,y,z,w).
     let coord = |ind: usize| -> Fp2<F> {
@@ -477,8 +535,22 @@ pub(crate) fn splitting_compute<F: BaseField>(
         return Err(SplittingError::NotSplittable);
     }
 
-    let b_null = crate::isogeny::gluing::apply_isomorphism(&m, null);
-    Ok(ThetaSplitting { m, b_null })
+    Ok(m)
+}
+
+/// Sample an unbiased uniform index in `[0, 6)` to pick one of the 6
+/// normalization matrices. Verbatim logic from the C ref's
+/// `sample_random_index`: draw a little-endian `u32`, reject values
+/// `≥ 4294967292` (the largest multiple of 6 below `2^32`), then `% 6`.
+fn sample_random_index<R: CryptoRng>(rng: &mut R) -> usize {
+    loop {
+        let mut bytes = [0u8; 4];
+        rng.fill_bytes(&mut bytes);
+        let seed = u32::from_le_bytes(bytes);
+        if seed < 4_294_967_292 {
+            return (seed % 6) as usize;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -610,6 +682,115 @@ pub(crate) fn base_change_from_codes<F: BaseField>(codes: &[[u8; 4]; 4]) -> Basi
 mod tests {
     use super::*;
     use crate::gf::fp::Fp1Element;
+
+    /// Randomized-splitting tests need a `CryptoRng`; the only one in
+    /// the tree (`NistPqcRng`) is `#[cfg(feature = "kat")]`, so these
+    /// run under the kat gate (which CI exercises).
+    #[cfg(feature = "kat")]
+    mod randomized {
+        use super::*;
+        use crate::rng::NistPqcRng;
+        use subtle::ConstantTimeEq;
+
+        /// A genuine product theta null `(1, 2, 3, 6)` (satisfies the
+        /// product identity `x·w = y·z`, all coords non-zero) — the
+        /// non-random `splitting_compute` returns `Ok` on it (probe S267),
+        /// so it is a real splittable fixture for the randomized path.
+        fn splittable_product_null() -> AbelianVariety2D<Fp1Element> {
+            let null = ThetaPoint2D::new(small_fp2(1), small_fp2(2), small_fp2(3), small_fp2(6));
+            AbelianVariety2D::new(null, null)
+        }
+
+        /// `sample_random_index` is an unbiased uniform sampler over
+        /// `[0, 6)`: every draw is in range and all six buckets are hit
+        /// (with the deterministic NIST DRBG, over 6000 draws the minimum
+        /// bucket is comfortably positive). Independent of the splitting
+        /// algebra — it pins the rejection-sampling arithmetic.
+        #[test]
+        fn sample_random_index_is_uniform_in_range() {
+            let mut rng = NistPqcRng::new(&[0x27u8; 48]);
+            let mut buckets = [0u32; 6];
+            for _ in 0..6000 {
+                let k = sample_random_index(&mut rng);
+                assert!(k < 6, "index in [0,6)");
+                buckets[k] += 1;
+            }
+            // Uniform expectation 1000/bucket; assert each is well-populated
+            // (catches a stuck/mod-wrong sampler without flaking).
+            for (k, &c) in buckets.iter().enumerate() {
+                assert!(c > 700, "bucket {k} underpopulated: {c}");
+            }
+        }
+
+        /// The randomized matrix is exactly `NORMALIZATION_TRANSFORMS[k] · M0`
+        /// for some `k ∈ [0,6)`, where `M0` is the non-random splitting
+        /// matrix. Independent structural oracle — checks the randomize block
+        /// is a left-multiply by one of the six tabulated normalizations,
+        /// not a re-derivation of the implementation.
+        #[test]
+        fn randomized_split_matrix_is_normalization_times_base() {
+            let domain = splittable_product_null();
+            let m0 = splitting_compute(&domain, None, false)
+                .expect("product null splits (non-random)")
+                .m;
+
+            // Precompute the six candidate left-multiplies.
+            let candidates: [BasisChangeMatrix<Fp1Element>; 6] = core::array::from_fn(|k| {
+                base_change_matrix_multiplication(
+                    &base_change_from_codes::<Fp1Element>(&NORMALIZATION_TRANSFORMS[k]),
+                    &m0,
+                )
+            });
+
+            // Several RNG states should produce M1 matching some NT[k]·M0.
+            let mut rng = NistPqcRng::new(&[0xA3u8; 48]);
+            for _ in 0..24 {
+                let m1 = splitting_compute_randomized(&domain, None, &mut rng)
+                    .expect("product null splits (randomized)")
+                    .m;
+                let matched = candidates.iter().any(|c| *c == m1);
+                assert!(matched, "M1 must equal NT[k]·M0 for some k");
+            }
+        }
+
+        /// Semantic oracle: the randomized split extracts to the SAME
+        /// elliptic product (same unordered j-invariant pair) as the
+        /// non-random split. The normalization matrices preserve the product
+        /// structure, so randomizing the representative must not change the
+        /// underlying curves.
+        #[test]
+        fn randomized_split_extracts_same_elliptic_product() {
+            let domain = splittable_product_null();
+
+            let split0 = splitting_compute(&domain, None, false).expect("non-random split");
+            let cc0 = theta_product_structure_to_elliptic_product(&AbelianVariety2D::new(
+                split0.b_null,
+                split0.b_null,
+            ))
+            .expect("non-random split extracts to a product");
+            let j0 = [cc0.e1.j_invariant(), cc0.e2.j_invariant()];
+
+            let mut rng = NistPqcRng::new(&[0x5Cu8; 48]);
+            for _ in 0..12 {
+                let split1 = splitting_compute_randomized(&domain, None, &mut rng)
+                    .expect("randomized split");
+                let cc1 = theta_product_structure_to_elliptic_product(&AbelianVariety2D::new(
+                    split1.b_null,
+                    split1.b_null,
+                ))
+                .expect("randomized split extracts to a product");
+                let j1 = [cc1.e1.j_invariant(), cc1.e2.j_invariant()];
+
+                // Unordered j-pair equality (E1/E2 may swap under the normalization).
+                let same_order = bool::from(j1[0].ct_eq(&j0[0])) && bool::from(j1[1].ct_eq(&j0[1]));
+                let swapped = bool::from(j1[0].ct_eq(&j0[1])) && bool::from(j1[1].ct_eq(&j0[0]));
+                assert!(
+                    same_order || swapped,
+                    "randomized split must yield the same {{j(E1), j(E2)}} as the non-random split"
+                );
+            }
+        }
+    } // mod randomized
 
     /// S245: both transform tables are valid code-tables — every entry
     /// is a code in 0..=4, the dimensions match the C ref (10 splitting,

@@ -65,50 +65,168 @@ use crate::quaternion::ideal::LeftIdeal;
 /// construction via `Uint::wrapping_mul` to avoid hand-encoding
 /// the 252-bit hex literal.
 pub fn alternate_connecting_ideal_0_l1() -> LeftIdeal<8> {
-    // C-ref values in (1, i, j, ij) coords (as Uint<8> with the low
-    // 128 bits set per S213 verbatim quotes; high 6 limbs zero).
-    // `Uint::from_words` uses little-endian limbs matching GMP's `_mp_d`.
-    let v_60_02 = *Uint::<8>::from_words([0x2, 0x6000000000000000, 0, 0, 0, 0, 0, 0]).as_int();
-    let v_10_01 = *Uint::<8>::from_words([0x1, 0x1000000000000000, 0, 0, 0, 0, 0, 0]).as_int();
-    let v_50_01 = *Uint::<8>::from_words([0x1, 0x5000000000000000, 0, 0, 0, 0, 0, 0]).as_int();
-
-    let zero = Int::<8>::from_i64(0);
+    // C `CONNECTING_IDEALS[1]` basis, row-major `basis[i][j]` (verbatim from
+    // `quaternion_data.c`). The C header is explicit: a matrix COLUMN divided
+    // by the denominator is an algebra element — so the column convention is
+    // correct, which `c_ideal_to_left_ideal` (S328) applies. `Uint::from_words`
+    // uses little-endian limbs matching GMP's `_mp_d`.
+    //
+    // **S338 correction**: the prior transcription used the C *rows* as the
+    // ideal generators (transposed) — that lattice is NOT a left O_0-ideal
+    // (`connecting_ideal_1_element_convention` proved rows are not left-closed,
+    // columns are). The norm²/runs-to-completion tests could not catch it
+    // (`det`/norm are transpose-invariant). Rebuilt via the column convention.
+    let w = |lo: u64, hi: u64| *Uint::<8>::from_words([lo, hi, 0, 0, 0, 0, 0, 0]).as_int();
+    let z = Int::<8>::from_i64(0);
     let one = Int::<8>::from_i64(1);
-    let neg_one = Int::<8>::from_i64(-1);
-    let two = Int::<8>::from_i64(2);
+    let a = w(0x2, 0x6000000000000000); // 0x60…02
+    let b = w(0x1, 0x1000000000000000); // 0x10…01
+    let c = w(0x1, 0x5000000000000000); // 0x50…01
+    let cbasis = [[a, z, z, b], [z, a, c, z], [z, z, one, z], [z, z, z, one]];
+    // C reduced norm 0x30…01 = 3·2^124 + 1; `c_ideal_to_left_ideal` stores
+    // `cached_norm = norm²` (the S201 lattice-index convention).
+    let norm = Uint::<8>::from_words([0x1, 0x3000000000000000, 0, 0, 0, 0, 0, 0]);
+    crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &Int::<8>::from_i64(2), &norm)
+}
 
-    // Basis in O_0 coords, row-major. Each row = one ideal generator.
-    // Conversion `(a, b, c, d) → (a − d, b − c, 2c, 2d)`.
-    let basis = [
-        // C col 0: (0x60...02, 0, 0, 0x10...01) → O_0
+/// L1 `ALTERNATE_CONNECTING_IDEALS[1]` = the C reference's
+/// `CONNECTING_IDEALS[2]` (extracted from `quaternion_data.c`, GMP-64 limbs;
+/// COLUMN convention via `c_ideal_to_left_ideal` per S338). Reduced norm
+/// `0x3c7a53236805e962bfc80abdc339faff`; `cached_norm = norm²`, denom reduces to 1 (integral O_0-ideal).
+pub fn alternate_connecting_ideal_1_l1() -> LeftIdeal<8> {
+    let w = |lo: u64, hi: u64| *Uint::<8>::from_words([lo, hi, 0, 0, 0, 0, 0, 0]).as_int();
+    let z = Int::<8>::from_i64(0);
+    let one = Int::<8>::from_i64(1);
+    let cbasis = [
         [
-            v_60_02.wrapping_sub(&v_10_01), // a − d = 0x50...01
-            zero,                           // b − c = 0
-            zero,                           // 2c    = 0
-            two.wrapping_mul(&v_10_01),     // 2d    = 0x20...02
+            w(0x7f90157b8673f5fe, 0x78f4a646d00bd2c5),
+            z,
+            z,
+            w(0xe65cd6d8002bfee5, 0x5b1373de72d68a3),
         ],
-        // C col 1: (0, 0x60...02, 0x50...01, 0) → O_0
         [
-            zero,                           // a − d = 0
-            v_60_02.wrapping_sub(&v_50_01), // b − c = 0x10...01
-            two.wrapping_mul(&v_50_01),     // 2c    = 0xA0...02
-            zero,                           // 2d    = 0
+            z,
+            w(0x7f90157b8673f5fe, 0x78f4a646d00bd2c5),
+            w(0x99333ea38647f719, 0x73436f08e8de6a21),
+            z,
         ],
-        // C col 2: (0, 0, 1, 0) = j → O_0 (0, −1, 2, 0)
-        [zero, neg_one, two, zero],
-        // C col 3: (0, 0, 0, 1) = k → O_0 (−1, 0, 0, 2)
-        [neg_one, zero, zero, two],
+        [z, z, one, z],
+        [z, z, z, one],
     ];
-    let _ = one; // suppress unused on the named constant
+    let norm = Uint::<8>::from_words([0xbfc80abdc339faff, 0x3c7a53236805e962, 0, 0, 0, 0, 0, 0]);
+    crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &Int::<8>::from_i64(2), &norm)
+}
 
-    let denom = Uint::<8>::from_u64(2);
+/// L1 `ALTERNATE_CONNECTING_IDEALS[2]` = the C reference's
+/// `CONNECTING_IDEALS[3]` (extracted from `quaternion_data.c`, GMP-64 limbs;
+/// COLUMN convention via `c_ideal_to_left_ideal` per S338). Reduced norm
+/// `0xbca4df64395c83c1e37d4733b8af2f1`; `cached_norm = norm²`, denom reduces to 1 (integral O_0-ideal).
+pub fn alternate_connecting_ideal_2_l1() -> LeftIdeal<8> {
+    let w = |lo: u64, hi: u64| *Uint::<8>::from_words([lo, hi, 0, 0, 0, 0, 0, 0]).as_int();
+    let z = Int::<8>::from_i64(0);
+    let one = Int::<8>::from_i64(1);
+    let cbasis = [
+        [
+            w(0x3c6fa8e67715e5e2, 0x17949bec872b9078),
+            z,
+            z,
+            w(0xbb290a5a3af78597, 0x84ff561d2d977c0),
+        ],
+        [
+            z,
+            w(0x3c6fa8e67715e5e2, 0x17949bec872b9078),
+            w(0x81469e8c3c1e604b, 0xf44a68ab45218b7),
+            z,
+        ],
+        [z, z, one, z],
+        [z, z, z, one],
+    ];
+    let norm = Uint::<8>::from_words([0x1e37d4733b8af2f1, 0xbca4df64395c83c, 0, 0, 0, 0, 0, 0]);
+    crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &Int::<8>::from_i64(2), &norm)
+}
 
-    // C ref reduced norm `0x30000000000000000000000000000001` = 3·2^124 + 1.
-    // S201 convention: cached_norm = lattice index = reduced_norm².
-    let reduced_norm = Uint::<8>::from_words([0x1, 0x3000000000000000, 0, 0, 0, 0, 0, 0]);
-    let cached_norm = reduced_norm.wrapping_mul(&reduced_norm);
+/// L1 `ALTERNATE_CONNECTING_IDEALS[3]` = the C reference's
+/// `CONNECTING_IDEALS[4]` (extracted from `quaternion_data.c`, GMP-64 limbs;
+/// COLUMN convention via `c_ideal_to_left_ideal` per S338). Reduced norm
+/// `0x16fca7cbe44f64676f19e288b6f757d1`; `cached_norm = norm²`, denom reduces to 1 (integral O_0-ideal).
+pub fn alternate_connecting_ideal_3_l1() -> LeftIdeal<8> {
+    let w = |lo: u64, hi: u64| *Uint::<8>::from_words([lo, hi, 0, 0, 0, 0, 0, 0]).as_int();
+    let z = Int::<8>::from_i64(0);
+    let one = Int::<8>::from_i64(1);
+    let cbasis = [
+        [
+            w(0xde33c5116deeafa2, 0x2df94f97c89ec8ce),
+            z,
+            z,
+            w(0xd5f5cdcaa90b519b, 0xe59b35483dd757a),
+        ],
+        [
+            z,
+            w(0xde33c5116deeafa2, 0x2df94f97c89ec8ce),
+            w(0x83df746c4e35e07, 0x1f9f9c4344c15354),
+            z,
+        ],
+        [z, z, one, z],
+        [z, z, z, one],
+    ];
+    let norm = Uint::<8>::from_words([0x6f19e288b6f757d1, 0x16fca7cbe44f6467, 0, 0, 0, 0, 0, 0]);
+    crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &Int::<8>::from_i64(2), &norm)
+}
 
-    LeftIdeal::<8>::with_denom_and_norm(basis, denom, cached_norm)
+/// L1 `ALTERNATE_CONNECTING_IDEALS[4]` = the C reference's
+/// `CONNECTING_IDEALS[5]` (extracted from `quaternion_data.c`, GMP-64 limbs;
+/// COLUMN convention via `c_ideal_to_left_ideal` per S338). Reduced norm
+/// `0x59a410c3a2e4fa2ca951773baaca0cf9`; `cached_norm = norm²`, denom reduces to 1 (integral O_0-ideal).
+pub fn alternate_connecting_ideal_4_l1() -> LeftIdeal<8> {
+    let w = |lo: u64, hi: u64| *Uint::<8>::from_words([lo, hi, 0, 0, 0, 0, 0, 0]).as_int();
+    let z = Int::<8>::from_i64(0);
+    let one = Int::<8>::from_i64(1);
+    let cbasis = [
+        [
+            w(0x52a2ee77559419f2, 0xb348218745c9f459),
+            z,
+            z,
+            w(0x1df48a96967adbd3, 0x222419a0d707845),
+        ],
+        [
+            z,
+            w(0x52a2ee77559419f2, 0xb348218745c9f459),
+            w(0x34ae63e0bf193e1f, 0xb125dfed38597c14),
+            z,
+        ],
+        [z, z, one, z],
+        [z, z, z, one],
+    ];
+    let norm = Uint::<8>::from_words([0xa951773baaca0cf9, 0x59a410c3a2e4fa2c, 0, 0, 0, 0, 0, 0]);
+    crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &Int::<8>::from_i64(2), &norm)
+}
+
+/// L1 `ALTERNATE_CONNECTING_IDEALS[5]` = the C reference's
+/// `CONNECTING_IDEALS[6]` (extracted from `quaternion_data.c`, GMP-64 limbs;
+/// COLUMN convention via `c_ideal_to_left_ideal` per S338). Reduced norm
+/// `0x14cb6c2975e50380e818b56bb3e7d51d`; `cached_norm = norm²`, denom reduces to 1 (integral O_0-ideal).
+pub fn alternate_connecting_ideal_5_l1() -> LeftIdeal<8> {
+    let w = |lo: u64, hi: u64| *Uint::<8>::from_words([lo, hi, 0, 0, 0, 0, 0, 0]).as_int();
+    let z = Int::<8>::from_i64(0);
+    let one = Int::<8>::from_i64(1);
+    let cbasis = [
+        [
+            w(0xd0316ad767cfaa3a, 0x2996d852ebca0701),
+            z,
+            z,
+            w(0xbc67edebd7ab0275, 0x148ef2e5aeb5ad41),
+        ],
+        [
+            z,
+            w(0xd0316ad767cfaa3a, 0x2996d852ebca0701),
+            w(0x13c97ceb9024a7c5, 0x1507e56d3d1459c0),
+            z,
+        ],
+        [z, z, one, z],
+        [z, z, z, one],
+    ];
+    let norm = Uint::<8>::from_words([0xe818b56bb3e7d51d, 0x14cb6c2975e50380, 0, 0, 0, 0, 0, 0]);
+    crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &Int::<8>::from_i64(2), &norm)
 }
 
 #[cfg(test)]
@@ -141,42 +259,20 @@ mod tests {
         );
     }
 
-    /// S214 regression: `denom = 2` per the C ref's
-    /// `lattice.denom = {._mp_d = {0x2}}` at line 1895.
+    /// The C stores the connecting ideal at std-coords `lattice.denom = 2`, but
+    /// in O_0-coords an INTEGRAL left ideal is canonically denom 1 (all O_0
+    /// coords are even, so `c_ideal_to_left_ideal`'s `reduce_denom` divides the
+    /// 2 out — S336/S338). Denom 1 is also what the spine expects.
     #[test]
-    fn alt_connecting_ideal_0_l1_denom_is_two() {
+    fn alt_connecting_ideal_0_l1_denom_is_one() {
         let ideal = alternate_connecting_ideal_0_l1();
-        assert_eq!(ideal.denom, Uint::<8>::from_u64(2));
+        assert_eq!(ideal.denom, Uint::<8>::from_u64(1));
     }
 
-    /// S214 regression: trivial basis columns (col 2 = j, col 3 = k)
-    /// round-trip the `(1,i,j,k) → O_0` conversion. `basis[2]` and
-    /// `basis[3]` in O_0 coords should be `(0, -1, 2, 0)` and
-    /// `(-1, 0, 0, 2)` respectively.
-    #[test]
-    fn alt_connecting_ideal_0_l1_trivial_columns_match_conversion() {
-        let ideal = alternate_connecting_ideal_0_l1();
-        assert_eq!(
-            ideal.basis[2],
-            [
-                Int::<8>::from_i64(0),
-                Int::<8>::from_i64(-1),
-                Int::<8>::from_i64(2),
-                Int::<8>::from_i64(0),
-            ],
-            "basis[2] = j → O_0 (0, -1, 2, 0)",
-        );
-        assert_eq!(
-            ideal.basis[3],
-            [
-                Int::<8>::from_i64(-1),
-                Int::<8>::from_i64(0),
-                Int::<8>::from_i64(0),
-                Int::<8>::from_i64(2),
-            ],
-            "basis[3] = k → O_0 (-1, 0, 0, 2)",
-        );
-    }
+    // (Removed `alt_connecting_ideal_0_l1_trivial_columns_match_conversion` —
+    // it asserted the pre-S338 transposed row-as-element basis, which is not a
+    // valid left O_0-ideal. Correctness is now covered by
+    // `connecting_ideal_1_element_convention` (left-closure + reduced norm).)
 
     // ── S215: probe L1 ALT[0] through the existing primitives ─────────
 
@@ -397,5 +493,141 @@ mod tests {
             inter.equals_lattice(&alt),
             "lideal_intersect(O_0, ALT[0]) must equal ALT[0] as a lattice",
         );
+    }
+
+    /// S338 element-convention guard for the C connecting-ideal basis. The C
+    /// header is explicit ("columns divided by denom are algebra elements"),
+    /// and a left O_0-ideal must satisfy `O_0·I ⊆ I`; only the correct
+    /// convention is left-closed. This test proves: (a) the SHIPPED
+    /// `alternate_connecting_ideal_0_l1` (column convention via
+    /// `c_ideal_to_left_ideal`) IS left-closed with reduced norm 3·2^124+1, and
+    /// (b) the TRANSPOSED rows-as-elements lattice (the pre-S338 bug) is NOT
+    /// left-closed — guarding against a regression to the transpose. `det`/norm
+    /// are transpose-invariant, so closure is the discriminating check.
+    #[test]
+    fn connecting_ideal_1_element_convention() {
+        use crate::quaternion::Quaternion;
+        use crate::quaternion::o0_mul::{multiply_o0_basis, standard_to_o0_basis};
+        let p = crate::params::lvl1::prime().resize::<8>();
+        let w = |lo: u64, hi: u64| *Uint::<8>::from_words([lo, hi, 0, 0, 0, 0, 0, 0]).as_int();
+        let z = Int::<8>::from_i64(0);
+        let one = Int::<8>::from_i64(1);
+        let a = w(0x2, 0x6000000000000000); // 0x60..02
+        let b = w(0x1, 0x1000000000000000); // 0x10..01
+        let c = w(0x1, 0x5000000000000000); // 0x50..01
+        // C basis row-major basis[i][j] (verbatim from quaternion_data.c).
+        let cbasis = [[a, z, z, b], [z, a, c, z], [z, z, one, z], [z, z, z, one]];
+
+        let closed = |ideal: &LeftIdeal<8>| -> bool {
+            for r in 0..4 {
+                let g = ideal.basis[r];
+                for k in 0..4 {
+                    let mut e = [z; 4];
+                    e[k] = one;
+                    let prod = multiply_o0_basis::<8>(&e, &g, &p);
+                    if !ideal.contains(&prod) {
+                        return false;
+                    }
+                }
+            }
+            true
+        };
+
+        // (a) Shipped (column convention) is a valid left O_0-ideal of norm 3·2^124+1.
+        let shipped = alternate_connecting_ideal_0_l1();
+        assert!(
+            closed(&shipped),
+            "shipped connecting ideal (column convention) must be left-O_0-closed",
+        );
+        let exp_reduced = Uint::<8>::from_words([0x1, 0x3000000000000000, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            shipped.reduced_norm_vartime(),
+            Some(exp_reduced),
+            "shipped connecting ideal reduced norm must be 3·2^124+1",
+        );
+
+        // (b) Transposed (rows-as-elements) lattice is NOT left-closed — the
+        //     pre-S338 bug. Build it the old way: each C ROW → std-coords
+        //     element → O_0-coords.
+        let mut rows_basis = [[z; 4]; 4];
+        for (r, row) in cbasis.iter().enumerate() {
+            let q = Quaternion::<8>::new(row[0], row[1], row[2], row[3]);
+            rows_basis[r] = standard_to_o0_basis::<8>(&q);
+        }
+        let rows = LeftIdeal::<8>::with_denom_and_norm(
+            rows_basis,
+            Uint::<8>::from_u64(2),
+            exp_reduced.wrapping_mul(&exp_reduced),
+        );
+        assert!(
+            !closed(&rows),
+            "transposed (rows-as-elements) lattice must NOT be left-closed (S338 bug guard)",
+        );
+    }
+
+    /// S339: all 6 L1 alternate connecting ideals (C `CONNECTING_IDEALS[1..7]`)
+    /// are valid left O_0-ideals with the C reference reduced norms. Validates
+    /// the scripted port of [2..6] (and re-checks the S338-fixed [1]) via the
+    /// structural left-closure invariant + the reduced-norm + denom-1 checks.
+    #[test]
+    fn all_alternate_connecting_ideals_l1_are_left_ideals() {
+        use crate::quaternion::o0_mul::multiply_o0_basis;
+        let p = crate::params::lvl1::prime().resize::<8>();
+        let z = Int::<8>::from_i64(0);
+        let one = Int::<8>::from_i64(1);
+        let closed = |ideal: &LeftIdeal<8>| -> bool {
+            for r in 0..4 {
+                let g = ideal.basis[r];
+                for k in 0..4 {
+                    let mut e = [z; 4];
+                    e[k] = one;
+                    if !ideal.contains(&multiply_o0_basis::<8>(&e, &g, &p)) {
+                        return false;
+                    }
+                }
+            }
+            true
+        };
+        let nw = |lo: u64, hi: u64| Uint::<8>::from_words([lo, hi, 0, 0, 0, 0, 0, 0]);
+        // (ideal, C reduced norm) for ALT[0..6] = C CONNECTING_IDEALS[1..7].
+        let cases: [(LeftIdeal<8>, Uint<8>); 6] = [
+            (
+                alternate_connecting_ideal_0_l1(),
+                nw(0x1, 0x3000000000000000),
+            ),
+            (
+                alternate_connecting_ideal_1_l1(),
+                nw(0xbfc80abdc339faff, 0x3c7a53236805e962),
+            ),
+            (
+                alternate_connecting_ideal_2_l1(),
+                nw(0x1e37d4733b8af2f1, 0x0bca4df64395c83c),
+            ),
+            (
+                alternate_connecting_ideal_3_l1(),
+                nw(0x6f19e288b6f757d1, 0x16fca7cbe44f6467),
+            ),
+            (
+                alternate_connecting_ideal_4_l1(),
+                nw(0xa951773baaca0cf9, 0x59a410c3a2e4fa2c),
+            ),
+            (
+                alternate_connecting_ideal_5_l1(),
+                nw(0xe818b56bb3e7d51d, 0x14cb6c2975e50380),
+            ),
+        ];
+        for (k, (ideal, exp_norm)) in cases.iter().enumerate() {
+            assert!(closed(ideal), "ALT[{k}] must be a valid left O_0-ideal");
+            assert_eq!(
+                ideal.reduced_norm_vartime(),
+                Some(*exp_norm),
+                "ALT[{k}] reduced norm must match the C reference",
+            );
+            assert_eq!(
+                ideal.denom,
+                Uint::<8>::from_u64(1),
+                "ALT[{k}] denom must be 1"
+            );
+        }
     }
 }

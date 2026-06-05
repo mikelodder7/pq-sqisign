@@ -561,6 +561,13 @@ impl<F: BaseField> AbelianVariety2D<F> {
     /// Thin wrapper around [`ThetaPoint2D::double`] that uses
     /// `self.doubling_constants` so callers don't have to thread the
     /// constants through.
+    ///
+    /// ⚠️ This is the simple Riemann-form doubling `H(H(P)²)·K` and is NOT the
+    /// same map as the SQIsign C reference's theta doubling
+    /// (`crate::isogeny::theta_doubling::double_point`, which uses the
+    /// `dual_block`/`null_block` precomputation). The two differ projectively.
+    /// The theta-chain walker uses the C-reference `double_point`; do NOT use
+    /// this for chain-compatible doublings.
     pub fn double(&self, p: &ThetaPoint2D<F>) -> ThetaPoint2D<F> {
         p.double(&self.doubling_constants)
     }

@@ -155,8 +155,8 @@ impl<F: BaseField> MontgomeryPoint<F> {
     }
 
     /// Constant-time Montgomery scalar ladder: returns `k · self` where
-    /// `scalar` is interpreted big-endian, ignoring `top_bit` bits above
-    /// `scalar.len() * 8`. `a24 = (A + 2) / 4`.
+    /// `scalar` is interpreted little-endian (`scalar[0]` is the least
+    /// significant byte), processing bits MSB-first. `a24 = (A + 2) / 4`.
     pub fn ladder(&self, scalar: &[u8], a24: &Fp2<F>) -> Self {
         let mut r0 = Self::infinity();
         let mut r1 = *self;

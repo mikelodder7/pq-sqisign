@@ -509,9 +509,10 @@ pub(crate) fn action_by_translation_z_and_det<F: BaseField>(
 /// Formula (matches the C reference exactly):
 ///
 /// ```text
-///   tmp = P4.x · z_inv                (= x₄/z)
-///   g10 = P4.x · P2.x · det_inv − tmp  (= x₄·x₂/det − x₄/z)
-///   g11 = P4.x · P4.z · det_inv        (= x₄·z₄/det … wait — check)
+///   g10 = P4.x · P2.x · det_inv − P4.x · z_inv
+///   g11 = P2.x · P4.z · det_inv
+///   g00 = −g11
+///   g01 = −(P2.z · P4.z · det_inv)
 /// ```
 ///
 /// The exact formula relies on Lubicz–Robert-style theta-translation
@@ -532,14 +533,14 @@ pub(crate) fn action_by_translation_compute_matrix<F: BaseField>(
     let tmp = p4.x.mul(z_inv);
     let g10 = p4.x.mul(&p2.x).mul(det_inv).sub(&tmp);
 
-    // g11 = x4 · z4 · det⁻¹  (per the C transcription)
-    let g11 = p4.x.mul(&p4.z).mul(det_inv);
+    // g11 = x2 · z4 · det⁻¹   (C ref: P2.x · P4.z · det_inv)
+    let g11 = p2.x.mul(&p4.z).mul(det_inv);
 
     // g00 = −g11
     let g00 = g11.negate();
 
-    // g01 = −(x2 · z4 · det⁻¹)
-    let g01 = p2.x.mul(&p4.z).mul(det_inv).negate();
+    // g01 = −(z2 · z4 · det⁻¹)   (C ref: −(P2.z · P4.z · det_inv))
+    let g01 = p2.z.mul(&p4.z).mul(det_inv).negate();
 
     TranslationMatrix { g00, g01, g10, g11 }
 }
@@ -1442,17 +1443,22 @@ mod tests {
 
         let g = action_by_translation_compute_matrix(&p4, &p2, &z_inv, &det_inv);
 
-        // Independent re-derivation from the formula:
+        // Re-derivation from the C-reference formula
+        // (theta_isogenies.c:action_by_translation_compute_matrix):
+        //   g10 = P4.x·P2.x·det⁻¹ − P4.x·z⁻¹
+        //   g11 = P2.x·P4.z·det⁻¹
+        //   g00 = −g11
+        //   g01 = −(P2.z·P4.z·det⁻¹)
         let tmp = p4_x.mul(&z_inv);
         let expected_g10 = p4_x.mul(&p2_x).mul(&det_inv).sub(&tmp);
-        let expected_g11 = p4_x.mul(&p4_z).mul(&det_inv);
+        let expected_g11 = p2_x.mul(&p4_z).mul(&det_inv);
         let expected_g00 = expected_g11.negate();
-        let expected_g01 = p2_x.mul(&p4_z).mul(&det_inv).negate();
+        let expected_g01 = p2_z.mul(&p4_z).mul(&det_inv).negate();
 
-        assert_eq!(g.g10, expected_g10, "S137b: g10 formula");
-        assert_eq!(g.g11, expected_g11, "S137b: g11 formula");
-        assert_eq!(g.g00, expected_g00, "S137b: g00 = -g11");
-        assert_eq!(g.g01, expected_g01, "S137b: g01 formula");
+        assert_eq!(g.g10, expected_g10, "g10 = P4.x·P2.x·det⁻¹ − P4.x·z⁻¹");
+        assert_eq!(g.g11, expected_g11, "g11 = P2.x·P4.z·det⁻¹");
+        assert_eq!(g.g00, expected_g00, "g00 = −g11");
+        assert_eq!(g.g01, expected_g01, "g01 = −(P2.z·P4.z·det⁻¹)");
     }
 
     // S137c — action_by_translation tests.

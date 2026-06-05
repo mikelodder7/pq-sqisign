@@ -47,11 +47,15 @@
 pub mod algebra;
 pub mod connecting_ideals;
 pub mod cornacchia;
+pub mod curves_with_endomorphism;
+pub mod dpe;
+pub mod extremal_orders;
 pub mod hnf;
 pub mod ideal;
 pub mod ideal_mul;
 pub mod klpt;
 pub mod lattice;
+pub mod lll;
 pub mod norm_search;
 pub mod o0_mul;
 pub mod primality;

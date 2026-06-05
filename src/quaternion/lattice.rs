@@ -420,10 +420,17 @@ pub fn integer_gso_4x4_from_gram<const LIMBS: usize>(
 ///    `4 · d[k−1] · d[k+1] < 3 · d[k]² − 4 · lam[k][k−1]²` and swap
 ///    `b[k−1] ↔ b[k]`. Repeat from step 1.
 ///
-/// Outer loop capped at 64 iterations (theoretical bound for `Int<8>`
-/// test inputs is much lower). Returns the input unchanged if the
-/// metric or basis is rank-deficient (i.e. the GSO recurrence hits a
-/// zero `d[i+1]`).
+/// Outer-loop cap scales with the input bit-length. LLL with the δ=3/4
+/// Lovász constant converges in `O(n² · log‖B‖)` swaps, and each outer
+/// iteration performs at most one swap, so the cap must grow with the
+/// basis magnitude. A fixed small cap (the earlier value) sufficed for
+/// tiny `p=7` test lattices but left real-prime-scale ideals
+/// (entries `~2^250`, so `‖B‖`-bits in the hundreds) under-reduced: the
+/// loop hit the cap thousands of swaps short of a reduced basis. The cap
+/// is computed from the largest basis/metric entry so small inputs still
+/// terminate early (via the no-swap exit) while large inputs get enough
+/// headroom. Returns the input unchanged if the metric or basis is
+/// rank-deficient (i.e. the GSO recurrence hits a zero `d[i+1]`).
 #[allow(clippy::needless_range_loop)]
 pub fn lll_4x4_in_metric<const LIMBS: usize>(
     input: &[[Int<LIMBS>; 4]; 4],
@@ -433,7 +440,16 @@ pub fn lll_4x4_in_metric<const LIMBS: usize>(
     let three = Int::<LIMBS>::from_i64(3);
     let four = Int::<LIMBS>::from_i64(4);
     let zero = Int::<LIMBS>::from_i64(0);
-    let max_iters = 64;
+    // n²·log‖B‖ swap bound (n=4 ⇒ n²=16) with margin; one swap per outer
+    // iteration. Derive log‖B‖ from the widest basis/metric entry.
+    let max_bits = b
+        .iter()
+        .flatten()
+        .chain(metric.iter().flatten())
+        .map(|x| x.abs().bits_vartime() as usize)
+        .max()
+        .unwrap_or(0);
+    let max_iters = 64 + 32 * max_bits;
 
     for _iter in 0..max_iters {
         // Pull back the metric through the current basis.

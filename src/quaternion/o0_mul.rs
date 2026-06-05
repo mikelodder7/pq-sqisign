@@ -29,10 +29,11 @@
 //! All four divisions are exact (valid `O_0` elements have these integer
 //! coordinates; the construction guarantees it).
 
-use crypto_bigint::{Int, Uint};
+use crypto_bigint::{Int, NonZero, Uint};
 
 use crate::quaternion::Quaternion;
 use crate::quaternion::hnf::int_div_floor;
+use crate::quaternion::represent_integer::uint_gcd_vartime;
 
 /// Convert a quaternion with **integer** standard `(1, i, j, k)` coordinates
 /// to its `O_0`-basis coordinates `(o_0, o_1, o_2, o_3)`.
@@ -90,6 +91,282 @@ pub fn o0_conjugate<const LIMBS: usize>(coords: &[Int<LIMBS>; 4]) -> [Int<LIMBS>
         coords[2].wrapping_neg(),
         coords[3].wrapping_neg(),
     ]
+}
+
+/// Convert an ideal basis from our representation — `O_0`-coords,
+/// ROW-major (`basis_o0[r]` = the `O_0`-coords of generator `r`) — to the
+/// SQIsign C reference representation: standard `(1,i,j,k)`-coords,
+/// COLUMN-major (`out[k][r]` = coordinate `k` of generator `r`), holding
+/// the DOUBLED generators `2·g_r` (integer standard coords). The matching
+/// denominator is `2·denom` (the doubling), so `column_r / (2·denom)` is the
+/// same quaternion as our `generator_r / denom`. This is the boundary
+/// adapter to the C-faithful `lattice_gram` / `quat_lll_core`, which read
+/// column vectors in standard coords.
+#[allow(dead_code, clippy::needless_range_loop)]
+pub fn ideal_basis_o0_to_standard_col<const LIMBS: usize>(
+    basis_o0: &[[Int<LIMBS>; 4]; 4],
+) -> [[Int<LIMBS>; 4]; 4] {
+    let mut out = [[Int::<LIMBS>::from_i64(0); 4]; 4];
+    for r in 0..4 {
+        let q = o0_basis_to_standard_doubled::<LIMBS>(&basis_o0[r]);
+        let coords = [q.a, q.b, q.c, q.d];
+        for k in 0..4 {
+            out[k][r] = coords[k];
+        }
+    }
+    out
+}
+
+/// Inverse of [`ideal_basis_o0_to_standard_col`]: convert a COLUMN-major
+/// standard-coords basis holding the doubled generators (`std_col[k][r]` =
+/// coord `k` of `2·g_r`) back to our ROW-major `O_0`-coords basis
+/// (`out[r]` = `O_0`-coords of `g_r`). The internal `÷2` is exact because
+/// `standard_to_o0_basis(2·g)` yields `2·(O_0-coords of g)`. Used to hand a
+/// C-representation reduced ideal back to our (already-validated) spine.
+#[allow(dead_code, clippy::needless_range_loop)]
+pub fn ideal_basis_standard_col_to_o0<const LIMBS: usize>(
+    std_col: &[[Int<LIMBS>; 4]; 4],
+) -> [[Int<LIMBS>; 4]; 4] {
+    let mut out = [[Int::<LIMBS>::from_i64(0); 4]; 4];
+    for r in 0..4 {
+        let q =
+            Quaternion::<LIMBS>::new(std_col[0][r], std_col[1][r], std_col[2][r], std_col[3][r]);
+        let doubled_o0 = standard_to_o0_basis::<LIMBS>(&q); // = 2·(O_0 coords of g_r)
+        for k in 0..4 {
+            debug_assert!(
+                doubled_o0[k].abs().as_words()[0] & 1 == 0,
+                "doubled O_0 coord must be even (exact halving)",
+            );
+            out[r][k] = doubled_o0[k].shr_vartime(1); // ÷2, exact (even)
+        }
+    }
+    out
+}
+
+/// Build the COLUMN-major standard-coords basis of the principal left
+/// ideal `O_0 · gen` (pre-HNF) — the first half of the C
+/// `quat_lideal_create_principal` (`quat_lattice_alg_elem_mul`).
+///
+/// The maximal order `O_0 = ⟨1, i, (i+j)/2, (1+k)/2⟩` is stored as its
+/// DOUBLED standard `(1,i,j,k)` column basis (denom 2):
+/// `col0 = 2·1`, `col1 = 2·i`, `col2 = i+j`, `col3 = 1+k`. Each column
+/// (an order element) is right-multiplied by `gen` via the standard
+/// quaternion product, giving the `O_0·gen` columns in standard coords
+/// (`out[k][j]` = coord `k` of column `j`). The denominator is unchanged
+/// (`2`); the HNF reduction of `O_0·gen + norm·O_0` is the next step.
+///
+/// Right-multiplication by `gen` scales the lattice covolume by
+/// `N(gen)²`, so `|det(out)| = |det(O_0 basis)|·N(gen)² = 4·N(gen)²`.
+#[allow(dead_code, clippy::needless_range_loop)]
+pub fn order_times_gen<const LIMBS: usize>(
+    g: &Quaternion<LIMBS>,
+    p: &Uint<LIMBS>,
+) -> [[Int<LIMBS>; 4]; 4] {
+    let n = |x: i64| Int::<LIMBS>::from_i64(x);
+    // O_0 doubled standard column basis (denom 2).
+    let order_cols = [
+        Quaternion::<LIMBS>::new(n(2), n(0), n(0), n(0)), // 2·1
+        Quaternion::<LIMBS>::new(n(0), n(2), n(0), n(0)), // 2·i
+        Quaternion::<LIMBS>::new(n(0), n(1), n(1), n(0)), // i + j
+        Quaternion::<LIMBS>::new(n(1), n(0), n(0), n(1)), // 1 + k
+    ];
+    let mut out = [[n(0); 4]; 4];
+    for j in 0..4 {
+        let prod = order_cols[j].mul(g, p); // order element · gen
+        let coords = [prod.a, prod.b, prod.c, prod.d];
+        for k in 0..4 {
+            out[k][j] = coords[k];
+        }
+    }
+    out
+}
+
+/// Port of the C reference `quat_lideal_create` (`ideal.c`): build the left
+/// `O_0`-ideal `I = O_0·γ + N·O_0` where `γ` is the algebra element
+/// `gen_a / gen_denom` (standard `(1,i,j,ij)` coords) and `N = norm_n`.
+///
+/// Returns `(basis, denom, ideal_norm)` in the C's representation:
+/// `basis` is COLUMN-major standard-coords, the rational lattice is
+/// `(1/denom)·Z⟨columns⟩`, and `ideal_norm` is the reduced quaternion ideal
+/// norm `√[O_0 : I]`. When `N | N_red(γ)` and `γ` is primitive in `O_0`, the
+/// ideal has reduced norm exactly `N` (the SQIsign construction).
+///
+/// Faithful sequence mirroring the C:
+/// 1. `L1 = O_0·γ` — [`order_times_gen`] builds the doubled-`O_0` columns
+///    times `gen_a` (denom `2·gen_denom`), then [`quat_lattice_reduce_denom`]
+///    (the C `create_principal`'s reduce; the intermediate HNF is skipped
+///    because [`quat_lattice_add`] re-HNFs and its output is canonical).
+/// 2. `L2 = N·O_0` — the doubled-`O_0` standard column basis scaled by `N`,
+///    denom `2` (the C `ON` lattice, deliberately un-reduced).
+/// 3. `I = L1 + L2` via [`quat_lattice_add`].
+/// 4. norm `= √(|det(basis)| / denom⁴)` (`quat_lideal_norm` = `√[O_0 : I]`).
+///
+/// Because every step downstream of the rational lattices is canonical, the
+/// returned `(basis, denom, norm)` is byte-exact with the C regardless of the
+/// internal `O_0` representation — the same canonicity guarantee that frees
+/// [`quat_lattice_add`] and [`hnf_mod_core`](crate::quaternion::hnf::hnf_mod_core).
+///
+/// **Width note**: the determinants inside [`quat_lattice_add`] reach
+/// ≈ `(N)^4`; pick `LIMBS` wide enough (≈ 36 limbs at keygen scale).
+#[allow(dead_code)]
+pub fn quat_lideal_create<const LIMBS: usize>(
+    gen_a: &Quaternion<LIMBS>,
+    gen_denom: &Int<LIMBS>,
+    norm_n: &Uint<LIMBS>,
+    p: &Uint<LIMBS>,
+) -> ([[Int<LIMBS>; 4]; 4], Int<LIMBS>, Uint<LIMBS>) {
+    use crate::quaternion::hnf::{quat_lattice_add, quat_lattice_reduce_denom};
+    use crate::quaternion::ideal::det_4x4;
+
+    let n = |x: i64| Int::<LIMBS>::from_i64(x);
+    let two = n(2);
+
+    // L1 = O_0 · γ (principal), denom = 2·gen_denom, then reduce to lowest terms.
+    let basis1 = order_times_gen::<LIMBS>(gen_a, p);
+    let denom1 = two.wrapping_mul(gen_denom);
+    let (basis1, denom1) = quat_lattice_reduce_denom::<LIMBS>(&basis1, &denom1);
+
+    // L2 = N · O_0 : the doubled-O_0 standard COLUMN basis scaled by N, denom 2.
+    // Columns: 2·1, 2·i, i+j, 1+k ⇒ basis[row][col].
+    let n_int = uint_as_nonneg_int::<LIMBS>(norm_n)
+        .expect("quat_lideal_create: norm_n.bits_vartime() must be < 64·LIMBS");
+    let mut basis2 = [
+        [n(2), n(0), n(0), n(1)],
+        [n(0), n(2), n(1), n(0)],
+        [n(0), n(0), n(1), n(0)],
+        [n(0), n(0), n(0), n(1)],
+    ];
+    for row in basis2.iter_mut() {
+        for cell in row.iter_mut() {
+            *cell = cell.wrapping_mul(&n_int);
+        }
+    }
+    let denom2 = two;
+
+    // I = L1 + L2.
+    let (basis, denom) = quat_lattice_add::<LIMBS>(&basis1, &denom1, &basis2, &denom2);
+
+    // Ideal norm = √[O_0 : I], where [O_0 : I] = covol(I) / covol(O_0). In
+    // standard (1, i, j, ij) coords the maximal order O_0 has covolume 1/4
+    // (det of the doubled-O_0 basis is 4 over denom 2 ⇒ 4/2⁴ = 1/4), so the
+    // index is 4·|det(basis)| / denom⁴.
+    let det_abs = det_4x4::<LIMBS>(&basis).abs();
+    let scaled_det = det_abs.wrapping_mul(&Uint::<LIMBS>::from_u64(4));
+    let denom_abs = denom.abs();
+    let d2 = denom_abs.wrapping_mul(&denom_abs);
+    let d4 = d2.wrapping_mul(&d2);
+    let d4_nz = NonZero::new(d4).expect("quat_lideal_create: denom > 0");
+    let (index, _r) = scaled_det.div_rem_vartime(&d4_nz);
+    let ideal_norm = index.floor_sqrt_vartime();
+    (basis, denom, ideal_norm)
+}
+
+/// Bridge the C-faithful ideal representation — COLUMN-major standard
+/// `(1, i, j, ij)` coords + scalar `denom`, the output of
+/// [`quat_lideal_create`] and the S327
+/// `quat_lideal_prime_norm_reduced_equivalent` — into the spine's
+/// [`LeftIdeal`](crate::quaternion::LeftIdeal) (ROW-major `O_0`-coords). This
+/// is the connective tissue between the byte-exact quaternion front and the
+/// dim2id2iso isogeny spine that consumes a `LeftIdeal`.
+///
+/// Each column `c_r` (integer standard coords of the `r`-th generator) maps to
+/// `standard_to_o0_basis(c_r)` — its `O_0`-coords (always integral, since
+/// `c_r ∈ Z⟨1,i,j,ij⟩ ⊆ O_0`). The rational lattice `(1/denom)·Z⟨columns⟩` is
+/// preserved by carrying `denom` onto `LeftIdeal.denom`. `cached_norm` is set
+/// to the lattice-index convention `[O_0 : I] = N_red(I)² = norm²`.
+///
+/// The map is exact and lattice-preserving: `c_ideal_to_left_ideal` followed
+/// by the spine sees the same rational lattice the C representation encoded.
+#[allow(dead_code, clippy::needless_range_loop)]
+pub fn c_ideal_to_left_ideal<const LIMBS: usize>(
+    basis_col_std: &[[Int<LIMBS>; 4]; 4],
+    denom: &Int<LIMBS>,
+    norm: &Uint<LIMBS>,
+) -> crate::quaternion::LeftIdeal<LIMBS> {
+    let mut left_basis = [[Int::<LIMBS>::from_i64(0); 4]; 4];
+    for r in 0..4 {
+        let col = Quaternion::<LIMBS>::new(
+            basis_col_std[0][r],
+            basis_col_std[1][r],
+            basis_col_std[2][r],
+            basis_col_std[3][r],
+        );
+        left_basis[r] = standard_to_o0_basis::<LIMBS>(&col);
+    }
+    // Reduce to lowest terms so an INTEGRAL O_0-ideal comes back with denom 1
+    // (the canonical form the spine expects). The C representation carries a
+    // half-integer std-coords denom (e.g. denom 2 from the maximal order's own
+    // denominator); in O_0-coords an integral ideal then has an all-even basis,
+    // and `gcd(basis, denom)` divides the denom back out. Lattice-preserving,
+    // so the equals-lattice / index invariants are unchanged.
+    let (reduced_basis, reduced_denom) =
+        crate::quaternion::hnf::quat_lattice_reduce_denom::<LIMBS>(&left_basis, denom);
+    let cached_norm = norm.wrapping_mul(norm); // lattice index = N_red(I)²
+    crate::quaternion::LeftIdeal::<LIMBS>::with_denom_and_norm(
+        reduced_basis,
+        reduced_denom.abs(),
+        cached_norm,
+    )
+}
+
+/// Decompose an integer-standard `O_0` element into its primitive part and
+/// content — port of the C reference `quat_alg_make_primitive` specialized to
+/// the standard order `O_0` (`EXTREMAL_ORDERS[0]`).
+///
+/// Given `θ` (integer standard coords, i.e. denominator 1) lying in `O_0`,
+/// returns `(primitive, content)` where `content = gcd` of `θ`'s four
+/// `O_0`-basis coordinates and `primitive[i] = coord[i] / content`. Thus
+/// `θ = content · Λ·primitive` (`Λ` = the `O_0` basis) and `θ / content` is
+/// primitive in `O_0`. `content` is non-negative; `primitive` keeps each
+/// coordinate's sign.
+///
+/// The endomorphism-action bridge consumes `primitive` against the
+/// `ACTION_GEN2/3/4` tables and asserts `content` is odd (a property of the
+/// `RepresentInteger`-derived `θ` it feeds, not enforced here).
+///
+/// Variable-time (Euclidean gcd + division) — quaternion-side, per the
+/// SQIsign 2.0 §8 vartime convention. Panics if `θ = 0` (zero content).
+#[allow(dead_code)]
+pub fn quat_make_primitive_o0<const LIMBS: usize>(
+    theta: &Quaternion<LIMBS>,
+) -> ([Int<LIMBS>; 4], Int<LIMBS>) {
+    make_primitive_from_o0_coords(&standard_to_o0_basis(theta))
+}
+
+/// Factor a vector of `O_0`-basis coordinates into its primitive part and
+/// content: `content = gcd(|coords|)`, `primitive[i] = coords[i] / content`
+/// (exact, sign-preserved). The content-extraction half of
+/// [`quat_alg_make_primitive`].
+///
+/// Used directly when an element already arrives in `O_0` coordinates — e.g.
+/// `RepresentInteger` (`find_quaternion_in_full_order_with_norm_wide`) returns
+/// `O_0`-basis coords, not standard `(1, i, j, k)` coords.
+///
+/// Variable-time. Panics if all coordinates are zero (zero content).
+#[allow(dead_code)]
+pub fn make_primitive_from_o0_coords<const LIMBS: usize>(
+    coords: &[Int<LIMBS>; 4],
+) -> ([Int<LIMBS>; 4], Int<LIMBS>) {
+    // content = gcd(|coord_0|, …, |coord_3|)
+    let mut content: Uint<LIMBS> = coords[0].abs();
+    for c in &coords[1..] {
+        content = uint_gcd_vartime(&content, &c.abs());
+    }
+    let content_nz = NonZero::new(content).expect("non-zero content (θ ≠ 0)");
+
+    // primitive[i] = coord[i] / content (exact; sign preserved)
+    let mut primitive = [Int::<LIMBS>::from_i64(0); 4];
+    for i in 0..4 {
+        let (q, _r) = coords[i].abs().div_rem_vartime(&content_nz);
+        let qi = Int::<LIMBS>::from_words(q.to_words());
+        primitive[i] = if bool::from(coords[i].is_negative()) {
+            qi.wrapping_neg()
+        } else {
+            qi
+        };
+    }
+
+    (primitive, Int::<LIMBS>::from_words(content.to_words()))
 }
 
 /// Build the principal left ideal `O_0 · γ` as a `LeftIdeal` in canonical
@@ -414,6 +691,135 @@ pub fn multiply_o0_basis<const LIMBS: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Round-trip: our O_0-row-major ideal basis → C standard-column-major
+    /// (doubled) → back must be the identity. Also checks the forward map
+    /// produces even doubled-O_0 coords (exact halving), and that |det| of
+    /// the standard-column basis is 16× our basis's (4 generators each
+    /// doubled, det scales by 2^4).
+    #[test]
+    fn ideal_basis_o0_standard_round_trip() {
+        use crate::quaternion::ideal::det_4x4;
+        let n = |x: i64| Int::<8>::from_i64(x);
+        // An arbitrary integer O_0-coords basis (row-major: row r = gen r).
+        let basis_o0: [[Int<8>; 4]; 4] = [
+            [n(3), n(1), n(0), n(-2)],
+            [n(7), n(0), n(4), n(0)],
+            [n(0), n(1), n(5), n(0)],
+            [n(1), n(-6), n(0), n(3)],
+        ];
+        let std_col = ideal_basis_o0_to_standard_col::<8>(&basis_o0);
+        let back = ideal_basis_standard_col_to_o0::<8>(&std_col);
+        assert_eq!(back, basis_o0, "o0 → standard-col → o0 must round-trip");
+
+        // det relationship: std_col = M · basis_o0ᵀ where M is the
+        // O_0→standard-doubled linear map, an upper-triangular matrix with
+        // diagonal (2,2,1,1) ⇒ |det(M)| = 4. So |det(std_col)| = 4·|det(o0)|.
+        let det_o0 = det_4x4::<8>(&basis_o0).abs();
+        let det_std = det_4x4::<8>(&std_col).abs();
+        let four = Uint::<8>::from_u64(4);
+        assert_eq!(
+            det_std,
+            det_o0.wrapping_mul(&four),
+            "|det(standard-col)| must be 4·|det(o0)| (det of the O_0→standard map)",
+        );
+    }
+
+    /// `order_times_gen` builds the `O_0·gen` column basis; right-multiply by
+    /// `gen` scales the covolume by `N(gen)²`, so `|det| = 4·N(gen)²`
+    /// (|det(O_0 standard basis)| = 4).
+    #[test]
+    fn order_times_gen_det_is_four_n_squared() {
+        use crate::quaternion::ideal::det_4x4;
+        let n = |x: i64| Int::<8>::from_i64(x);
+        let p = Uint::<8>::from_u64(7);
+        let g = Quaternion::<8>::new(n(3), n(1), n(2), n(1));
+        let basis = order_times_gen::<8>(&g, &p);
+        // N(gen) = 3² + 1² + 7·(2² + 1²) = 10 + 35 = 45.
+        let n_gen = g.norm(&p).abs();
+        assert_eq!(n_gen, Uint::<8>::from_u64(45));
+        let det = det_4x4::<8>(&basis).abs();
+        let four = Uint::<8>::from_u64(4);
+        let expected = four.wrapping_mul(&n_gen).wrapping_mul(&n_gen); // 4·N²
+        assert_eq!(det, expected, "|det(O_0·gen)| must be 4·N(gen)²");
+    }
+
+    /// `quat_lideal_create` builds `I = O_0·γ + N·O_0`. Independent invariants
+    /// (mathematical lattice facts, NOT the implementation's formula): when
+    /// `N | N_red(γ)` with `γ` primitive in `O_0`, the reduced ideal norm is
+    /// exactly `N`, and the lattice covolume `|det(basis)| / denom⁴ = N²`.
+    #[test]
+    fn quat_lideal_create_norm_and_covolume() {
+        use crate::quaternion::ideal::det_4x4;
+        let nn = |x: i64| Int::<8>::from_i64(x);
+        let p = Uint::<8>::from_u64(7);
+        // γ = 1 + 3i (standard); O_0 coords (1,3,0,0) primitive; N_red = 1+9 = 10.
+        let g = Quaternion::<8>::new(nn(1), nn(3), nn(0), nn(0));
+        assert_eq!(g.norm(&p).abs(), Uint::<8>::from_u64(10));
+
+        for (n_div, expected_norm) in [(2u64, 2u64), (5, 5), (10, 10)] {
+            let (basis, denom, ideal_norm) =
+                quat_lideal_create::<8>(&g, &nn(1), &Uint::<8>::from_u64(n_div), &p);
+            assert_eq!(
+                ideal_norm,
+                Uint::<8>::from_u64(expected_norm),
+                "reduced ideal norm must equal N for N={n_div}",
+            );
+            // Index [O_0 : I] = 4·|det(basis)| / denom⁴ must equal N²
+            // (the O_0 covolume in standard coords is 1/4).
+            let det_abs = det_4x4::<8>(&basis).abs();
+            let scaled = det_abs.wrapping_mul(&Uint::<8>::from_u64(4));
+            let d = denom.abs();
+            let d4 = d.wrapping_mul(&d).wrapping_mul(&d).wrapping_mul(&d);
+            let index = scaled.div_rem_vartime(&NonZero::new(d4).unwrap()).0;
+            let n_sq = Uint::<8>::from_u64(expected_norm * expected_norm);
+            assert_eq!(index, n_sq, "[O_0 : I] must equal N² for N={n_div}");
+        }
+    }
+
+    /// `c_ideal_to_left_ideal` bridges the C representation (col-major std
+    /// coords + denom, from `quat_lideal_create`) into the spine's `LeftIdeal`
+    /// (O_0-coords). INDEPENDENT cross-check: the bridged ideal must be the
+    /// SAME lattice as the one built directly in O_0-coords by the existing
+    /// `left_ideal_from_element_and_integer_o0` — two independent constructions
+    /// of `O_0·γ + N·O_0` agreeing. Also: the bridged O_0-basis index
+    /// `|det| / denom⁴` (O_0 is the identity in O_0-coords) equals N².
+    #[test]
+    fn c_ideal_to_left_ideal_matches_o0_construction() {
+        use crate::quaternion::ideal::det_4x4;
+        let nn = |x: i64| Int::<8>::from_i64(x);
+        let p = Uint::<8>::from_u64(7);
+        // γ = 1 + 3i, N_red(γ) = 10; N ∈ {2,5,10} all divide 10.
+        let g = Quaternion::<8>::new(nn(1), nn(3), nn(0), nn(0));
+        let g_o0 = standard_to_o0_basis::<8>(&g);
+        for n_div in [2u64, 5, 10] {
+            let (basis, denom, norm) =
+                quat_lideal_create::<8>(&g, &nn(1), &Uint::<8>::from_u64(n_div), &p);
+            let bridged = c_ideal_to_left_ideal::<8>(&basis, &denom, &norm);
+
+            // Independent construction directly in O_0-coords.
+            let direct =
+                left_ideal_from_element_and_integer_o0::<8>(&g_o0, &Uint::<8>::from_u64(n_div), &p);
+            assert!(
+                bridged.equals_lattice(&direct),
+                "bridge must yield the same lattice as the O_0 construction (N={n_div})",
+            );
+
+            // Independent index: [O_0 : I] = |det(O_0-basis)| / denom⁴ = N²
+            // (O_0 is the identity in O_0-coords, so no covolume factor).
+            let det_abs = det_4x4::<8>(&bridged.basis).abs();
+            let d = bridged.denom;
+            let d4 = d.wrapping_mul(&d).wrapping_mul(&d).wrapping_mul(&d);
+            let index = det_abs
+                .div_rem_vartime(&NonZero::new(d4).expect("denom > 0"))
+                .0;
+            assert_eq!(
+                index,
+                Uint::<8>::from_u64(n_div * n_div),
+                "[O_0 : bridged] must equal N² (N={n_div})",
+            );
+        }
+    }
 
     // ── uint_as_nonneg_int unit tests (S189) ───────────────────────────
 
@@ -789,5 +1195,39 @@ mod tests {
         let rhs_inner = multiply_o0_basis(&e2, &e0, &p);
         let rhs = multiply_o0_basis(&e1, &rhs_inner, &p);
         assert_eq!(lhs, rhs);
+    }
+
+    /// `quat_make_primitive_o0` factors θ's O_0 coords into content·primitive.
+    #[test]
+    fn make_primitive_factors_content_and_primitive() {
+        // θ standard coords (6, 18, 30, 42) → O_0 coords (a−d, b−c, 2c, 2d)
+        //   = (6−42, 18−30, 60, 84) = (−36, −12, 60, 84); gcd = 12.
+        let theta = Quaternion::new(n(6), n(18), n(30), n(42));
+        let coords = standard_to_o0_basis(&theta);
+        assert_eq!(coords, [n(-36), n(-12), n(60), n(84)]);
+
+        let (primitive, content) = quat_make_primitive_o0(&theta);
+        assert_eq!(content, n(12), "content = gcd(|O_0 coords|)");
+        assert_eq!(
+            primitive,
+            [n(-3), n(-1), n(5), n(7)],
+            "primitive = coords/content"
+        );
+
+        // content · primitive == coords (exact reconstruction, signs preserved)
+        for i in 0..4 {
+            assert_eq!(content.wrapping_mul(&primitive[i]), coords[i]);
+        }
+    }
+
+    /// An already-primitive element has content 1 and is returned unchanged.
+    #[test]
+    fn make_primitive_on_primitive_element_is_identity() {
+        // θ = 1 + i + j (standard (1,1,1,0)) → O_0 coords (1, 0, 2, 0); gcd 1.
+        let theta = Quaternion::new(n(1), n(1), n(1), n(0));
+        let coords = standard_to_o0_basis(&theta);
+        let (primitive, content) = quat_make_primitive_o0(&theta);
+        assert_eq!(content, n(1));
+        assert_eq!(primitive, coords);
     }
 }

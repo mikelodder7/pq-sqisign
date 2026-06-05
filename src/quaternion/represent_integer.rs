@@ -172,12 +172,12 @@ fn sample_uint_in_one_to_n_vartime<const LIMBS: usize, R: CryptoRng>(
     sample_uint_lt_vartime::<LIMBS, R>(rng, n).wrapping_add(&Uint::<LIMBS>::ONE)
 }
 
-/// Narrow an `Int<WIDE>` to `Int<8>`. Returns `None` when the high limbs
-/// are not the sign-extension of the low limbs, or when bit 511 of the
-/// truncated value would flip the sign relative to the original.
-pub(crate) fn narrow_int_to_8<const WIDE: usize>(x: &Int<WIDE>) -> Option<Int<8>> {
-    if WIDE <= 8 {
-        return Some(x.resize::<8>());
+/// Narrow an `Int<WIDE>` to `Int<RET>`. Returns `None` when the high limbs
+/// are not the sign-extension of the low limbs, or when the top retained
+/// bit would flip the sign relative to the original.
+pub(crate) fn narrow_int<const WIDE: usize, const RET: usize>(x: &Int<WIDE>) -> Option<Int<RET>> {
+    if WIDE <= RET {
+        return Some(x.resize::<RET>());
     }
     let words = x.to_words();
     let sign_word = if bool::from(x.is_negative()) {
@@ -185,53 +185,63 @@ pub(crate) fn narrow_int_to_8<const WIDE: usize>(x: &Int<WIDE>) -> Option<Int<8>
     } else {
         0u64
     };
-    for w in &words[8..] {
+    for w in &words[RET..] {
         if *w != sign_word {
             return None;
         }
     }
-    let top_bit = (words[7] >> 63) & 1;
+    let top_bit = (words[RET - 1] >> 63) & 1;
     let sign_bit = u64::from(sign_word != 0);
     if top_bit != sign_bit {
         return None;
     }
-    let mut narrow_words = [0u64; 8];
-    narrow_words.copy_from_slice(&words[..8]);
-    Some(Int::<8>::from_words(narrow_words))
+    let mut narrow_words = [0u64; RET];
+    narrow_words.copy_from_slice(&words[..RET]);
+    Some(Int::<RET>::from_words(narrow_words))
 }
 
-/// Narrow a `Uint<WIDE>` to `Uint<8>`. Returns `None` if any high limb
-/// (index ≥ 8) is non-zero.
-pub(crate) fn narrow_uint_to_8<const WIDE: usize>(x: &Uint<WIDE>) -> Option<Uint<8>> {
-    if WIDE <= 8 {
-        return Some(x.resize::<8>());
+/// Narrow a `Uint<WIDE>` to `Uint<RET>`. Returns `None` if any high limb
+/// (index ≥ RET) is non-zero.
+pub(crate) fn narrow_uint<const WIDE: usize, const RET: usize>(
+    x: &Uint<WIDE>,
+) -> Option<Uint<RET>> {
+    if WIDE <= RET {
+        return Some(x.resize::<RET>());
     }
     let words = x.to_words();
-    for w in &words[8..] {
+    for w in &words[RET..] {
         if *w != 0 {
             return None;
         }
     }
-    let mut narrow_words = [0u64; 8];
-    narrow_words.copy_from_slice(&words[..8]);
-    Some(Uint::<8>::from_words(narrow_words))
+    let mut narrow_words = [0u64; RET];
+    narrow_words.copy_from_slice(&words[..RET]);
+    Some(Uint::<RET>::from_words(narrow_words))
 }
 
-/// Narrow a `LeftIdeal<WIDE>` to `LeftIdeal<8>`. Returns `None` if any
+/// Narrow a `LeftIdeal<WIDE>` to `LeftIdeal<RET>`. Returns `None` if any
 /// basis cell, `denom`, or `cached_norm` overflows the narrow type.
 #[allow(clippy::needless_range_loop)]
+pub(crate) fn narrow_left_ideal<const WIDE: usize, const RET: usize>(
+    wide: &LeftIdeal<WIDE>,
+) -> Option<LeftIdeal<RET>> {
+    let mut basis = [[Int::<RET>::from_i64(0); 4]; 4];
+    for r in 0..4 {
+        for c in 0..4 {
+            basis[r][c] = narrow_int::<WIDE, RET>(&wide.basis[r][c])?;
+        }
+    }
+    let denom = narrow_uint::<WIDE, RET>(&wide.denom)?;
+    let cached_norm = narrow_uint::<WIDE, RET>(&wide.cached_norm)?;
+    Some(LeftIdeal::with_denom_and_norm(basis, denom, cached_norm))
+}
+
+/// Narrow a `LeftIdeal<WIDE>` to `LeftIdeal<8>`. Thin wrapper over
+/// [`narrow_left_ideal`].
 pub(crate) fn narrow_left_ideal_to_8<const WIDE: usize>(
     wide: &LeftIdeal<WIDE>,
 ) -> Option<LeftIdeal<8>> {
-    let mut basis = [[Int::<8>::from_i64(0); 4]; 4];
-    for r in 0..4 {
-        for c in 0..4 {
-            basis[r][c] = narrow_int_to_8::<WIDE>(&wide.basis[r][c])?;
-        }
-    }
-    let denom = narrow_uint_to_8::<WIDE>(&wide.denom)?;
-    let cached_norm = narrow_uint_to_8::<WIDE>(&wide.cached_norm)?;
-    Some(LeftIdeal::with_denom_and_norm(basis, denom, cached_norm))
+    narrow_left_ideal::<WIDE, 8>(wide)
 }
 
 /// Find `β ∈ O_0` with `N_red(β) = target_m`, at `Uint<LIMBS>` precision.
@@ -404,13 +414,22 @@ pub fn find_quaternion_in_full_order_with_norm_wide<const LIMBS: usize, R: Crypt
 /// to `LeftIdeal<8>`. Shared between the fast and general paths so the
 /// re-randomization + ideal-construction + narrowing pipeline lives in
 /// exactly one place.
-fn finalize_random_ideal_o0<const LIMBS: usize, R: CryptoRng>(
+/// RET-generic finalize: re-randomize the left-equivalence class via
+/// `gen ← gen·gen_rerand` (coprime `gen_rerand`), build
+/// `O_0·(gen·gen_rerand) + O_0·norm` at `LIMBS` wide precision, then
+/// narrow to a caller-chosen `LeftIdeal<RET>`. KAT-exact keygen samples
+/// the secret ideal at `norm = SEC_DEGREE ~ 2^512`, whose basis entries
+/// exceed `Int<8>` (2^511), so the result must be returned at a wider
+/// `RET` (e.g. 16, matching the Clapotis spine) while the build still
+/// runs at `LIMBS` wide enough for the rerand product. For `RET == 8`
+/// this is the prior fixed-width behavior.
+fn finalize_random_ideal_o0_ret<const LIMBS: usize, const RET: usize, R: CryptoRng>(
     gen_wide: &[Int<LIMBS>; 4],
     norm: &Uint<LIMBS>,
     p: &Uint<LIMBS>,
     max_trials: usize,
     rng: &mut R,
-) -> Result<LeftIdeal<8>> {
+) -> Result<LeftIdeal<RET>> {
     let one_u = Uint::<LIMBS>::ONE;
 
     // Step A: sample gen_rerand with all 4 O_0 coords uniform in [1, norm];
@@ -466,9 +485,9 @@ fn finalize_random_ideal_o0<const LIMBS: usize, R: CryptoRng>(
     // preserves the norm-divisibility class of the original gen.
     let wide_ideal = left_ideal_from_element_and_integer_o0::<LIMBS>(&gen_combined, norm, p);
 
-    // Step D: narrow to LeftIdeal<8> per the public return contract.
-    narrow_left_ideal_to_8::<LIMBS>(&wide_ideal).ok_or(Error::Internal(
-        "finalize_random_ideal_o0: wide LeftIdeal exceeds Uint<8> ceiling — precision contract violated",
+    // Step D: narrow to LeftIdeal<RET> per the caller's return contract.
+    narrow_left_ideal::<LIMBS, RET>(&wide_ideal).ok_or(Error::Internal(
+        "finalize_random_ideal_o0: wide LeftIdeal exceeds Uint<RET> ceiling — return width too narrow",
     ))
 }
 
@@ -493,7 +512,7 @@ fn finalize_random_ideal_o0<const LIMBS: usize, R: CryptoRng>(
 ///   with `N_red(gen) = target`, hence `norm | N_red(gen)` by
 ///   construction.
 ///
-/// Both paths converge in [`finalize_random_ideal_o0`] which
+/// Both paths converge in [`finalize_random_ideal_o0_ret`] which
 /// re-randomizes the equivalence class (sampling `gen_rerand` until
 /// `gcd(N_red(gen_rerand), norm) == 1`, then `gen ← gen · gen_rerand`)
 /// and builds the ideal `O_0 · gen + O_0 · norm` via
@@ -553,6 +572,49 @@ pub fn sampling_random_ideal_o0_given_norm_wide<const LIMBS: usize, R: CryptoRng
     witnesses: &[Uint<LIMBS>],
     rng: &mut R,
 ) -> Result<LeftIdeal<8>> {
+    sampling_random_ideal_o0_given_norm_wide_ret::<LIMBS, 8, R>(
+        norm,
+        p,
+        is_prime,
+        prime_cofactor,
+        sample_bound,
+        max_trials,
+        witnesses,
+        rng,
+    )
+}
+
+/// RET-generic variant of [`sampling_random_ideal_o0_given_norm_wide`].
+///
+/// Same two-path generator search (fast path for prime `norm`, general
+/// path otherwise) and the same `finalize` re-randomization, but the
+/// resulting ideal is returned at a caller-chosen `LeftIdeal<RET>` rather
+/// than the fixed `LeftIdeal<8>`. This is required for KAT-exact keygen:
+/// the secret ideal is sampled at `norm = SEC_DEGREE ~ 2^512`, whose
+/// basis entries exceed `Int<8>` (2^511), so the result must come back at
+/// `RET ≥ 9` (use `RET = 16` to feed the Clapotis spine directly).
+///
+/// `LIMBS` is the *internal* build width and must still satisfy the
+/// general-path precision contract AND hold the rerand-combined reduced
+/// norm `N_red(gen·gen_rerand)` (for `norm ~ 2^512` this is `~(p·norm²)²`,
+/// so `LIMBS ≳ 40`). `RET` only needs to hold the output ideal's basis
+/// (`~ norm`) and `cached_norm == norm`. For `RET == 8` this is
+/// bit-identical to the fixed-width entry point.
+#[allow(clippy::too_many_arguments)]
+pub fn sampling_random_ideal_o0_given_norm_wide_ret<
+    const LIMBS: usize,
+    const RET: usize,
+    R: CryptoRng,
+>(
+    norm: &Uint<LIMBS>,
+    p: &Uint<LIMBS>,
+    is_prime: bool,
+    prime_cofactor: Option<&Uint<LIMBS>>,
+    sample_bound: i64,
+    max_trials: usize,
+    witnesses: &[Uint<LIMBS>],
+    rng: &mut R,
+) -> Result<LeftIdeal<RET>> {
     let zero_u = Uint::<LIMBS>::from_u64(0);
     let one_u = Uint::<LIMBS>::ONE;
 
@@ -708,12 +770,187 @@ pub fn sampling_random_ideal_o0_given_norm_wide<const LIMBS: usize, R: CryptoRng
     let _ = one_u; // suppress unused when both paths handle the constant inline.
 
     // Step 2: shared finalize — re-randomize, build O_0·gen+O_0·norm, narrow.
-    finalize_random_ideal_o0::<LIMBS, R>(&gen_wide, norm, p, max_trials, rng)
+    finalize_random_ideal_o0_ret::<LIMBS, RET, R>(&gen_wide, norm, p, max_trials, rng)
+}
+
+/// Byte-exact Stage-A generator sampling for the keygen secret-ideal
+/// sampler fast path (`quat_sampling_random_ideal_O0_given_norm`,
+/// `is_prime=1`, `normeq.c`). Returns the STANDARD `(1,i,j,k)` coords
+/// `(a, b, c, d)` of a trace-zero-seeded generator with `norm | N(gen)`,
+/// where `N(gen) = a² + b² + p·(c² + d²)`.
+///
+/// Draw order matches the C exactly so the DRBG byte stream is identical:
+/// `coord[0] = 0`, then `b, c, d ← ibz_rand_interval(0, norm−1)` (3 draws,
+/// in that order), then `a = sqrt_mod(−N(gen) mod norm, norm)` (no draw).
+/// `norm` must be prime; for `norm ≡ 3 (mod 4)` (e.g. SEC_DEGREE = 2^512+75)
+/// our [`tonelli_shanks_uint`] returns the same root `disc^((norm+1)/4)`
+/// the C `ibz_sqrt_mod_p` does, so coord[0] is byte-identical.
+///
+/// `p` is the algebra prime. Loops until the sqrt exists (≈ half the time
+/// for prime norm) or `max_trials` is exhausted. Returns the four standard
+/// coords in `[0, norm)` (Stage-B rerandomization + ideal construction land
+/// next session).
+#[cfg(feature = "kat")]
+#[allow(dead_code)]
+pub fn sample_fast_path_gen<const LIMBS: usize, R: CryptoRng>(
+    norm: &Uint<LIMBS>,
+    p: &Uint<LIMBS>,
+    max_trials: usize,
+    rng: &mut R,
+) -> Option<[Uint<LIMBS>; 4]> {
+    let zero = Uint::<LIMBS>::from_u64(0);
+    let norm_nz: NonZero<Uint<LIMBS>> = Option::from(NonZero::new(*norm))?;
+    let n_minus_1 = norm.wrapping_sub(&Uint::<LIMBS>::ONE);
+    let p_mod = p.rem_vartime(&norm_nz);
+
+    for _ in 0..max_trials {
+        // 3 DRBG draws in order b, c, d over [0, norm−1] (coord[0] = 0).
+        let b = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &zero, &n_minus_1);
+        let c = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &zero, &n_minus_1);
+        let d = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &zero, &n_minus_1);
+
+        // n_temp = (b² + p·(c² + d²)) mod norm  (a = 0 in this trace-zero seed).
+        let b2 = b.square_mod_vartime(&norm_nz);
+        let c2 = c.square_mod_vartime(&norm_nz);
+        let d2 = d.square_mod_vartime(&norm_nz);
+        let cd = c2.wrapping_add(&d2).rem_vartime(&norm_nz);
+        let p_cd = p_mod.mul_mod_vartime(&cd, &norm_nz);
+        let n_temp = b2.wrapping_add(&p_cd).rem_vartime(&norm_nz);
+
+        // disc = (−n_temp) mod norm.
+        let disc = if n_temp == zero {
+            zero
+        } else {
+            norm.wrapping_sub(&n_temp)
+        };
+
+        // The C `ibz_sqrt_mod_p` returns FAILURE for disc ≡ 0 (GMP
+        // `mpz_legendre(0, p) == 0 ≠ 1`), so the C's `while (!found)` re-draws
+        // all three coords. `tonelli_shanks_uint` instead returns `Some(0)` for
+        // a zero input (mathematically the sqrt of 0), which would accept a
+        // generator the C rejects. Guard it so the rejection — hence the DRBG
+        // byte consumption — matches the C exactly. (disc = 0 ⟺ norm | N(gen),
+        // ~2^-bitlen(norm) likely, but a real byte-faithfulness edge.)
+        if disc == zero {
+            continue;
+        }
+
+        // a = sqrt(disc) mod norm; None ⇒ disc is a non-residue, retry.
+        if let Some(a) = tonelli_shanks_uint::<LIMBS>(&disc, &norm_nz) {
+            // Reject the all-zero generator (matches the C's nonzero check).
+            if a == zero && b == zero && c == zero && d == zero {
+                continue;
+            }
+            return Some([a, b, c, d]);
+        }
+    }
+    None
+}
+
+/// Byte-exact full generator for the keygen secret-ideal sampler fast
+/// path: Stage A ([`sample_fast_path_gen`]) → Stage B re-randomization →
+/// `gen ← gen · gen_rerand` (standard quaternion product). Returns the
+/// STANDARD-coords combined generator, whose reduced norm is still
+/// divisible by `norm` (since `N(gen·rerand) = N(gen)·N(rerand)` and
+/// `norm | N(gen)`).
+///
+/// Stage B draws, matching the C exactly: 4× `ibz_rand_interval(1, norm)`
+/// into coords 0..3 (in that order), accept when `gcd(N(rerand), norm) = 1`
+/// and `rerand ≠ 0`. The ideal construction (`O·gen + norm·O` + HNF) that
+/// consumes this generator lands next session — this function isolates the
+/// complete RNG-consuming portion of the sampler (3 Stage-A + 4 Stage-B
+/// draws per successful attempt).
+#[cfg(feature = "kat")]
+#[allow(dead_code)]
+pub fn sample_secret_gen<const LIMBS: usize, R: CryptoRng>(
+    norm: &Uint<LIMBS>,
+    p: &Uint<LIMBS>,
+    max_trials: usize,
+    rng: &mut R,
+) -> Option<Quaternion<LIMBS>> {
+    // Stage A: the trace-zero-seeded generator (coords in [0, norm)).
+    let [a, b, c, d] = sample_fast_path_gen::<LIMBS, R>(norm, p, max_trials, rng)?;
+    let gen_a = Quaternion::<LIMBS>::new(*a.as_int(), *b.as_int(), *c.as_int(), *d.as_int());
+
+    // Stage B: re-randomize the left-ideal class.
+    let one = Uint::<LIMBS>::ONE;
+    for _ in 0..max_trials {
+        // 4 DRBG draws in order coord[0..3] over [1, norm].
+        let r0 = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &one, norm);
+        let r1 = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &one, norm);
+        let r2 = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &one, norm);
+        let r3 = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &one, norm);
+        let rerand =
+            Quaternion::<LIMBS>::new(*r0.as_int(), *r1.as_int(), *r2.as_int(), *r3.as_int());
+        let n_rerand = rerand.norm(p).abs();
+        if uint_gcd_vartime::<LIMBS>(&n_rerand, norm) == one {
+            // rerand coords ∈ [1, norm] ⇒ non-zero by construction.
+            return Some(gen_a.mul(&rerand, p));
+        }
+    }
+    None
 }
 
 #[cfg(all(test, feature = "kat"))]
 mod tests {
     use super::*;
+
+    /// `sample_secret_gen` (Stage A + Stage B rerand + gen·rerand) yields a
+    /// combined generator whose reduced norm is divisible by `norm`
+    /// (multiplicativity: N(gen·rerand) = N(gen)·N(rerand), norm | N(gen)).
+    /// Small scale: norm = 11 (prime ≡ 3 mod 4), p = 7.
+    #[test]
+    fn sample_secret_gen_norm_divisible() {
+        use crate::rng::NistPqcRng;
+        let norm = Uint::<8>::from_u64(11);
+        let p = Uint::<8>::from_u64(7);
+        let mut rng = NistPqcRng::new(&[0x2bu8; 48]);
+        let g = sample_secret_gen::<8, _>(&norm, &p, 4096, &mut rng)
+            .expect("secret gen must be found at prime norm 11");
+        let nn: NonZero<Uint<8>> = NonZero::new(norm).unwrap();
+        let n_combined = g.norm(&p).abs();
+        assert_eq!(
+            n_combined.rem_vartime(&nn),
+            Uint::<8>::from_u64(0),
+            "norm must divide N(gen·gen_rerand)",
+        );
+    }
+
+    /// `sample_fast_path_gen` returns a standard-coords generator with
+    /// `norm | N(gen) = a² + b² + p·(c² + d²)`. Small scale: norm = 11
+    /// (prime, ≡ 3 mod 4 ⇒ the byte-exact `disc^((norm+1)/4)` sqrt root),
+    /// p = 7. Confirms the draw structure + sqrt + norm-divisibility.
+    #[test]
+    fn sample_fast_path_gen_divides_norm() {
+        use crate::rng::NistPqcRng;
+        let norm = Uint::<8>::from_u64(11);
+        let p = Uint::<8>::from_u64(7);
+        let mut rng = NistPqcRng::new(&[0x3au8; 48]);
+        let g = sample_fast_path_gen::<8, _>(&norm, &p, 4096, &mut rng)
+            .expect("fast-path gen must be found for prime norm 11");
+        let [a, b, c, d] = g;
+        // All coords in [0, norm).
+        for x in &g {
+            assert!(*x < norm, "coord must be in [0, norm)");
+        }
+        // N(gen) = a² + b² + p·(c² + d²); assert norm divides it.
+        let nn: NonZero<Uint<8>> = NonZero::new(norm).unwrap();
+        let a2 = a.wrapping_mul(&a);
+        let b2 = b.wrapping_mul(&b);
+        let c2 = c.wrapping_mul(&c);
+        let d2 = d.wrapping_mul(&d);
+        let cd = c2.wrapping_add(&d2);
+        let n_gen = a2.wrapping_add(&b2).wrapping_add(&p.wrapping_mul(&cd));
+        assert_eq!(
+            n_gen.rem_vartime(&nn),
+            Uint::<8>::from_u64(0),
+            "norm must divide N(gen) = a²+b²+p(c²+d²)",
+        );
+        assert!(
+            !(a == Uint::ZERO && b == Uint::ZERO && c == Uint::ZERO && d == Uint::ZERO),
+            "generator must be non-zero",
+        );
+    }
 
     /// Verify `N_red(β) = M` at the same LIMBS via `reduced_norm_o0_basis_wide`.
     fn verify_norm<const LIMBS: usize>(
@@ -873,6 +1110,64 @@ mod tests {
             det.abs(),
             Uint::<8>::from_u64(121),
             "fast-path lattice index must equal norm² (= 121 for norm=11)",
+        );
+    }
+
+    #[test]
+    fn wide_return_ret_param_is_pure_width() {
+        // RET only changes the output STORAGE width, never the math or the
+        // RNG draw (it appears solely in the final narrow, after every
+        // random sample). So sampling at the same (LIMBS, seed, norm, p)
+        // with RET=8 vs RET=16 must yield the same ideal: the RET=16 result
+        // narrowed back to 8 equals the RET=8 result. This exercises the
+        // genuine wide→narrow path (LIMBS=16 → RET=8) and guards against
+        // silent high-limb truncation in the width-generic narrow — the
+        // classic failure mode the KAT vectors cannot catch, since their
+        // norms fit Uint<8> regardless.
+        use crate::rng::NistPqcRng;
+        let norm: Uint<16> = Uint::from_u64(11);
+        let p: Uint<16> = Uint::from_u64(7);
+
+        let mut rng8 = NistPqcRng::new(&[0x42u8; 48]);
+        let ideal8 = sampling_random_ideal_o0_given_norm_wide_ret::<16, 8, _>(
+            &norm,
+            &p,
+            true,
+            None,
+            5,
+            4096,
+            &[],
+            &mut rng8,
+        )
+        .expect("RET=8 sample must succeed");
+
+        let mut rng16 = NistPqcRng::new(&[0x42u8; 48]);
+        let ideal16 = sampling_random_ideal_o0_given_norm_wide_ret::<16, 16, _>(
+            &norm,
+            &p,
+            true,
+            None,
+            5,
+            4096,
+            &[],
+            &mut rng16,
+        )
+        .expect("RET=16 sample must succeed");
+
+        let ideal16_to_8 = narrow_left_ideal::<16, 8>(&ideal16)
+            .expect("RET=16 result must narrow to 8 (norm=11 fits Uint<8>)");
+
+        assert_eq!(
+            ideal8.cached_norm, ideal16_to_8.cached_norm,
+            "cached_norm must be width-invariant",
+        );
+        assert_eq!(
+            ideal8.denom, ideal16_to_8.denom,
+            "denom must be width-invariant",
+        );
+        assert_eq!(
+            ideal8.basis, ideal16_to_8.basis,
+            "basis must be width-invariant (no silent high-limb truncation)",
         );
     }
 

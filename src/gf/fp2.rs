@@ -203,6 +203,24 @@ impl<F: BaseField> Fp2<F> {
         CtOption::new(Self::new(re, im), is_some)
     }
 
+    /// `self^exp` by square-and-multiply, `exp` little-endian (`exp[0]`
+    /// is the least significant byte), bits processed MSB-first.
+    /// Variable-time in the exponent — for the Clapotis spine's Weil
+    /// factor-selection check (`w1 == w0^k`), where `k` is public.
+    /// Mirrors the C reference's `fp2_pow_vartime`.
+    pub fn pow_vartime(&self, exp: &[u8]) -> Self {
+        let mut result = Self::one();
+        let mut i = exp.len() * 8;
+        while i > 0 {
+            i -= 1;
+            result = result.square();
+            if (exp[i / 8] >> (i % 8)) & 1 == 1 {
+                result = result.mul(self);
+            }
+        }
+        result
+    }
+
     /// Encode `(re, im)` as `re_le_bytes || im_le_bytes`.
     pub fn to_bytes_le(&self, out: &mut [u8]) {
         let n = F::ENCODED_BYTES;
@@ -261,6 +279,33 @@ mod tests {
         let i_sq = i.square();
         let minus_one = F2::one().negate();
         assert_eq!(i_sq, minus_one);
+    }
+
+    /// `pow_vartime` matches repeated multiplication (independent oracle):
+    /// `a^0 = 1`, `a^1 = a`, and `a^k = a·a·…·a` (k times) for small k.
+    /// `a = 2 + 3i` (a non-trivial fp2 element).
+    #[test]
+    fn pow_vartime_matches_repeated_multiplication() {
+        let two = Fp1Element::one().double();
+        let three = two.add(&Fp1Element::one());
+        let a = F2::new(two, three); // 2 + 3i
+
+        assert_eq!(a.pow_vartime(&[0u8]), F2::one(), "a^0 == 1");
+        assert_eq!(a.pow_vartime(&[1u8]), a, "a^1 == a");
+
+        let mut acc = F2::one();
+        for k in 0u8..=20 {
+            assert_eq!(a.pow_vartime(&[k]), acc, "a^{k} == repeated product");
+            acc = acc.mul(&a);
+        }
+
+        // Multi-byte exponent: a^256 == (a^16)^16.
+        let a16 = a.pow_vartime(&[16u8]);
+        assert_eq!(
+            a.pow_vartime(&[0u8, 1u8]),
+            a16.pow_vartime(&[16u8]),
+            "a^256"
+        );
     }
 
     #[test]

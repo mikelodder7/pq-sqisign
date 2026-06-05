@@ -13,6 +13,9 @@
 //! See spec §5 (Geometric Algorithms) for formula references.
 
 pub mod clapotis;
+pub mod clapotis_spine;
+pub mod endomorphism;
+pub mod fixed_degree;
 pub mod gluing;
 pub mod splitting;
 pub mod theta;

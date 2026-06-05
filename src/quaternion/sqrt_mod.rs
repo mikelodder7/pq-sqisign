@@ -540,4 +540,42 @@ mod tests {
             "sqrt(0) mod p = 0"
         );
     }
+
+    /// Root-CHOICE oracle: pin `tonelli_shanks_uint` against GMP ground truth
+    /// at SEC_DEGREE = 2^512 + 75 (the keygen secret-ideal modulus). The C
+    /// `ibz_sqrt_mod_p` p%4==3 branch returns `a^((p+1)/4) mod p` — a SPECIFIC
+    /// root, not `min(r, p−r)`. Since SEC_DEGREE ≡ 3 mod 8 ⇒ (2|p) = −1, that
+    /// formula yields the NON-obvious roots `sqrt(4) = p−2` and `sqrt(9) = p−3`
+    /// (a naive sqrt returning 2 / 3 would fail). Golden values computed by a
+    /// standalone GMP oracle (`a^((p+1)/4) mod p`, the verbatim C algorithm), so
+    /// this is a cross-implementation check, not a mirror of our own code. It
+    /// confirms the keygen sqrt step is byte-exact with the C for p ≡ 3 mod 4.
+    #[test]
+    fn tonelli_root_choice_matches_gmp_at_sec_degree() {
+        use crypto_bigint::{NonZero, Uint};
+        let p: Uint<16> = crate::params::lvl1::sec_degree(); // 2^512 + 75, ≡ 3 mod 4
+        let p_nz: NonZero<Uint<16>> = NonZero::new(p).into_option().expect("SEC_DEGREE nonzero");
+        let p_minus_2 = p.wrapping_sub(&Uint::from_u64(2));
+        let p_minus_3 = p.wrapping_sub(&Uint::from_u64(3));
+
+        // GMP-confirmed roots (a^((p+1)/4) mod p).
+        assert_eq!(
+            tonelli_shanks_uint::<16>(&Uint::from_u64(4), &p_nz),
+            Some(p_minus_2),
+            "sqrt(4) mod SEC_DEGREE must be p−2 (the a^((p+1)/4) root)",
+        );
+        assert_eq!(
+            tonelli_shanks_uint::<16>(&Uint::from_u64(9), &p_nz),
+            Some(p_minus_3),
+            "sqrt(9) mod SEC_DEGREE must be p−3",
+        );
+        // The chosen root squares back to the input.
+        let four = Uint::<16>::from_u64(4);
+        let r4 = tonelli_shanks_uint::<16>(&four, &p_nz).expect("4 is a QR");
+        assert_eq!(
+            r4.mul_mod_vartime(&r4, &p_nz),
+            four,
+            "root² ≡ 4 mod SEC_DEGREE"
+        );
+    }
 }

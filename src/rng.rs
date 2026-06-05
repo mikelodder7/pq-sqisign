@@ -234,6 +234,68 @@ pub fn sample_uniform_mod_6<R: rand_core::CryptoRng + ?Sized>(rng: &mut R) -> u8
     }
 }
 
+/// Port of the C reference `ibz_rand_interval(rand, a, b)`
+/// (`src/quaternion/ref/generic/intbig.c`): a uniform integer in the
+/// INCLUSIVE range `[a, b]` (`a <= b`), drawing from the DRBG byte-for-byte
+/// as the reference does so the keygen/sign byte stream matches the KAT.
+///
+/// Per attempt: `bmina = b − a`; `len_bytes = ceil(bitlen(bmina)/8)` bytes
+/// are drawn (little-endian), the top is masked to `bitlen(bmina)` bits, and
+/// the candidate is accepted when `candidate <= bmina` (rejection sampling);
+/// the result is `candidate + a`. Drawing exactly `len_bytes` (not the full
+/// `Uint<N>` width) is the byte-exactness-critical detail — it matches the C
+/// `randombytes(r, len_bytes)` call so DRBG consumption is identical.
+#[allow(dead_code)]
+pub fn ibz_rand_interval<const N: usize, R: rand_core::CryptoRng + ?Sized>(
+    rng: &mut R,
+    a: &crypto_bigint::Uint<N>,
+    b: &crypto_bigint::Uint<N>,
+) -> crypto_bigint::Uint<N> {
+    use crypto_bigint::Uint;
+    let bmina = b.wrapping_sub(a);
+    if bmina == Uint::<N>::ZERO {
+        return *a;
+    }
+    let len_bits = bmina.bits_vartime();
+    let len_bytes = len_bits.div_ceil(8) as usize;
+    let total_bytes = N * 8;
+    // Mask the candidate to `len_bits` bits (matches the C top-limb mask).
+    let mask = if (len_bits as usize) >= total_bytes * 8 {
+        Uint::<N>::MAX
+    } else {
+        Uint::<N>::ONE
+            .shl_vartime(len_bits)
+            .wrapping_sub(&Uint::<N>::ONE)
+    };
+    let mut buf = alloc::vec::from_elem(0u8, total_bytes);
+    loop {
+        // Draw exactly len_bytes; bytes [len_bytes..] stay zero (and are
+        // re-zeroed implicitly since fill only overwrites the low prefix).
+        rng.fill_bytes(&mut buf[..len_bytes]);
+        let cand = Uint::<N>::from_le_slice(&buf) & mask;
+        if cand <= bmina {
+            return cand.wrapping_add(a);
+        }
+    }
+}
+
+/// Port of the C reference `ibz_rand_interval_minm_m(rand, m)`
+/// (`intbig.c`): a uniform integer in `[−m, m]`, implemented exactly as the
+/// C does — sample `[0, 2m]` via [`ibz_rand_interval`], then subtract `m`.
+/// Used by the prime-norm box-search at `m = equiv_bound_coeff = 64` (one
+/// byte drawn per coordinate per attempt, accepted when `<= 128`).
+#[allow(dead_code)]
+pub fn ibz_rand_interval_minm_m<const N: usize, R: rand_core::CryptoRng + ?Sized>(
+    rng: &mut R,
+    m: u32,
+) -> crypto_bigint::Int<N> {
+    use crypto_bigint::Uint;
+    let two_m = Uint::<N>::from_u64(2 * u64::from(m));
+    let r = ibz_rand_interval::<N, R>(rng, &Uint::<N>::ZERO, &two_m);
+    let m_u = Uint::<N>::from_u64(u64::from(m));
+    r.as_int().wrapping_sub(m_u.as_int())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,6 +515,71 @@ mod tests {
             assert_eq!(
                 a, b,
                 "S150: identical seeds must produce identical sample sequence"
+            );
+        }
+    }
+
+    // ibz_rand_interval / ibz_rand_interval_minm_m — byte-exact anchors
+    // derived from the documented cross-vendor DRBG vector (seed = 0,1,…,47,
+    // first bytes 0x06,0x15,0x50,0x23,0x4d,0x15,0x8c,0x5e,0xc9,0x55,0x95,0xfe).
+
+    fn upstream_seed() -> [u8; 48] {
+        let mut seed = [0u8; 48];
+        for (i, b) in seed.iter_mut().enumerate() {
+            *b = u8::try_from(i).expect("48 fits u8");
+        }
+        seed
+    }
+
+    /// BYTE-EXACT: a single 12-byte `ibz_rand_interval(0, 2^96−1)` draws the
+    /// first 12 DRBG bytes (one `randombytes` call) and assembles them
+    /// little-endian. Expected value derived BY HAND from the documented
+    /// vector (LE bytes 06 15 50 23 4d 15 8c 5e c9 55 95 fe), independent of
+    /// the implementation under test.
+    #[test]
+    fn ibz_rand_interval_byte_exact_12_bytes() {
+        use crypto_bigint::Uint;
+        let mut rng = NistPqcRng::new(&upstream_seed());
+        let lo = Uint::<2>::ZERO;
+        let hi = Uint::<2>::from_be_hex("00000000FFFFFFFFFFFFFFFFFFFFFFFF"); // 2^96 − 1
+        let got = ibz_rand_interval::<2, _>(&mut rng, &lo, &hi);
+        let want = Uint::<2>::from_be_hex("00000000FE9555C95E8C154D23501506");
+        assert_eq!(
+            got, want,
+            "12-byte little-endian assembly must match the DRBG vector"
+        );
+    }
+
+    /// BYTE-EXACT: the FIRST `ibz_rand_interval_minm_m(64)` from a fresh seed
+    /// draws one byte (0x06 = 6 ≤ 128, accepted) and subtracts 64 ⇒ −58.
+    #[test]
+    fn minm_m_first_draw_byte_exact() {
+        use crypto_bigint::Int;
+        let mut rng = NistPqcRng::new(&upstream_seed());
+        let got = ibz_rand_interval_minm_m::<2, _>(&mut rng, 64);
+        assert_eq!(
+            got,
+            Int::<2>::from_i64(-58),
+            "first minm_m(64) = 0x06 − 64 = −58"
+        );
+    }
+
+    /// Range + determinism: `minm_m(64)` always lands in [−64, 64], and two
+    /// identically-seeded DRBGs produce the identical sample sequence.
+    #[test]
+    fn minm_m_range_and_determinism() {
+        use crypto_bigint::Int;
+        let mut a = NistPqcRng::new(&[0x9bu8; 48]);
+        let mut b = NistPqcRng::new(&[0x9bu8; 48]);
+        let lo = Int::<2>::from_i64(-64);
+        let hi = Int::<2>::from_i64(64);
+        for _ in 0..200 {
+            let x = ibz_rand_interval_minm_m::<2, _>(&mut a, 64);
+            let y = ibz_rand_interval_minm_m::<2, _>(&mut b, 64);
+            assert_eq!(x, y, "identical seeds ⇒ identical sequence");
+            assert!(
+                x >= lo && x <= hi,
+                "minm_m(64) must be in [-64, 64], got {x:?}"
             );
         }
     }

@@ -154,13 +154,33 @@ pub fn ideal_right_multiply_rational_wide<const WIDE: usize>(
     p: &Uint<8>,
     caller_provided_new_norm: Option<Uint<8>>,
 ) -> Option<LeftIdeal<8>> {
+    use crate::quaternion::lattice::{narrow_int_lattice, widen_int_lattice};
     use crate::quaternion::o0_mul::multiply_o0_basis_wide;
     let zero = Int::<8>::from_i64(0);
     let mut basis = [[zero; 4]; 4];
     for k in 0..4 {
         basis[k] = multiply_o0_basis_wide::<8, WIDE>(&i.basis[k], alpha_coord, p);
     }
-    let reduced = crate::quaternion::hnf::hnf_4x4(&basis);
+    // HNF at WIDE, not Int<8>: the product lattice I·β has covolume
+    // |det| = |det(I)|·N(β)² which, for a real connecting ideal (N(I)~2^511,
+    // N(β)~2^258), reaches ~2^1022 — the Int<8> HNF's intermediate
+    // pivot/elimination products overflow its 511-bit range and silently
+    // corrupt the lattice (wrong |det|, not a valid ideal; S286/S287). The
+    // basis entries `gen·β` themselves fit Int<8> (~2^382), so widen them to
+    // `Int<WIDE>`, run the HNF there, then narrow the reduced result back.
+    let mut basis_w = [[Int::<WIDE>::from_i64(0); 4]; 4];
+    for r in 0..4 {
+        for c in 0..4 {
+            basis_w[r][c] = widen_int_lattice::<8, WIDE>(&basis[r][c]);
+        }
+    }
+    let reduced_w = crate::quaternion::hnf::hnf_4x4::<WIDE>(&basis_w);
+    let mut reduced = [[zero; 4]; 4];
+    for r in 0..4 {
+        for c in 0..4 {
+            reduced[r][c] = narrow_int_lattice::<WIDE, 8>(&reduced_w[r][c]);
+        }
+    }
     let new_denom = i.denom.wrapping_mul(alpha_denom);
 
     let new_norm = match caller_provided_new_norm {

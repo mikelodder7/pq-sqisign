@@ -7,8 +7,10 @@
 //! `(X : Z)`) because every operation the scheme needs — scalar
 //! multiplication, three-point ladder, j-invariant — is x-only.
 
+pub mod biscalar;
 pub mod couple;
 pub mod jacobian;
 pub mod montgomery;
+pub mod weil;
 
 pub use montgomery::{MontgomeryCurve, MontgomeryPoint};

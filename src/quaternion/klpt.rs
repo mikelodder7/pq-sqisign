@@ -690,7 +690,14 @@ pub fn lift_smooth_norm_rational_wide_wn<const TLIMBS: usize, R: CryptoRng>(
     // the inner LeftIdeal<8> auto-computes its narrow cached_norm (which
     // may be lossy at L5 scale — that's OK, we override with the
     // authoritative wide cached_norm below).
-    let inner_k = crate::quaternion::ideal_mul::ideal_right_multiply_rational_wide::<TLIMBS>(
+    //
+    // WIDE=32 (NOT TLIMBS): the product ideal J·β has covolume
+    // |det| = |det(J)|·N(β)² ~ 2^1022 at L1 (N(J)~q~2^253, N(β)~target_m
+    // ~2^258); the internal HNF intermediates exceed Int<8> AND Int<TLIMBS=8>,
+    // so the right-multiply must run its HNF at ≥32 limbs to avoid the
+    // lattice-corruption bug (S286/S287). (L3/L5 connecting ideals are
+    // larger and may need a wider constant — future per-level tuning.)
+    let inner_k = crate::quaternion::ideal_mul::ideal_right_multiply_rational_wide::<32>(
         &j_wn.inner,
         &beta_n,
         &Uint::<8>::ONE,
@@ -917,14 +924,18 @@ pub fn find_prime_norm_quaternion_in_ideal<R: CryptoRng>(
 /// magnitude bounded by `equiv_bound_coeff · max(|B_red entries|)`. For
 /// L1 large-γ this stays well within `Int<8>` (the narrow target);
 /// L3/L5 may require widening the API itself.
-pub fn find_prime_norm_quaternion_in_ideal_wide<const WIDE: usize, R: CryptoRng>(
-    ideal: &LeftIdeal<8>,
-    p: &Uint<8>,
+pub fn find_prime_norm_quaternion_in_ideal_wide<
+    const INW: usize,
+    const WIDE: usize,
+    R: CryptoRng,
+>(
+    ideal: &LeftIdeal<INW>,
+    p: &Uint<INW>,
     equiv_bound_coeff: i64,
     witnesses_wide: &[Uint<WIDE>],
     rng: &mut R,
 ) -> Option<([Int<8>; 4], Uint<8>)> {
-    find_quaternion_in_ideal_with_norm_property_wide::<WIDE, _, R>(
+    find_quaternion_in_ideal_with_norm_property_wide::<INW, WIDE, _, R>(
         ideal,
         p,
         equiv_bound_coeff,
@@ -956,9 +967,9 @@ pub fn find_prime_norm_quaternion_in_ideal_wide<const WIDE: usize, R: CryptoRng>
 /// `equiv_bound_coeff = k` caps the sampler at `(2k+1)^4` trials before
 /// returning `None`. Returns `None` if the search budget is exhausted.
 #[allow(clippy::needless_range_loop)]
-pub fn find_quaternion_in_ideal_with_norm_property_wide<const WIDE: usize, F, R>(
-    ideal: &LeftIdeal<8>,
-    p: &Uint<8>,
+pub fn find_quaternion_in_ideal_with_norm_property_wide<const INW: usize, const WIDE: usize, F, R>(
+    ideal: &LeftIdeal<INW>,
+    p: &Uint<INW>,
     equiv_bound_coeff: i64,
     accept_norm: F,
     rng: &mut R,
@@ -975,11 +986,17 @@ where
     let zero_w = Int::<WIDE>::from_i64(0);
     let zero_u_w = Uint::<WIDE>::from_u64(0);
 
-    // Widen ideal basis and prime to WIDE precision.
+    // Widen ideal basis and prime to WIDE precision. INW is the INPUT
+    // ideal width: at reduced scale (S307) the secret ideal fits Int<8>
+    // (INW=8), but the KAT-exact secret ideal is sampled at norm
+    // SEC_DEGREE~2^512 whose HNF basis diagonal (= the norm) exceeds
+    // Int<8>, so it arrives as LeftIdeal<16> (INW=16). The found α and the
+    // prime q are the REDUCED-equivalent magnitudes (~bitsize(p)~2^250),
+    // which fit the narrow Int<8>/Uint<8> return regardless of INW.
     let mut basis_w = [[zero_w; 4]; 4];
     for r in 0..4 {
         for c in 0..4 {
-            basis_w[r][c] = widen_int_lattice::<8, WIDE>(&ideal.basis[r][c]);
+            basis_w[r][c] = widen_int_lattice::<INW, WIDE>(&ideal.basis[r][c]);
         }
     }
     let p_w: Uint<WIDE> = p.resize::<WIDE>();
@@ -989,9 +1006,9 @@ where
     let b_red_w = lll_4x4_in_metric::<WIDE>(&basis_w, &g_o0_w);
     let g_red_w = pull_back_gram::<WIDE>(&b_red_w, &g_o0_w);
 
-    // 4·N(I) at WIDE.
-    let n_i: Uint<8> = ideal.norm();
-    let n_i_w: Uint<WIDE> = n_i.resize::<WIDE>();
+    // 4·N(I) at WIDE. N(I) is read at the INPUT width (it can be
+    // SEC_DEGREE~2^512, exceeding Uint<8>) then widened to WIDE.
+    let n_i_w: Uint<WIDE> = ideal.norm().resize::<WIDE>();
     let four_w = Uint::<WIDE>::from_u64(4);
     let four_n_i_w = n_i_w.wrapping_mul(&four_w);
     let four_n_i_nz: NonZero<Uint<WIDE>> = Option::<NonZero<_>>::from(NonZero::new(four_n_i_w))?;
@@ -1151,7 +1168,7 @@ where
     F: Fn(&Uint<WIDE>) -> bool,
     R: CryptoRng,
 {
-    let (alpha_o0, q) = find_quaternion_in_ideal_with_norm_property_wide::<WIDE, _, R>(
+    let (alpha_o0, q) = find_quaternion_in_ideal_with_norm_property_wide::<8, WIDE, _, R>(
         ideal,
         p,
         equiv_bound_coeff,
@@ -2376,6 +2393,85 @@ mod tests {
 
     #[cfg(feature = "kat")]
     #[test]
+    fn find_prime_norm_input_width_inw_is_pure_width() {
+        // INW is the INPUT ideal STORAGE width only — it never changes the
+        // search math, which runs at WIDE. So searching the SAME ideal at
+        // INW=8 vs INW=16 (same seed, same WIDE, same prime) must return
+        // the identical (α, q). This guards the new input-width threading
+        // against a magnitude/convention bug the existing <8>-input tests
+        // cannot see, and gives the wide-input path CI coverage without the
+        // heavy SEC_DEGREE end-to-end run.
+        use crate::rng::NistPqcRng;
+        let witnesses_wide: [Uint<32>; 2] = [Uint::<32>::from_u64(2), Uint::<32>::from_u64(3)];
+
+        let p8: Uint<8> = crate::params::lvl3::prime().resize::<8>();
+        let id8 = LeftIdeal::<8>::full_order();
+        let mut rng8 = NistPqcRng::new(&[0x7eu8; 48]);
+        let r8 = find_prime_norm_quaternion_in_ideal_wide::<8, 32, _>(
+            &id8,
+            &p8,
+            5,
+            &witnesses_wide,
+            &mut rng8,
+        );
+
+        let p16: Uint<16> = crate::params::lvl3::prime().resize::<16>();
+        let id16 = LeftIdeal::<16>::full_order();
+        let mut rng16 = NistPqcRng::new(&[0x7eu8; 48]);
+        let r16 = find_prime_norm_quaternion_in_ideal_wide::<16, 32, _>(
+            &id16,
+            &p16,
+            5,
+            &witnesses_wide,
+            &mut rng16,
+        );
+
+        assert_eq!(
+            r8, r16,
+            "INW must be pure input-storage width: identical (α, q) at INW=8 and INW=16",
+        );
+        assert!(r8.is_some(), "search must succeed at this scale (sanity)");
+    }
+
+    // NOTE (S311 research + diagnosis — no in-suite capability test, see
+    // below; findings recorded in ISA.md). The wide-INPUT reduction search
+    // generalized in S310 is ALGORITHMICALLY correct and matches the
+    // C-reference (verified against SQISign/the-sqisign
+    // `src/quaternion/ref/generic/lll/lll_applications.c`
+    // `quat_lideal_prime_norm_reduced_equivalent`): LLL-reduce the ideal,
+    // then a randomized box-search over reduced-basis combinations testing
+    // primality of qf_eval/adjusted_norm. Confirmed facts:
+    //   - C-ref keygen flow (`src/signature/ref/lvlx/keygen.c:32-35`):
+    //     sample an O_0-ideal of norm SEC_DEGREE → prime-norm-reduce → spine.
+    //   - C-ref keygen reduction params (`quaternion_constants.h:2,4`, all
+    //     levels): equiv_bound_coeff = 64 (box [-64,64]^4),
+    //     primality_num_iter = 32.
+    //   - C-ref LLL strength: δ = DELTABAR = 0.995 (`lll_internals.h:25`),
+    //     and crucially it runs the Gram-Schmidt/Lovász numerics in `dpe_t`
+    //     (double-plus-exponent FLOAT, PREC=64), keeping only the exact
+    //     basis transform in GMP integers (`l2.c`).
+    //   - Our divisor convention is correct: the wide-return sampler sets
+    //     cached_norm = N, so `ideal.norm()` = N(I) and the `4·N(I)` divisor
+    //     is right (ruled out as the S310 non-convergence cause).
+    //
+    // WHY there is no in-suite SEC_DEGREE capability test: our search runs
+    // the ENTIRE LLL (integral Bareiss GSO) at a fixed crypto-bigint width.
+    // For a SEC_DEGREE ideal the GSO intermediates reach ~2^7668, forcing
+    // WIDE≈160 (10240-bit), and the LLL loop runs max_iters≈64+32·1278≈41k
+    // iterations of 10240-bit exact arithmetic (~65s for the LLL alone).
+    // The box-search at the C-ref bound=64 then needs many trials because
+    // our LLL uses δ=0.75 (weaker than the C-ref's 0.995), lowering the
+    // prime-norm density in the small-coefficient box; combined cost is
+    // infeasible in-suite (the run was killed). This is NOT a correctness
+    // gap — it is a PERFORMANCE/strength gap. S312 fix: a float-assisted
+    // (dpe-style) Gram-Schmidt at δ→0.995 so the GSO numerics are cheap and
+    // the basis is strongly reduced, making the bound=64 search converge
+    // fast; THEN the oracle-free capability test (N_red(α)==q·SEC_DEGREE),
+    // the wide-input right-multiply (build J), and the keygen wiring become
+    // tractable.
+
+    #[cfg(feature = "kat")]
+    #[test]
     fn find_prime_norm_quaternion_in_ideal_wide_passes_l3_o0() {
         // S59 milestone: L3 O_0 search via the wide path.
         // L3 prime `p = 65·2^376 − 1` ≈ 2^383. For O_0 basis = identity,
@@ -2389,7 +2485,7 @@ mod tests {
         let id = LeftIdeal::<8>::full_order();
         let witnesses_wide: [Uint<32>; 2] = [Uint::<32>::from_u64(2), Uint::<32>::from_u64(3)];
         let mut rng = NistPqcRng::new(&[0xa3u8; 48]);
-        let (alpha_o0, q) = find_prime_norm_quaternion_in_ideal_wide::<32, _>(
+        let (alpha_o0, q) = find_prime_norm_quaternion_in_ideal_wide::<8, 32, _>(
             &id,
             &p,
             5,
@@ -2427,7 +2523,7 @@ mod tests {
         let id = LeftIdeal::<8>::full_order();
         let witnesses_wide: [Uint<64>; 2] = [Uint::<64>::from_u64(2), Uint::<64>::from_u64(3)];
         let mut rng = NistPqcRng::new(&[0xa5u8; 48]);
-        let (alpha_o0, q) = find_prime_norm_quaternion_in_ideal_wide::<64, _>(
+        let (alpha_o0, q) = find_prime_norm_quaternion_in_ideal_wide::<8, 64, _>(
             &id,
             &p,
             5,
@@ -2484,7 +2580,7 @@ mod tests {
         let witnesses_wide: [Uint<64>; 2] = [Uint::<64>::from_u64(2), Uint::<64>::from_u64(3)];
 
         let mut rng = NistPqcRng::new(&[0x58u8; 48]);
-        let (alpha_o0, q) = find_prime_norm_quaternion_in_ideal_wide::<64, _>(
+        let (alpha_o0, q) = find_prime_norm_quaternion_in_ideal_wide::<8, 64, _>(
             &principal,
             &p,
             5,
@@ -2548,7 +2644,7 @@ mod tests {
             true
         };
 
-        let (alpha_o0, q) = find_quaternion_in_ideal_with_norm_property_wide::<48, _, _>(
+        let (alpha_o0, q) = find_quaternion_in_ideal_with_norm_property_wide::<8, 48, _, _>(
             &id,
             &p,
             5,

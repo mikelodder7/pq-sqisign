@@ -6,7 +6,7 @@
 //! torsion `E_0[2^248]` is rational over `F_{p^2}`.
 
 use crypto_bigint::modular::ConstMontyParams;
-use crypto_bigint::{U256, const_monty_params};
+use crypto_bigint::{U256, Uint, const_monty_params};
 
 use super::Params;
 
@@ -50,6 +50,28 @@ impl Params for Level1 {
 /// alongside intermediate products of magnitude up to roughly `p²`.
 pub fn prime() -> U256 {
     *Lvl1Modulus::PARAMS.modulus().as_ref()
+}
+
+/// The Level-1 secret-key isogeny degree `SEC_DEGREE = 2^512 + 75` (513-bit,
+/// odd). The keygen secret ideal is sampled as an `O_0`-ideal of this norm
+/// (then reduced to a prime-norm equivalent) and fed to the Clapotis
+/// `ideal_to_isogeny` to obtain the public-key curve `E_A`. Equals
+/// `COM_DEGREE` at this level. Source: SQIsign C reference
+/// `src/precomp/ref/lvl1/torsion_constants.c` (`SEC_DEGREE`, 64-bit limbs
+/// `{0x4b, 0, …, 0, 0x1}` = `2^512 + 75`). Returned at `Uint<16>` (1024-bit)
+/// to match the quaternion wide-norm width used by the ideal/Clapotis path.
+pub fn sec_degree() -> Uint<16> {
+    Uint::<16>::ONE
+        .shl_vartime(512)
+        .wrapping_add(&Uint::<16>::from_u64(75))
+}
+
+/// The Level-1 commitment isogeny degree `COM_DEGREE = 2^512 + 75`. At every
+/// SQIsign level `COM_DEGREE == SEC_DEGREE`; the commitment ideal (in `sign`)
+/// is sampled at this norm. Source: C-ref `torsion_constants.c` (`COM_DEGREE`,
+/// byte-identical to `SEC_DEGREE` at lvl1).
+pub fn com_degree() -> Uint<16> {
+    sec_degree()
 }
 
 #[cfg(test)]
@@ -112,5 +134,32 @@ mod tests {
         for (i, w) in wide_limbs.iter().enumerate().skip(4) {
             assert_eq!(w.0, 0, "upper limb {i} zero-extended");
         }
+    }
+
+    #[test]
+    fn sec_and_com_degree_match_c_reference() {
+        // C-ref src/precomp/ref/lvl1/torsion_constants.c: SEC_DEGREE and
+        // COM_DEGREE are byte-identical, 64-bit limbs {0x4b, 0,…,0, 0x1} =
+        // 2^512 + 75 (513-bit, odd).
+        let sec = sec_degree();
+        // Value: 2^512 + 75 exactly.
+        let expected = Uint::<16>::ONE
+            .shl_vartime(512)
+            .wrapping_add(&Uint::<16>::from_u64(75));
+        assert_eq!(sec, expected, "SEC_DEGREE must equal 2^512 + 75");
+        // 513-bit and odd.
+        assert_eq!(sec.bits_vartime(), 513, "SEC_DEGREE is 513 bits");
+        assert_eq!(sec.as_limbs()[0].0 & 1, 1, "SEC_DEGREE is odd");
+        // Low limb is 0x4b (75), limb 8 is 0x1, all others zero.
+        let limbs = sec.as_limbs();
+        assert_eq!(limbs[0].0, 0x4b);
+        assert_eq!(limbs[8].0, 0x1);
+        for (i, l) in limbs.iter().enumerate() {
+            if i != 0 && i != 8 {
+                assert_eq!(l.0, 0, "SEC_DEGREE limb {i} must be zero");
+            }
+        }
+        // COM_DEGREE == SEC_DEGREE at lvl1.
+        assert_eq!(com_degree(), sec, "COM_DEGREE == SEC_DEGREE at lvl1");
     }
 }
