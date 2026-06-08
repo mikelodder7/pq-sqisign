@@ -377,6 +377,122 @@ pub(crate) fn endomorphism_application_o0_coords<const L: usize>(
     matrix_application_even_basis(p, q, pmq, &m, f, a24)
 }
 
+/// Reduce a `[[Int<8>;2];2]` action table (entries already in `[0, 2^F)`) to
+/// `[[U256;2];2]` mod `2^f`.
+#[inline]
+fn mat_int8_to_mod_2f(t: &[[crypto_bigint::Int<8>; 2]; 2], f: usize) -> [[U256; 2]; 2] {
+    [
+        [int_to_mod_2f(&t[0][0], f), int_to_mod_2f(&t[0][1], f)],
+        [int_to_mod_2f(&t[1][0], f), int_to_mod_2f(&t[1][1], f)],
+    ]
+}
+
+/// Apply the endomorphism `theta / theta_denom` on the alternate starting
+/// curve `CURVES_WITH_ENDOMORPHISMS[index_alternate_curve]` to its even-torsion
+/// basis `(P, Q, P−Q)` of order `2^f`.
+///
+/// Port of the C reference `endomorphism_application_even_basis`
+/// (`id2iso.c:140`) in its GENERIC `index_alternate_curve` form — the
+/// `n_order ≠ 0` path (`dim2id2iso.c:148`). The C body decomposes `theta` over
+/// `EXTREMAL_ORDERS[index].order` (`quat_alg_make_primitive` → `coeffs` +
+/// `content`, the `content` always odd), builds
+/// `M = content · (coeffs0·I + coeffs1·GEN2 + coeffs2·GEN3 + coeffs3·GEN4)`
+/// mod `2^f` from `CURVES_WITH_ENDOMORPHISMS[index].action_gen2/3/4`, and
+/// applies it via [`matrix_application_even_basis`].
+///
+/// Index mapping (Rust tables are offset-by-one from the C arrays, per S343):
+/// `index_alternate_curve == 0` is the standard order `O_0` — delegated to the
+/// validated [`endomorphism_application_even_basis`] (which assumes an integer
+/// `theta`, i.e. `theta_denom == 1`); `index_alternate_curve == k ≥ 1` uses the
+/// alternate extremal order `alternate_extremal_order_{k-1}_l1` and curve
+/// `curve_with_endomorphism_{k-1}_l1` (both = C array slot `k`).
+///
+/// Returns `None` if `theta/theta_denom ∉ EXTREMAL_ORDERS[k]` (the C `assert`
+/// fails), if the index is out of range, or if a biladder fails.
+///
+/// Byte-exact correctness of the `k ≥ 1` matrix is NOT independently checkable
+/// in-tree (no golden vectors); it is anchored here by the identity
+/// endomorphism (`θ = 1 ⇒ basis fixed`) and proven end-to-end by the eventual
+/// keygen KAT (item 8).
+#[allow(dead_code, clippy::too_many_arguments)]
+pub(crate) fn endomorphism_application_even_basis_indexed(
+    p: &MontgomeryPoint<Fp1Element>,
+    q: &MontgomeryPoint<Fp1Element>,
+    pmq: &MontgomeryPoint<Fp1Element>,
+    index_alternate_curve: usize,
+    theta: &crate::quaternion::Quaternion<8>,
+    theta_denom: &crypto_bigint::Int<8>,
+    f: usize,
+    a24: &Fp2<Fp1Element>,
+) -> Option<(
+    MontgomeryPoint<Fp1Element>,
+    MontgomeryPoint<Fp1Element>,
+    MontgomeryPoint<Fp1Element>,
+)> {
+    use crate::quaternion::curves_with_endomorphism as cwe;
+    use crate::quaternion::extremal_orders as eo;
+
+    if index_alternate_curve == 0 {
+        // Standard O_0 path (validated): integer theta only.
+        debug_assert!(
+            *theta_denom == crypto_bigint::Int::<8>::ONE,
+            "index 0 (O_0) path requires integer theta (denom = 1)",
+        );
+        return endomorphism_application_even_basis::<8>(p, q, pmq, theta, f, a24);
+    }
+
+    let k = index_alternate_curve - 1;
+    let order = match k {
+        0 => eo::alternate_extremal_order_0_l1(),
+        1 => eo::alternate_extremal_order_1_l1(),
+        2 => eo::alternate_extremal_order_2_l1(),
+        3 => eo::alternate_extremal_order_3_l1(),
+        4 => eo::alternate_extremal_order_4_l1(),
+        5 => eo::alternate_extremal_order_5_l1(),
+        _ => return None,
+    };
+    let curve = match k {
+        0 => cwe::curve_with_endomorphism_0_l1(),
+        1 => cwe::curve_with_endomorphism_1_l1(),
+        2 => cwe::curve_with_endomorphism_2_l1(),
+        3 => cwe::curve_with_endomorphism_3_l1(),
+        4 => cwe::curve_with_endomorphism_4_l1(),
+        5 => cwe::curve_with_endomorphism_5_l1(),
+        _ => return None,
+    };
+
+    // Decompose theta/theta_denom over EXTREMAL_ORDERS[k] (C quat_alg_make_primitive):
+    // coeffs in the order basis (index 0 = identity component), content odd.
+    let (coeffs, content) = eo::make_primitive_over_alt_order(&order, theta, theta_denom)?;
+
+    let c: [U256; 4] = [
+        int_to_mod_2f(&coeffs[0], f),
+        int_to_mod_2f(&coeffs[1], f),
+        int_to_mod_2f(&coeffs[2], f),
+        int_to_mod_2f(&coeffs[3], f),
+    ];
+    let content_u = int_to_mod_2f(&content, f);
+
+    let gen2 = mat_int8_to_mod_2f(&curve.action_gen2, f);
+    let gen3 = mat_int8_to_mod_2f(&curve.action_gen3, f);
+    let gen4 = mat_int8_to_mod_2f(&curve.action_gen4, f);
+
+    let mut m = [[U256::ZERO; 2]; 2];
+    for i in 0..2 {
+        for j in 0..2 {
+            // diagonal carries coeffs0 (the identity component)
+            let mut e = if i == j { c[0] } else { U256::ZERO };
+            e = add_mod_2f(&e, &mul_mod_2f(&c[1], &gen2[i][j], f), f);
+            e = add_mod_2f(&e, &mul_mod_2f(&c[2], &gen3[i][j], f), f);
+            e = add_mod_2f(&e, &mul_mod_2f(&c[3], &gen4[i][j], f), f);
+            e = mul_mod_2f(&e, &content_u, f);
+            m[i][j] = e;
+        }
+    }
+
+    matrix_application_even_basis(p, q, pmq, &m, f, a24)
+}
+
 /// Reduce a `Uint<L>` to `U256` modulo `2^f` (low `f` bits).
 #[inline]
 fn uint_to_mod_2f<const L: usize>(x: &crypto_bigint::Uint<L>, f: usize) -> U256 {
@@ -617,6 +733,73 @@ mod tests {
             bool::from(s.x.ct_eq(&q.x.mul(&s.z))),
             "endo(1)(Q) must equal Q",
         );
+    }
+
+    /// GENERIC-INDEX GROUND TRUTH (item 6): on every alternate starting curve
+    /// `k = 1..=6`, the identity endomorphism `θ = 1` must leave that curve's
+    /// own even-torsion basis fixed. This anchors the whole `k ≥ 1` wiring of
+    /// [`endomorphism_application_even_basis_indexed`] together: the alternate
+    /// order decomposition (`make_primitive_over_alt_order`), the per-curve
+    /// `action_gen2/3/4` tables, the matrix assembly, and
+    /// `matrix_application_even_basis` — independently of any C oracle (byte
+    /// exactness of a non-trivial θ defers to the keygen KAT, item 8).
+    #[test]
+    fn endomorphism_indexed_identity_fixes_each_alternate_basis() {
+        use crate::quaternion::Quaternion;
+        use crate::quaternion::curves_with_endomorphism as cwe;
+        use crypto_bigint::Int;
+
+        let f = 248usize; // TORSION_EVEN_POWER at lvl1
+        let two = Fp2::<Fp1Element>::one().double();
+        let four = two.double();
+
+        let theta_one = Quaternion::<8>::new(
+            Int::<8>::from_i64(1),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+        );
+        let denom_one = Int::<8>::ONE;
+
+        let curves = [
+            cwe::curve_with_endomorphism_0_l1(),
+            cwe::curve_with_endomorphism_1_l1(),
+            cwe::curve_with_endomorphism_2_l1(),
+            cwe::curve_with_endomorphism_3_l1(),
+            cwe::curve_with_endomorphism_4_l1(),
+            cwe::curve_with_endomorphism_5_l1(),
+        ];
+
+        for (k, c) in curves.iter().enumerate() {
+            let index_alternate_curve = k + 1; // C slot k+1 == Rust alt index k
+            let p = MontgomeryPoint::<Fp1Element>::new(c.p_x, c.p_z);
+            let q = MontgomeryPoint::<Fp1Element>::new(c.q_x, c.q_z);
+            let pmq = MontgomeryPoint::<Fp1Element>::new(c.pmq_x, c.pmq_z);
+            // a24 = (A + 2C)/(4C); the NICE curves have C = 1.
+            let four_c_inv = four.mul(&c.curve_c).invert().unwrap_or(Fp2::zero());
+            let a24 = c.curve_a.add(&two.mul(&c.curve_c)).mul(&four_c_inv);
+
+            let (r, s, _rmq) = endomorphism_application_even_basis_indexed(
+                &p,
+                &q,
+                &pmq,
+                index_alternate_curve,
+                &theta_one,
+                &denom_one,
+                f,
+                &a24,
+            )
+            .unwrap_or_else(|| panic!("indexed endo(1) must succeed on curve k={k}"));
+
+            assert!(
+                bool::from(r.x.ct_eq(&p.x.mul(&r.z))),
+                "endo(1)(P) must equal P on alternate curve k={k}",
+            );
+            assert!(
+                bool::from(s.x.ct_eq(&q.x.mul(&s.z))),
+                "endo(1)(Q) must equal Q on alternate curve k={k}",
+            );
+        }
     }
 
     /// The O_0-coords entry (the form `RepresentInteger` returns) routes `i`

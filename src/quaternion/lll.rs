@@ -1238,6 +1238,7 @@ mod tests {
     /// + `[O_0 : I] = |det(basis)|/denom⁴ = q²`. This is the prerequisite for
     /// the end-to-end keygen → KAT pk run (S335). Heavy (real-scale dpe-LLL +
     /// Miller-Rabin at 3072-bit), hence ignored in the default run.
+    #[cfg(feature = "kat")]
     #[ignore = "SEC_DEGREE-scale keygen front (heavy: WIDE=48 sampler + reduce)"]
     #[test]
     fn keygen_byte_exact_secret_ideal_front_at_sec_degree() {

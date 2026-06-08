@@ -1390,11 +1390,16 @@ pub fn find_uv<const LIMBS: usize>(
     // there, isolated from the j=0 path). Empty slice → existing j=0
     // body below, unchanged from S195-S210.
     //
-    // WIDE=20 (1280 bits) per S216 calibration: handles ALT-magnitude
-    // (128-bit) basis entries at p=7 with margin. May need bumping
-    // for the real L1 prime (S219+ calibration).
+    // WIDE=128 (8192 bits): S345 calibration at the REAL L1 prime. The per-j
+    // product `conj(reduced_id)·ALT[j-1]`'s integer-GSO determinant
+    // intermediates exceed 4096 bits at real scale (WIDE=64 panicked in
+    // `int_div_exact`; WIDE=128 runs to completion — see
+    // `s345_find_uv_alternate_orders_real_l1_limbs16_all_six_alts`). The
+    // earlier WIDE=20 (S216) only ever covered the p=7 smoke fixtures.
+    // Over-wide is always correct (more headroom), just slower; per-level
+    // tuning is future work.
     if !alt_connecting.is_empty() {
-        return find_uv_alternate_orders::<LIMBS, 20>(target, lideal, p, alt_connecting, box_size);
+        return find_uv_alternate_orders::<LIMBS, 128>(target, lideal, p, alt_connecting, box_size);
     }
 
     // Step 1: LLL-reduce the input ideal under the O_0 reduced-norm metric.
@@ -1550,6 +1555,56 @@ pub fn find_uv<const LIMBS: usize>(
     })
 }
 
+/// Self-verification arbiter for the `find_uv_alternate_orders` j>0 finalize:
+/// is the rational quaternion `beta` contained in the (integral) left ideal
+/// `lideal`? Port of the C reference's `quat_lattice_contains(ideal->lattice,
+/// β)` debug assertion (dim2id2iso.c:690-691), which is the convention-blind
+/// arbiter that distinguishes the correctly-finalized β (in the input ideal)
+/// from the conjugation-swapped wrong one (in an alternate-order frame).
+///
+/// `lideal.basis` is in `O_0`-basis coordinates (row = generator); each
+/// generator is converted to standard `(1,i,j,k)` coordinates via
+/// [`o0_basis_to_standard_doubled`] (which returns `2 ×` the standard value),
+/// placed COLUMN-wise for [`lattice_coords_of`]'s column convention; the `×2`
+/// doubling is absorbed by doubling `lat_denom`. The solve runs at `WIDE`
+/// width because the adjugate intermediate `adj · x · lat_denom` reaches
+/// `~2^1246` at the real L1 ideal scale (overflows `Int<LIMBS=16>`).
+#[cfg(feature = "alloc")]
+#[allow(clippy::needless_range_loop)] // g indexes both lideal.basis (read) and std_basis columns (write)
+fn rational_quaternion_in_lideal<const LIMBS: usize, const WIDE: usize>(
+    beta: &RationalQuaternion<LIMBS>,
+    lideal: &crate::quaternion::ideal::LeftIdeal<LIMBS>,
+) -> bool {
+    use crate::quaternion::extremal_orders::lattice_coords_of;
+    use crate::quaternion::lattice::widen_int_lattice;
+    use crate::quaternion::o0_mul::{o0_basis_to_standard_doubled, uint_as_nonneg_int};
+
+    let mut std_basis = [[Int::<WIDE>::from_i64(0); 4]; 4];
+    for g in 0..4 {
+        let se = o0_basis_to_standard_doubled::<LIMBS>(&lideal.basis[g]);
+        std_basis[0][g] = widen_int_lattice::<LIMBS, WIDE>(&se.a);
+        std_basis[1][g] = widen_int_lattice::<LIMBS, WIDE>(&se.b);
+        std_basis[2][g] = widen_int_lattice::<LIMBS, WIDE>(&se.c);
+        std_basis[3][g] = widen_int_lattice::<LIMBS, WIDE>(&se.d);
+    }
+    let two_denom = Uint::<LIMBS>::from_u64(2).wrapping_mul(&lideal.denom);
+    let lat_denom = match uint_as_nonneg_int::<LIMBS>(&two_denom) {
+        Some(d) => widen_int_lattice::<LIMBS, WIDE>(&d),
+        None => return false,
+    };
+    let x_std = [
+        widen_int_lattice::<LIMBS, WIDE>(&beta.num.a),
+        widen_int_lattice::<LIMBS, WIDE>(&beta.num.b),
+        widen_int_lattice::<LIMBS, WIDE>(&beta.num.c),
+        widen_int_lattice::<LIMBS, WIDE>(&beta.num.d),
+    ];
+    let x_denom = match uint_as_nonneg_int::<LIMBS>(&beta.denom) {
+        Some(d) => widen_int_lattice::<LIMBS, WIDE>(&d),
+        None => return false,
+    };
+    lattice_coords_of::<WIDE>(&std_basis, &lat_denom, &x_std, &x_denom).is_some()
+}
+
 /// Alternate-orders body for the Clapotis `find_uv` orchestrator —
 /// handles the non-empty `alt_connecting` case (j > 0 indices).
 /// **Skeleton: S211 (this session) ships the dispatch-target signature
@@ -1596,6 +1651,13 @@ pub fn find_uv<const LIMBS: usize>(
 ///
 /// - `Err(Error::Unimplemented)`: until S212+ wires the body.
 /// - Future: `Ok(FindUvResult)` with the cross-product Bezout output.
+///
+/// The j>0 β finalize self-verifies via [`rational_quaternion_in_lideal`]
+/// (the C ref's own `quat_lattice_contains(ideal->lattice, β)` debug
+/// assertion, dim2id2iso.c:690-691) before returning `Ok` — a sound arbiter
+/// that distinguishes the correct β from the conjugation-swapped wrong one
+/// (which lands in the alternate-order frame, not the input ideal), so a
+/// reconciliation error fails closed rather than emitting unverified crypto.
 #[cfg(feature = "alloc")]
 #[allow(clippy::too_many_arguments)]
 pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
@@ -1766,26 +1828,72 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
                         index_alternate_order_2: 0,
                     });
                 }
-                // j>0 finalize (δ.denom mutation gated on (j1 != 0 ||
-                // j2 != 0), then β = conj(δ · β_lift) for the alternate
-                // index) is deferred and FAILS CLOSED. The C-ref
-                // convention (dim2id2iso.c:651-673) is captured verbatim
-                // in the ISA, but our doubled-rational representation
-                // differs from the C-ref bookkeeping, so a faithful port
-                // requires a convention reconciliation that cannot be
-                // verified this session: there is no C-ref source or
-                // per-function KAT on hand, and `find_uv` (our only
-                // proven oracle) only covers j=0. Returning a wrong β
-                // here would silently corrupt signatures, so we error
-                // rather than emit unverifiable crypto.
-                // [DEFERRED-VERIFY: follow-up S221 — needs a j>0-forcing
-                // fixture with a C-ref known-answer vector before this
-                // path may return Ok.]
-                return Err(Error::Unimplemented(
-                    "find_uv_alternate_orders: Bezout hit at an alternate order (j1>0 or j2>0); \
-                     the j>0 β finalize (δ.denom mutation + conj(δ · β_lift)) is deferred and \
-                     fails closed — no C-ref known-answer vector is available to verify the \
-                     doubled-rational convention reconciliation (S221).",
+                // S345: general j>0 β finalize. Port of dim2id2iso.c:641-673,
+                // reconciled to our rescaled-frame representation:
+                //
+                //   - A j=0 component reconstructs the original-ideal β the
+                //     same way the (0,0) path does — `(β' · δ).normalize()`
+                //     with the un-mutated `delta_rational` — because our
+                //     reduced_per_j[0] is the RESCALED reduced_id (C keeps the
+                //     original frame and never δ-multiplies a j=0 component;
+                //     our δ-multiply undoes the rescale).
+                //   - A j>0 component applies the C's mutated δ: the value is
+                //     `conj(smallest) / conj_ideal.norm` (the C `δ.denom /=
+                //     lideal.norm; δ.denom *= conj_ideal.norm` mutation — the
+                //     `/lideal.norm` cancels the setup `*ideal[0].norm` since
+                //     n(ideal[0]) = n(lideal)), then `β = conj((δ · β').normalize())`.
+                //
+                // The result is SELF-VERIFIED against the input ideal
+                // (`rational_quaternion_in_lideal`, the C's own
+                // `quat_lattice_contains` arbiter) before returning Ok; a
+                // reconciliation error fails closed instead of emitting
+                // unverified crypto. No cheap j>0 fixture exists (j>0 fires
+                // only on real-L1 non-principal inputs where j=0 misses), so
+                // the Ok path's first real exercise is the heavy real-L1 run
+                // / item-8 keygen KAT.
+                let conj_ideal_norm = conj_reduced_id.cached_norm;
+                let build_beta = |j: usize, idx: usize| -> RationalQuaternion<LIMBS> {
+                    let bp_o0 = mat_4x4_transpose_eval::<LIMBS>(
+                        &reduced_per_j[j].basis,
+                        &short_vecs_per_j[j][idx].vec,
+                    );
+                    let bp = RationalQuaternion {
+                        num: o0_basis_to_standard_doubled::<LIMBS>(&bp_o0),
+                        denom: two_uint.wrapping_mul(&reduced_per_j[j].denom),
+                    };
+                    if j == 0 {
+                        bp.mul(&delta_rational, p).normalize()
+                    } else {
+                        let delta_finalize = RationalQuaternion {
+                            num: delta_rational.conjugate().num,
+                            denom: delta_rational.denom.wrapping_mul(&conj_ideal_norm),
+                        };
+                        delta_finalize.mul(&bp, p).normalize().conjugate()
+                    }
+                };
+                let beta1 = build_beta(j1, b.index_sol1);
+                let beta2 = build_beta(j2, b.index_sol2);
+
+                // Self-verification gate (WIDE=32: adj·x·lat_denom ~2^1246 at
+                // real L1 overflows Int<16>).
+                if rational_quaternion_in_lideal::<LIMBS, 32>(&beta1, lideal)
+                    && rational_quaternion_in_lideal::<LIMBS, 32>(&beta2, lideal)
+                {
+                    return Ok(FindUvResult {
+                        u: b.u,
+                        v: b.v,
+                        beta1,
+                        beta2,
+                        d1: small_norms_per_j[j1][b.index_sol1],
+                        d2: small_norms_per_j[j2][b.index_sol2],
+                        index_alternate_order_1: j1,
+                        index_alternate_order_2: j2,
+                    });
+                }
+                return Err(Error::NoBezoutSolution(
+                    "find_uv_alternate_orders: j>0 β finalize produced a β not contained in \
+                     the input ideal (self-verification gate rejected) — convention/construction \
+                     mismatch; failing closed rather than emit unverified crypto.",
                 ));
             }
         }
@@ -2282,6 +2390,105 @@ mod find_uv_tests {
                 Ok(_) | Err(Error::NoBezoutSolution(_)) | Err(Error::Unimplemented(_))
             ),
             "real-prime find_uv_alternate_orders must return cleanly (no panic); got {result:?}",
+        );
+    }
+
+    /// S345: the LIMBS=16 real-L1 exercise the S232 test (LIMBS=8, GSO
+    /// overflow) was waiting for. Runs `find_uv_alternate_orders` at the
+    /// spine width (LIMBS=16) on a real-prime-scale input with ALL SIX real
+    /// `ALTERNATE_CONNECTING_IDEALS`, production target `2^248`, per-j
+    /// wide-reduce at WIDE=64.
+    ///
+    /// **S345 RESULT:** runs to completion (~9s) and returns `Ok(index 0,0)`
+    /// — the first real-L1 confirmation that the per-j wide-reduce machinery
+    /// (item 4's "wide-Int reduce") works end-to-end at the spine width,
+    /// resolving the S232/S339+ block. The earlier WIDE=64 attempt panicked
+    /// in the integer-GSO (`int_div_exact` non-exact, lattice.rs:97) — that
+    /// was pure WIDTH insufficiency, NOT degenerate input and NOT a
+    /// "GSO-runs-narrow" bug (`lll_4x4_in_metric_wide` already runs the GSO
+    /// at `WIDE`): the per-j product Gram's GSO determinant intermediates
+    /// exceed 4096 bits at real L1, so `WIDE = 128` (8192-bit) is required.
+    /// The `(0,0)` index is expected for this PRINCIPAL fixture (it rescales
+    /// to `O_0`, so the alternate-order rotation is trivial and j=0 wins) —
+    /// so this validates the SETUP but does NOT yet exercise the S345 j>0 β
+    /// finalize, which still needs a non-principal input where j=0's
+    /// enumeration misses. Heavy.
+    #[ignore = "heavy real-L1 (~9s): validates the per-j wide-reduce runs to completion at LIMBS=16/WIDE=128 (S345)"]
+    #[test]
+    fn s345_find_uv_alternate_orders_real_l1_limbs16_all_six_alts() {
+        use crate::quaternion::connecting_ideals::{
+            alternate_connecting_ideal_0_l1, alternate_connecting_ideal_1_l1,
+            alternate_connecting_ideal_2_l1, alternate_connecting_ideal_3_l1,
+            alternate_connecting_ideal_4_l1, alternate_connecting_ideal_5_l1,
+        };
+        use crate::quaternion::ideal::LeftIdeal;
+        use crate::quaternion::lattice::widen_int_lattice;
+        use crate::quaternion::o0_mul::principal_left_ideal_from_o0;
+
+        // Widen a LeftIdeal<8> → LeftIdeal<16> (basis + denom + cached_norm).
+        let widen = |id: &LeftIdeal<8>| -> LeftIdeal<16> {
+            let mut basis = [[Int::<16>::from_i64(0); 4]; 4];
+            for r in 0..4 {
+                for c in 0..4 {
+                    basis[r][c] = widen_int_lattice::<8, 16>(&id.basis[r][c]);
+                }
+            }
+            LeftIdeal::<16>::with_denom_and_norm(
+                basis,
+                id.denom.resize::<16>(),
+                id.cached_norm.resize::<16>(),
+            )
+        };
+
+        let p: Uint<16> = crate::params::lvl1::prime().resize::<16>();
+        // Real-prime-scale principal input (cached_norm ~p²); the S232 fixture.
+        let gamma = [
+            Int::<16>::from_i64(1),
+            Int::<16>::from_i64(0),
+            Int::<16>::from_i64(1),
+            Int::<16>::from_i64(0),
+        ];
+        let lideal = principal_left_ideal_from_o0::<16>(&gamma, &p);
+        assert!(
+            lideal.cached_norm > Uint::<16>::from_u64(u64::MAX),
+            "fixture must be real-prime-scale (cached_norm ≫ 2^64)",
+        );
+
+        let alts = [
+            widen(&alternate_connecting_ideal_0_l1()),
+            widen(&alternate_connecting_ideal_1_l1()),
+            widen(&alternate_connecting_ideal_2_l1()),
+            widen(&alternate_connecting_ideal_3_l1()),
+            widen(&alternate_connecting_ideal_4_l1()),
+            widen(&alternate_connecting_ideal_5_l1()),
+        ];
+
+        let target = *Uint::<16>::ONE.shl_vartime(248).as_int(); // 2^F, F=248
+        let result = find_uv_alternate_orders::<16, 128>(
+            &target,
+            &lideal,
+            &p,
+            &alts,
+            crate::params::Level1::FINDUV_BOX_SIZE,
+        );
+
+        match &result {
+            Ok(r) => {
+                // Ok ⇒ the containment self-gate passed for both β.
+                std::eprintln!(
+                    "S345 find_uv_alt: Ok, index_alternate_order_1={}, index_alternate_order_2={}",
+                    r.index_alternate_order_1,
+                    r.index_alternate_order_2,
+                );
+            }
+            Err(e) => std::eprintln!("S345 find_uv_alt: Err({e:?})"),
+        }
+        assert!(
+            matches!(
+                &result,
+                Ok(_) | Err(Error::NoBezoutSolution(_)) | Err(Error::Unimplemented(_))
+            ),
+            "real-L1 LIMBS=16 find_uv_alternate_orders must return cleanly (no panic); got {result:?}",
         );
     }
 
