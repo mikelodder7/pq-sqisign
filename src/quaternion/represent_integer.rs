@@ -341,6 +341,228 @@ pub fn find_quaternion_in_full_order_with_norm_wide<const LIMBS: usize, R: Crypt
     None
 }
 
+/// Uniform `Uint<N>` in `[a, b]` from a `CryptoRng`. A non-kat-gated copy of
+/// `crate::rng::ibz_rand_interval` (which lives in the kat-only `rng` module
+/// alongside the NIST DRBG) — byte-identical draw logic, so a future
+/// byte-exact path can drive it with the DRBG and match the C
+/// `ibz_rand_interval`. Used by [`represent_integer_over_alt_order`], whose
+/// bounds exceed the `i64` range of `sample::sample_int_in_range`.
+#[cfg(feature = "alloc")]
+fn rand_uint_in_interval<const N: usize, R: CryptoRng>(
+    rng: &mut R,
+    a: &Uint<N>,
+    b: &Uint<N>,
+) -> Uint<N> {
+    let bmina = b.wrapping_sub(a);
+    if bmina == Uint::<N>::ZERO {
+        return *a;
+    }
+    let len_bits = bmina.bits_vartime();
+    let len_bytes = len_bits.div_ceil(8) as usize;
+    let total_bytes = N * 8;
+    let mask = if (len_bits as usize) >= total_bytes * 8 {
+        Uint::<N>::MAX
+    } else {
+        Uint::<N>::ONE
+            .shl_vartime(len_bits)
+            .wrapping_sub(&Uint::<N>::ONE)
+    };
+    let mut buf = alloc::vec::from_elem(0u8, total_bytes);
+    loop {
+        rng.fill_bytes(&mut buf[..len_bytes]);
+        let cand = Uint::<N>::from_le_slice(&buf) & mask;
+        if cand <= bmina {
+            return cand.wrapping_add(a);
+        }
+    }
+}
+
+/// Represent an odd integer `n_gamma` as the reduced norm of a primitive
+/// element of the ALTERNATE extremal order `order` (`z²=−q, t²=−p`, `q≠1`).
+///
+/// Port of the C `quat_represent_integer` (normeq.c:81) in its `non_diag = 1`
+/// mode — the form `_fixed_degree_isogeny_impl` calls for an alternate order
+/// (dim2id2iso.c:83). The order's reduced-norm form on order coords
+/// `(x, y, z, t)` is `x² + q·y² + p·(z² + q·t²)`. With `non_diag` the search
+/// targets `4·n_gamma`:
+///
+/// 1. sample `z ∈ [1, √(4n/p − q)]`,
+/// 2. sample `t ∈ [1, √((4n − p·z²)/(q·p))]`,
+/// 3. `T = 4n − p·(z² + q·t²)`; when `T` is prime, solve `x² + q·y² = T` by
+///    Cornacchia,
+/// 4. accept iff `gcd(x, y, z, t) = 2` (the ×4 lands the coords in the
+///    all-even-but-not-all-÷4 class, so `(x,y,z,t)/2` has norm `n_gamma`).
+///
+/// Returns the PRIMITIVE γ in STANDARD `(1,i,j,k)` coordinates (numerator)
+/// plus the order denominator: `γ = order_basis · ((x,y,z,t)/2)`,
+/// `denom = order_denom`. The standalone postcondition (no spine needed) is
+/// `Quaternion::norm(γ_num) = n_gamma · order_denom²` and `γ ∈ order`.
+///
+/// `None` if `n_gamma` is even, if `4·n_gamma/p ≤ q` (empty search space), or
+/// if the trial budget is exhausted. Byte-exactness vs the C DRBG draw order
+/// is NOT claimed here (defers to item 8); any `CryptoRng` is accepted.
+#[cfg(feature = "alloc")]
+#[allow(dead_code, clippy::too_many_arguments, clippy::needless_range_loop)]
+pub fn represent_integer_over_alt_order<const LIMBS: usize, R: CryptoRng>(
+    order: &crate::quaternion::extremal_orders::AltExtremalOrder,
+    n_gamma: &Uint<LIMBS>,
+    p: &Uint<LIMBS>,
+    max_trials: usize,
+    witnesses: &[Uint<LIMBS>],
+    rng: &mut R,
+) -> Option<(Quaternion<LIMBS>, Int<LIMBS>)> {
+    // n_gamma must be odd.
+    if n_gamma.as_words()[0] & 1 == 0 {
+        return None;
+    }
+    let q = Uint::<LIMBS>::from_u64(u64::from(order.q));
+    let p_nz = NonZero::new(*p).into_option()?;
+    let qp_nz = NonZero::new(q.wrapping_mul(p)).into_option()?;
+
+    // adjusted = 4·n_gamma (non_diag mode).
+    let adjusted = n_gamma.shl_vartime(2);
+
+    // bound = floor_sqrt(adjusted/p − q); require adjusted/p > q.
+    let adj_over_p = adjusted.div_rem_vartime(&p_nz).0;
+    if adj_over_p <= q {
+        return None;
+    }
+    let bound = adj_over_p.wrapping_sub(&q).floor_sqrt_vartime();
+    if bound == Uint::<LIMBS>::ZERO {
+        return None;
+    }
+    let one_u = Uint::<LIMBS>::ONE;
+
+    for _ in 0..max_trials {
+        // z = coeffs[2] ∈ [1, bound].
+        let z = rand_uint_in_interval::<LIMBS, R>(rng, &one_u, &bound);
+        let z_sq = z.wrapping_mul(&z);
+        let p_z_sq = p.wrapping_mul(&z_sq);
+        if adjusted <= p_z_sq {
+            continue;
+        }
+        // bound2 = floor_sqrt((adjusted − p·z²)/(q·p)).
+        let bound2 = adjusted
+            .wrapping_sub(&p_z_sq)
+            .div_rem_vartime(&qp_nz)
+            .0
+            .floor_sqrt_vartime();
+        if bound2 == Uint::<LIMBS>::ZERO {
+            continue;
+        }
+        // t = coeffs[3] ∈ [1, bound2].
+        let t = rand_uint_in_interval::<LIMBS, R>(rng, &one_u, &bound2);
+        let t_sq = t.wrapping_mul(&t);
+
+        // T = adjusted − p·(z² + q·t²).
+        let inner = z_sq.wrapping_add(&q.wrapping_mul(&t_sq));
+        let p_inner = p.wrapping_mul(&inner);
+        if adjusted <= p_inner {
+            continue;
+        }
+        let cornacchia_target = adjusted.wrapping_sub(&p_inner);
+
+        // T prime?  Then solve x² + q·y² = T.
+        if !is_probable_prime_with_witnesses::<LIMBS>(&cornacchia_target, witnesses) {
+            continue;
+        }
+        let ct_nz = match NonZero::new(cornacchia_target).into_option() {
+            Some(v) => v,
+            None => continue,
+        };
+        let (x, y) = match cornacchia_classical_uint::<LIMBS>(&q, &ct_nz) {
+            Some(xy) => xy,
+            None => continue,
+        };
+
+        // Build the order element in the ORTHOGONAL `(1, z_ord, t_ord,
+        // t_ord·z_ord)` frame (C `quat_order_elem_create`, normeq.c:40):
+        //   γ = x·1 + y·z_ord + z·t_ord + t·(t_ord·z_ord),
+        // where z_ord = order.z/z_denom (z_ord²=−q), t_ord = order.t/t_denom
+        // (t_ord²=−p). Common denominator D = z_denom·t_denom; the numerator is
+        // assembled by quaternion arithmetic. (Note: the order's HNF basis is
+        // NOT this orthogonal frame, so the C `content` is the gcd of γ's
+        // HNF-basis coords — computed by make_primitive below — NOT gcd(x,y,z,t).)
+        let xi = Int::<LIMBS>::from_words(x.to_words());
+        let yi = Int::<LIMBS>::from_words(y.to_words());
+        let zi = Int::<LIMBS>::from_words(z.to_words());
+        let ti = Int::<LIMBS>::from_words(t.to_words());
+        let zq = Quaternion::<LIMBS>::new(
+            order.z.a.resize::<LIMBS>(),
+            order.z.b.resize::<LIMBS>(),
+            order.z.c.resize::<LIMBS>(),
+            order.z.d.resize::<LIMBS>(),
+        );
+        let tq = Quaternion::<LIMBS>::new(
+            order.t.a.resize::<LIMBS>(),
+            order.t.b.resize::<LIMBS>(),
+            order.t.c.resize::<LIMBS>(),
+            order.t.d.resize::<LIMBS>(),
+        );
+        let z_den = order.z_denom.resize::<LIMBS>();
+        let t_den = order.t_denom.resize::<LIMBS>();
+        let d_common = z_den.wrapping_mul(&t_den);
+        let scale = |qq: &Quaternion<LIMBS>, k: &Int<LIMBS>| {
+            Quaternion::<LIMBS>::new(
+                qq.a.wrapping_mul(k),
+                qq.b.wrapping_mul(k),
+                qq.c.wrapping_mul(k),
+                qq.d.wrapping_mul(k),
+            )
+        };
+        let z0 = Int::<LIMBS>::from_i64(0);
+        let term0 = Quaternion::<LIMBS>::new(xi.wrapping_mul(&d_common), z0, z0, z0);
+        let term1 = scale(&zq, &yi.wrapping_mul(&t_den)); // y·z_ord over D
+        let term2 = scale(&tq, &zi.wrapping_mul(&z_den)); // z·t_ord over D
+        let tz = tq.mul(&zq, p); // t_ord·z_ord (numerator; denom D)
+        let term3 = scale(&tz, &ti); // t·(t_ord·z_ord) over D
+        let elem_num = term0.add(&term1).add(&term2).add(&term3);
+
+        // HNF-basis coords + content (C `quat_alg_make_primitive`); require
+        // content == 2 (so the primitive element has norm n_gamma = 4n/4).
+        // The order math runs at width 8/16 (S344 primitive); γ's coords
+        // (~√(4n) ≤ 2^246 at L1) fit Int<8>.
+        let elem8 = Quaternion::<8>::new(
+            elem_num.a.resize::<8>(),
+            elem_num.b.resize::<8>(),
+            elem_num.c.resize::<8>(),
+            elem_num.d.resize::<8>(),
+        );
+        let Some((primitive, content)) =
+            crate::quaternion::extremal_orders::make_primitive_over_alt_order(
+                order,
+                &elem8,
+                &d_common.resize::<8>(),
+            )
+        else {
+            continue;
+        };
+        if content != Int::<16>::from_i64(2) {
+            continue;
+        }
+
+        // γ_final = order_basis · primitive (standard-coords numerator),
+        // denom = order_denom.
+        let mut basis16 = [[Int::<16>::from_i64(0); 4]; 4];
+        for r in 0..4 {
+            for c in 0..4 {
+                basis16[r][c] = order.order_basis[r][c].resize::<16>();
+            }
+        }
+        let g16 = crate::quaternion::lattice::mat_4x4_eval::<16>(&basis16, &primitive);
+        return Some((
+            Quaternion::<LIMBS>::new(
+                g16[0].resize::<LIMBS>(),
+                g16[1].resize::<LIMBS>(),
+                g16[2].resize::<LIMBS>(),
+                g16[3].resize::<LIMBS>(),
+            ),
+            order.order_denom.resize::<LIMBS>(),
+        ));
+    }
+    None
+}
+
 /// Sample a random `O_0`-left-ideal of given norm, at `Uint<LIMBS>` precision.
 ///
 /// **Stub — S178 ships signature only; body deferred to S179+.** This is
@@ -805,9 +1027,9 @@ pub fn sample_fast_path_gen<const LIMBS: usize, R: CryptoRng>(
 
     for _ in 0..max_trials {
         // 3 DRBG draws in order b, c, d over [0, norm−1] (coord[0] = 0).
-        let b = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &zero, &n_minus_1);
-        let c = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &zero, &n_minus_1);
-        let d = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &zero, &n_minus_1);
+        let b = rand_uint_in_interval::<LIMBS, R>(rng, &zero, &n_minus_1);
+        let c = rand_uint_in_interval::<LIMBS, R>(rng, &zero, &n_minus_1);
+        let d = rand_uint_in_interval::<LIMBS, R>(rng, &zero, &n_minus_1);
 
         // n_temp = (b² + p·(c² + d²)) mod norm  (a = 0 in this trace-zero seed).
         let b2 = b.square_mod_vartime(&norm_nz);
@@ -876,10 +1098,10 @@ pub fn sample_secret_gen<const LIMBS: usize, R: CryptoRng>(
     let one = Uint::<LIMBS>::ONE;
     for _ in 0..max_trials {
         // 4 DRBG draws in order coord[0..3] over [1, norm].
-        let r0 = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &one, norm);
-        let r1 = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &one, norm);
-        let r2 = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &one, norm);
-        let r3 = crate::rng::ibz_rand_interval::<LIMBS, R>(rng, &one, norm);
+        let r0 = rand_uint_in_interval::<LIMBS, R>(rng, &one, norm);
+        let r1 = rand_uint_in_interval::<LIMBS, R>(rng, &one, norm);
+        let r2 = rand_uint_in_interval::<LIMBS, R>(rng, &one, norm);
+        let r3 = rand_uint_in_interval::<LIMBS, R>(rng, &one, norm);
         let rerand =
             Quaternion::<LIMBS>::new(*r0.as_int(), *r1.as_int(), *r2.as_int(), *r3.as_int());
         let n_rerand = rerand.norm(p).abs();
@@ -1540,5 +1762,71 @@ mod tests {
         )
         .expect("L5 (LIMBS=16) fast path must produce ideal");
         assert_eq!(r5.cached_norm, Uint::<8>::from_u64(11));
+    }
+
+    /// S345: `represent_integer_over_alt_order` finds a primitive element of
+    /// the alternate extremal order 0 (q=5) with the target norm, at the real
+    /// L1 prime. Standalone arbiter (no spine): the returned γ satisfies the
+    /// reduced-norm postcondition `N(γ_num) = n · order_denom²` AND lies in the
+    /// order (`alt_order_coords_of` → Some). Loops a few odd targets just above
+    /// `p·q/4` so at least one is representable within the trial budget. Heavy.
+    #[cfg(feature = "kat")]
+    #[ignore = "heavy: real-L1 represent_integer over an alternate order (S345)"]
+    #[test]
+    fn represent_integer_over_alt_order_0_norm_and_membership() {
+        use crate::quaternion::extremal_orders::{
+            alt_order_coords_of, alternate_extremal_order_0_l1,
+        };
+        use crate::rng::NistPqcRng;
+        const L: usize = 16;
+
+        let p = crate::params::lvl1::prime().resize::<L>();
+        let order = alternate_extremal_order_0_l1(); // q = 5
+        let wit: [Uint<L>; 12] =
+            [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
+
+        // n ~ 2^370 — the realistic scale of `u·(2^length − u)` in the
+        // isogeny (n ≫ p), giving a large `√(4n/p − q)` search space. (At
+        // n ~ 2^256 the bound is ~15 ⇒ only ~100 distinct (z,t) candidates,
+        // so a budget of trials just resamples them — not enough density.)
+        let base = Uint::<L>::ONE.shl_vartime(370);
+        let mut found = false;
+        for k in 0..4u64 {
+            let mut rng = NistPqcRng::new(&[0x5a + k as u8; 48]);
+            let n = base.wrapping_add(&Uint::<L>::from_u64(2 * k + 1)); // odd
+            let Some((gamma, denom)) =
+                represent_integer_over_alt_order::<L, _>(&order, &n, &p, 1 << 14, &wit, &mut rng)
+            else {
+                continue;
+            };
+
+            // N(γ_num) == n · order_denom².
+            let norm = gamma.norm(&p);
+            let denom_sq = denom.wrapping_mul(&denom);
+            let n_int = Int::<L>::from_words(n.to_words());
+            assert_eq!(
+                norm,
+                n_int.wrapping_mul(&denom_sq),
+                "N(gamma_num) must equal n_gamma · order_denom² (k={k})",
+            );
+
+            // γ ∈ the alternate order (coords narrow to <8>).
+            let g8 = Quaternion::<8>::new(
+                gamma.a.resize::<8>(),
+                gamma.b.resize::<8>(),
+                gamma.c.resize::<8>(),
+                gamma.d.resize::<8>(),
+            );
+            assert!(
+                alt_order_coords_of(&order, &g8, &denom.resize::<8>()).is_some(),
+                "gamma must lie in the alternate extremal order (k={k})",
+            );
+            found = true;
+            break;
+        }
+        assert!(
+            found,
+            "represent_integer_over_alt_order must succeed for at least one target",
+        );
     }
 }
