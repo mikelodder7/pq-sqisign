@@ -193,20 +193,20 @@ pub fn order_times_gen<const LIMBS: usize>(
 ///
 /// Faithful sequence mirroring the C:
 /// 1. `L1 = O_0·γ` — [`order_times_gen`] builds the doubled-`O_0` columns
-///    times `gen_a` (denom `2·gen_denom`), then [`quat_lattice_reduce_denom`]
+///    times `gen_a` (denom `2·gen_denom`), then `quat_lattice_reduce_denom`
 ///    (the C `create_principal`'s reduce; the intermediate HNF is skipped
-///    because [`quat_lattice_add`] re-HNFs and its output is canonical).
+///    because `quat_lattice_add` re-HNFs and its output is canonical).
 /// 2. `L2 = N·O_0` — the doubled-`O_0` standard column basis scaled by `N`,
 ///    denom `2` (the C `ON` lattice, deliberately un-reduced).
-/// 3. `I = L1 + L2` via [`quat_lattice_add`].
+/// 3. `I = L1 + L2` via `quat_lattice_add`.
 /// 4. norm `= √(|det(basis)| / denom⁴)` (`quat_lideal_norm` = `√[O_0 : I]`).
 ///
 /// Because every step downstream of the rational lattices is canonical, the
 /// returned `(basis, denom, norm)` is byte-exact with the C regardless of the
 /// internal `O_0` representation — the same canonicity guarantee that frees
-/// [`quat_lattice_add`] and [`hnf_mod_core`](crate::quaternion::hnf::hnf_mod_core).
+/// `quat_lattice_add` and [`hnf_mod_core`](crate::quaternion::hnf::hnf_mod_core).
 ///
-/// **Width note**: the determinants inside [`quat_lattice_add`] reach
+/// **Width note**: the determinants inside `quat_lattice_add` reach
 /// ≈ `(N)^4`; pick `LIMBS` wide enough (≈ 36 limbs at keygen scale).
 #[allow(dead_code)]
 pub fn quat_lideal_create<const LIMBS: usize>(
@@ -336,7 +336,7 @@ pub fn quat_make_primitive_o0<const LIMBS: usize>(
 /// Factor a vector of `O_0`-basis coordinates into its primitive part and
 /// content: `content = gcd(|coords|)`, `primitive[i] = coords[i] / content`
 /// (exact, sign-preserved). The content-extraction half of
-/// [`quat_alg_make_primitive`].
+/// `quat_alg_make_primitive`.
 ///
 /// Used directly when an element already arrives in `O_0` coordinates — e.g.
 /// `RepresentInteger` (`find_quaternion_in_full_order_with_norm_wide`) returns

@@ -253,6 +253,288 @@ pub(crate) fn ec_biscalar_mul<F: BaseField>(
     xdblmul(basis_p, scalar_p, basis_q, scalar_q, basis_pmq, kbits, a24)
 }
 
+/// Clear the odd cofactor from a point so it has maximal even order, then
+/// double down to exact order `2^f`. Port of the C reference
+/// `clear_cofactor_for_maximal_even_order` (`src/ec/ref/lvlx/basis.c`).
+///
+/// lvl1 specifics: `#E(F_{p²}) = (p+1)² = (5·2^248)²`, so the odd cofactor is
+/// `p_cofactor_for_2f = 5` and `TORSION_EVEN_POWER = 248`. We multiply by 5
+/// (leaving order dividing `2^248`) then double `248 − f` times. A
+/// foundational primitive for `ec_curve_to_basis_2f[_to_hint]` (keygen
+/// `hint_pk` + verify challenge/aux bases).
+#[allow(dead_code)]
+pub(crate) fn clear_cofactor_for_maximal_even_order<F: BaseField>(
+    p: &MontgomeryPoint<F>,
+    curve: &crate::ec::montgomery::MontgomeryCurve<F>,
+    f: usize,
+) -> MontgomeryPoint<F> {
+    const TORSION_EVEN_POWER: usize = 248;
+    const ODD_COFACTOR: u8 = 5; // p_cofactor_for_2f, lvl1
+    debug_assert!(f <= TORSION_EVEN_POWER);
+    let a24 = curve.a24();
+    // [5]·P clears the odd cofactor (order now divides 2^248).
+    let p_cleared = p.ladder(&[ODD_COFACTOR], &a24);
+    // Double down to exact order 2^f.
+    let n_dbl = u32::try_from(TORSION_EVEN_POWER - f).expect("f <= TORSION_EVEN_POWER ⇒ fits u32");
+    curve.to_a24().x_double_n(&p_cleared, n_dbl)
+}
+
+/// Build the base-field element equal to the small non-negative integer `n`
+/// (double-and-add from `one()`). Port of the C reference `fp_set_small`,
+/// used by the entangled-basis NQR-factor search.
+#[allow(dead_code)]
+pub(crate) fn fp_small<F: BaseField>(n: u32) -> F {
+    let mut acc = F::zero();
+    let mut base = F::one();
+    let mut k = n;
+    while k > 0 {
+        if k & 1 == 1 {
+            acc = acc.add(&base);
+        }
+        base = base.double();
+        k >>= 1;
+    }
+    acc
+}
+
+/// `y · n` for a small scalar `n` (double-and-add). Port of the C reference
+/// `fp2_mul_small` used by the entangled-basis x(P) selectors.
+#[allow(dead_code)]
+pub(crate) fn fp2_mul_small<F: BaseField>(y: &Fp2<F>, n: u32) -> Fp2<F> {
+    let mut acc = Fp2::<F>::zero();
+    let mut base = *y;
+    let mut k = n;
+    while k > 0 {
+        if k & 1 == 1 {
+            acc = acc.add(&base);
+        }
+        base = base.double();
+        k >>= 1;
+    }
+    acc
+}
+
+/// `Choice::TRUE` iff affine `x` is a valid x-coordinate on the (normalized,
+/// `C = 1`) Montgomery curve `y² = x³ + A x² + x`. Port of C `is_on_curve`
+/// (`basis.c`): returns `is_square(x³ + A·x² + x)`.
+#[allow(dead_code)]
+pub(crate) fn is_on_curve<F: BaseField>(x: &Fp2<F>, curve_a: &Fp2<F>) -> Choice {
+    // ((x + A)·x + 1)·x = x³ + A·x² + x.
+    let t0 = x.add(curve_a).mul(x).add(&Fp2::<F>::one()).mul(x);
+    t0.is_square()
+}
+
+/// Find a valid x(P) of the form `n·A` for entangled-basis generation when
+/// `A` is a non-quadratic-residue. Port of C `find_nA_x_coord` (`basis.c`):
+/// start at `n = start`, set `x = n·A`, increment `x` by `A` until
+/// `is_on_curve(x)`. Returns `(x, hint)` where `hint = n` if `n < 128`, else
+/// `0` (the rare "not found in 127 tries" fallback signal). Caller must ensure
+/// `A` is a NQR (C `find_nA_x_coord`).
+#[allow(dead_code)]
+pub(crate) fn find_na_x_coord<F: BaseField>(curve_a: &Fp2<F>, start: u8) -> (Fp2<F>, u8) {
+    let mut n: u32 = u32::from(start);
+    let mut x = fp2_mul_small(curve_a, n);
+    let mut guard = 0u32;
+    while !bool::from(is_on_curve(&x, curve_a)) {
+        x = x.add(curve_a);
+        n += 1;
+        guard += 1;
+        // ~2^16 attempts before giving up (cryptographically negligible).
+        if guard > 65_535 {
+            break;
+        }
+    }
+    let hint = if n < 128 {
+        u8::try_from(n).expect("n < 128 ⇒ fits u8")
+    } else {
+        0
+    };
+    (x, hint)
+}
+
+/// Find a valid x(P) of the form `−A/(1 + i·b)` for entangled-basis generation
+/// when `A` is a quadratic residue. Port of C `find_nqr_factor` (`basis.c`):
+/// search `b = n − 1 ≥ start − 1` for the first `b` with `1 + b²` a non-residue
+/// in `Fp` (so `1 + i·b` is a non-residue in `Fp2`) AND with `−A/(1 + i·b)` on
+/// the curve, equivalently `A²·(z − 1) − z²` a non-residue for `z = 1 + i·b`
+/// (avoids an inversion pre-check). Returns `(x, hint)` where `hint = b` if
+/// `n ≤ 128`, else `0` (the rare "not found" fallback signal). Caller must
+/// ensure `A` is a QR (C `find_nqr_factor`).
+#[allow(dead_code)]
+pub(crate) fn find_nqr_factor<F: BaseField>(curve_a: &Fp2<F>, start: u8) -> (Fp2<F>, u8) {
+    let a2 = curve_a.square();
+    let mut n: u32 = u32::from(start);
+    let mut guard = 0u32;
+    let z = loop {
+        // Advance n until 1 + b² (b = n − 1) is a non-residue in Fp.
+        loop {
+            let tmp = fp_small::<F>(n.wrapping_mul(n).wrapping_add(1));
+            let is_sq = bool::from(tmp.is_square());
+            n += 1; // tracks b = n − 1
+            if !is_sq {
+                break;
+            }
+            guard += 1;
+            if guard > 65_535 {
+                break;
+            }
+        }
+        let b = fp_small::<F>(n - 1);
+        let zc = Fp2::<F>::new(F::one(), b); // z = 1 + i·b
+        let zm1 = Fp2::<F>::new(F::zero(), b); // z − 1 = i·b
+        // A²·(z − 1) − z²  non-residue  ⇔  x = −A/z on the curve.
+        let t0 = zm1.mul(&a2).sub(&zc.square());
+        guard += 1;
+        if !bool::from(t0.is_square()) || guard > 65_535 {
+            break zc;
+        }
+    };
+    // x = −A / z
+    let inv = z.invert().into_option().unwrap_or_else(Fp2::<F>::zero);
+    let x = curve_a.mul(&inv).negate();
+    let hint = if n <= 128 {
+        u8::try_from(n - 1).expect("n ≤ 128 ⇒ n−1 fits u8")
+    } else {
+        0
+    };
+    (x, hint)
+}
+
+/// Deterministic x-only point difference `x(P − Q)` from `x(P)`, `x(Q)`.
+/// Port of the C reference `difference_point` (`src/ec/ref/lvlx/basis.c`,
+/// Prop. 3 of eprint 2017/518), specialized to normalized curves (`C = 1`;
+/// `curve_a` is the affine `A`). The canonical `Fp2::sqrt` sign (S347 fix)
+/// makes the deterministic root choice match C. Used by `ec_curve_to_basis_2f`
+/// to set `PmQ` (which fixes `Q` above `(0,0)`).
+#[allow(dead_code)]
+pub(crate) fn difference_point<F: BaseField>(
+    p: &MontgomeryPoint<F>,
+    q: &MontgomeryPoint<F>,
+    curve_a: &Fp2<F>,
+) -> MontgomeryPoint<F> {
+    let t0 = p.x.mul(&q.x); // P.x·Q.x
+    let t1 = p.z.mul(&q.z); // P.z·Q.z
+    let bxx = t0.sub(&t1).square(); // C·(P.x·Q.x − P.z·Q.z)²   (C = 1)
+    let pxqz = p.x.mul(&q.z);
+    let pzqx = p.z.mul(&q.x);
+    // C·(P.x·Q.x + P.z·Q.z)(P.x·Q.z + P.z·Q.x) + 2A·(P.x·Q.z)(P.z·Q.x)
+    let bxz = t0
+        .add(&t1)
+        .mul(&pxqz.add(&pzqx))
+        .add(&pxqz.mul(&pzqx).mul(curve_a).double());
+    let bzz = pxqz.sub(&pzqx).square(); // C·(P.x·Q.z − P.z·Q.x)²   (C = 1)
+    // Normalize by conj(C)²·C·conj(P.z)²·conj(Q.z)²  →  conj(P.z)²·conj(Q.z)² (C=1)
+    // so the denominator is a fourth power (conj = Fp2 Frobenius).
+    let zn = p.z.frobenius().square().mul(&q.z.frobenius().square());
+    let bxx = bxx.mul(&zn);
+    let bxz = bxz.mul(&zn);
+    let bzz = bzz.mul(&zn);
+    // Solve the quadratic: PQ.x = Bxz + sqrt(Bxz² − Bxx·Bzz), PQ.z = Bzz.
+    let disc = bxz.square().sub(&bxx.mul(&bzz));
+    let s = disc.sqrt().into_option().unwrap_or_else(Fp2::<F>::zero);
+    MontgomeryPoint::new(bxz.add(&s), bzz)
+}
+
+/// Entangled basis for `E0` (`A = 0`), where the QR/NQR x-selectors do not
+/// apply. Port of C `ec_basis_E0_2f`: start from the precomputed full-order
+/// `E0` basis points, double both down to order `2^f`, and recompute `x(P−Q)`.
+/// lvl1-pinned (uses the lvl1 precomputed basis and `TORSION_EVEN_POWER = 248`).
+pub(crate) fn ec_basis_e0_2f(
+    f: usize,
+) -> crate::ec::couple::EcBasis<crate::params::lvl1::Fp1Element> {
+    use crate::isogeny::endomorphism::basis_e0_lvl1;
+    const TORSION_EVEN_POWER: usize = 248;
+    let (p, q, _) = basis_e0_lvl1();
+    let curve = crate::ec::montgomery::MontgomeryCurve::new(Fp2::zero());
+    let a24 = curve.to_a24();
+    let n = u32::try_from(TORSION_EVEN_POWER - f).expect("f ≤ TORSION_EVEN_POWER");
+    let p = a24.x_double_n(&p, n);
+    let q = a24.x_double_n(&q, n);
+    let pmq = difference_point(&p, &q, &curve.a);
+    crate::ec::couple::EcBasis::new(p, q, pmq)
+}
+
+/// Build a deterministic torsion basis `E[2^f] = <P, Q>` with `Q` above
+/// `(0 : 0)`, returning a compressed `u8` hint for fast recomputation. Port of
+/// C `ec_curve_to_basis_2f_to_hint` (`basis.c`). The Rust `MontgomeryCurve`
+/// already stores affine `A` (`C = 1`), so the C `ec_normalize_curve_and_A24`
+/// step is a no-op here. lvl1-pinned via `clear_cofactor_for_maximal_even_order`
+/// and `ec_basis_e0_2f`.
+///
+/// Hint layout: `(hint_P << 1) | hint_A`, where `hint_A` is the LSB recording
+/// whether `A` is a QR (which x-selector was used) and `hint_P` is the 7-bit
+/// selector hint. The stored basis relabels so that `p_minus_q` holds the point
+/// above `(0 : 0)`: `q = x(P − Q_raw)`, `p_minus_q = Q_raw`.
+pub(crate) fn ec_curve_to_basis_2f_to_hint(
+    curve: &crate::ec::montgomery::MontgomeryCurve<crate::params::lvl1::Fp1Element>,
+    f: usize,
+) -> (
+    crate::ec::couple::EcBasis<crate::params::lvl1::Fp1Element>,
+    u8,
+) {
+    use crate::params::lvl1::Fp1Element;
+    let a = curve.a;
+    if bool::from(a.is_zero()) {
+        return (ec_basis_e0_2f(f), 0);
+    }
+    let hint_a = bool::from(a.is_square());
+    let (px, hint) = if hint_a {
+        find_nqr_factor(&a, 1)
+    } else {
+        find_na_x_coord(&a, 1)
+    };
+    let one = Fp2::<Fp1Element>::one();
+    let p_raw = MontgomeryPoint::new(px, one);
+    let q_raw = MontgomeryPoint::new(a.add(&px).negate(), one);
+    let p = clear_cofactor_for_maximal_even_order(&p_raw, curve, f);
+    let q = clear_cofactor_for_maximal_even_order(&q_raw, curve, f);
+    // Relabel so the stored P−Q is Q (above (0,0)): basis.q = x(P−Q).
+    let r = difference_point(&p, &q, &a);
+    let basis = crate::ec::couple::EcBasis::new(p, r, q);
+    (basis, (hint << 1) | u8::from(hint_a))
+}
+
+/// Recompute the basis from a hint produced by [`ec_curve_to_basis_2f_to_hint`].
+/// Port of C `ec_curve_to_basis_2f_from_hint` (`basis.c`). Same relabeling and
+/// lvl1 pinning as the `_to_hint` variant.
+pub(crate) fn ec_curve_to_basis_2f_from_hint(
+    curve: &crate::ec::montgomery::MontgomeryCurve<crate::params::lvl1::Fp1Element>,
+    f: usize,
+    hint: u8,
+) -> crate::ec::couple::EcBasis<crate::params::lvl1::Fp1Element> {
+    use crate::params::lvl1::Fp1Element;
+    let a = curve.a;
+    if bool::from(a.is_zero()) {
+        return ec_basis_e0_2f(f);
+    }
+    let hint_a = (hint & 1) == 1;
+    let hint_p = hint >> 1;
+    let px = if hint_p == 0 {
+        // Rare fallback: selector found nothing in 127 tries; resume from 128.
+        if hint_a {
+            find_nqr_factor(&a, 128).0
+        } else {
+            find_na_x_coord(&a, 128).0
+        }
+    } else if hint_a {
+        // A is a QR: x(P) = −A / (1 + i·hint_P).
+        let z =
+            Fp2::<Fp1Element>::new(Fp1Element::one(), fp_small::<Fp1Element>(u32::from(hint_p)));
+        let inv = z.invert().into_option().unwrap_or_else(Fp2::zero);
+        a.mul(&inv).negate()
+    } else {
+        // A is a NQR: x(P) = hint_P · A.
+        fp2_mul_small(&a, u32::from(hint_p))
+    };
+    let one = Fp2::<Fp1Element>::one();
+    let p_raw = MontgomeryPoint::new(px, one);
+    let q_raw = MontgomeryPoint::new(a.add(&px).negate(), one);
+    let p = clear_cofactor_for_maximal_even_order(&p_raw, curve, f);
+    let q = clear_cofactor_for_maximal_even_order(&q_raw, curve, f);
+    let r = difference_point(&p, &q, &a);
+    crate::ec::couple::EcBasis::new(p, r, q)
+}
+
 #[cfg(test)]
 mod tests {
     extern crate alloc;
@@ -261,6 +543,179 @@ mod tests {
     use crate::params::lvl1::Fp1Element;
     use alloc::vec::Vec;
     use subtle::ConstantTimeEq;
+
+    #[test]
+    fn is_on_curve_distinguishes_e0_and_twist() {
+        use crate::isogeny::endomorphism::basis_e0_lvl1;
+        let zero = Fp2::<Fp1Element>::zero(); // E0: A = 0
+        // basis_e0.P is on E0.
+        let (p, _, _) = basis_e0_lvl1();
+        assert!(
+            bool::from(is_on_curve(&p.affine_x(), &zero)),
+            "basis_e0.P.x is on E0",
+        );
+        // An x whose x³+x is NQR lies on the twist, not E0. Use im≠0 (every
+        // element of Fp ⊂ Fp2 is a square in Fp2 for p≡3 mod 4, so real x
+        // never give a NQR).
+        let one = Fp2::<Fp1Element>::one();
+        let i = Fp2::<Fp1Element>::img();
+        let mut x = i;
+        let mut g = 0;
+        loop {
+            let fx = x.square().mul(&x).add(&x);
+            if !bool::from(fx.is_zero()) && !bool::from(fx.is_square()) {
+                break;
+            }
+            x = x.add(&one);
+            g += 1;
+            assert!(g < 2000);
+        }
+        assert!(!bool::from(is_on_curve(&x, &zero)), "twist x is not on E0");
+    }
+
+    #[test]
+    fn find_na_selects_on_curve_multiple_of_a() {
+        // Pick a NQR A — must have im≠0 (real elements are all QR in Fp2).
+        let one = Fp2::<Fp1Element>::one();
+        let mut a = Fp2::<Fp1Element>::img(); // i
+        let mut g = 0;
+        while bool::from(a.is_square()) {
+            a = a.add(&one);
+            g += 1;
+            assert!(g < 2000, "found a NQR A");
+        }
+        let (x, hint) = find_na_x_coord(&a, 1);
+        assert!(
+            bool::from(is_on_curve(&x, &a)),
+            "find_nA returns an on-curve x"
+        );
+        assert!(hint != 0, "hint found within 127 tries");
+        assert_eq!(
+            x,
+            fp2_mul_small(&a, u32::from(hint)),
+            "x = hint·A (n·A form)",
+        );
+    }
+
+    #[test]
+    fn find_nqr_factor_selects_on_curve_nqr_when_a_is_qr() {
+        // Build a curve whose A is a QR in Fp2: A = t².
+        let t = Fp2::<Fp1Element>::new(fp_small::<Fp1Element>(2), fp_small::<Fp1Element>(1));
+        let a = t.square();
+        assert!(bool::from(a.is_square()), "A is a QR");
+        let (x, hint) = find_nqr_factor(&a, 1);
+        // C debug invariants: the selected x is on the curve and is a NQR.
+        assert!(bool::from(is_on_curve(&x, &a)), "selected x is on curve");
+        assert!(!bool::from(x.is_square()), "selected x is a NQR");
+        assert!(hint != 0, "b found within 127 tries");
+        // hint = b reconstructs x = −A/(1 + i·b).
+        let z = Fp2::<Fp1Element>::new(Fp1Element::one(), fp_small::<Fp1Element>(u32::from(hint)));
+        let xr = a.mul(&z.invert().into_option().unwrap()).negate();
+        assert_eq!(x, xr, "hint reconstructs x = −A/(1 + i·b)");
+    }
+
+    #[test]
+    fn ec_basis_e0_2f_full_order_matches_precomputed() {
+        use crate::isogeny::endomorphism::basis_e0_lvl1;
+        let (p, q, _) = basis_e0_lvl1();
+        // f = TORSION_EVEN_POWER ⇒ zero doublings; P, Q are the precomputed pts.
+        let basis = ec_basis_e0_2f(248);
+        assert_eq!(basis.p.affine_x(), p.affine_x(), "E0 basis P matches");
+        assert_eq!(basis.q.affine_x(), q.affine_x(), "E0 basis Q matches");
+    }
+
+    #[test]
+    fn ec_curve_to_basis_2f_hint_round_trips() {
+        // QR-A curve: A = t² exercises the find_nqr_factor selector path.
+        let t = Fp2::<Fp1Element>::new(fp_small::<Fp1Element>(2), fp_small::<Fp1Element>(1));
+        let cqr = MontgomeryCurve::new(t.square());
+        let (b0, h0) = ec_curve_to_basis_2f_to_hint(&cqr, 248);
+        let b0r = ec_curve_to_basis_2f_from_hint(&cqr, 248, h0);
+        assert_eq!(h0 & 1, 1, "A QR ⇒ hint_A bit set");
+        assert_eq!(b0.p.affine_x(), b0r.p.affine_x(), "QR P round-trips");
+        assert_eq!(b0.q.affine_x(), b0r.q.affine_x(), "QR Q round-trips");
+        assert_eq!(
+            b0.p_minus_q.affine_x(),
+            b0r.p_minus_q.affine_x(),
+            "QR PmQ round-trips",
+        );
+
+        // NQR-A curve: exercises the find_na_x_coord selector path.
+        let one = Fp2::<Fp1Element>::one();
+        let mut a = Fp2::<Fp1Element>::img();
+        let mut g = 0;
+        while bool::from(a.is_square()) {
+            a = a.add(&one);
+            g += 1;
+            assert!(g < 2000, "found a NQR A");
+        }
+        let cnqr = MontgomeryCurve::new(a);
+        let (b1, h1) = ec_curve_to_basis_2f_to_hint(&cnqr, 248);
+        let b1r = ec_curve_to_basis_2f_from_hint(&cnqr, 248, h1);
+        assert_eq!(h1 & 1, 0, "A NQR ⇒ hint_A bit clear");
+        assert_eq!(b1.p.affine_x(), b1r.p.affine_x(), "NQR P round-trips");
+        assert_eq!(b1.q.affine_x(), b1r.q.affine_x(), "NQR Q round-trips");
+        assert_eq!(
+            b1.p_minus_q.affine_x(),
+            b1r.p_minus_q.affine_x(),
+            "NQR PmQ round-trips",
+        );
+    }
+
+    #[test]
+    fn difference_point_matches_e0_basis_pmq() {
+        // Ground truth: on E0 the canonical even basis carries (P, Q, P−Q),
+        // so difference_point(P, Q) must reproduce x(P−Q) = basis_e0.PmQ.
+        use crate::isogeny::endomorphism::basis_e0_lvl1;
+        let (p, q, pmq) = basis_e0_lvl1();
+        let a = Fp2::<Fp1Element>::zero(); // E0: A = 0
+        let computed = difference_point(&p, &q, &a);
+        assert_eq!(
+            computed.affine_x(),
+            pmq.affine_x(),
+            "difference_point reproduces basis_e0.PmQ",
+        );
+    }
+
+    #[test]
+    fn clear_cofactor_removes_odd_part_at_lvl1() {
+        use crate::ec::montgomery::MontgomeryPoint;
+        use crypto_bigint::Uint;
+        let curve = MontgomeryCurve::<Fp1Element>::e0();
+        let a24 = curve.a24();
+        let one = Fp2::<Fp1Element>::one();
+        let pow248 = Uint::<8>::ONE.shl_vartime(248).to_le_bytes();
+        // Find a point on E0 (y²=x³+x) that STILL has an odd factor after the
+        // even part is exhausted: [2^248]·P ≠ O ⟺ P's order has the odd 5.
+        // (#E0 = (p+1)² = (5·2^248)²; a generic point has order 5·2^248.)
+        let mut x = one.double();
+        let mut guard = 0;
+        let p = loop {
+            let fx = x.square().mul(&x).add(&x); // x³ + x
+            if !bool::from(fx.is_zero()) && bool::from(fx.is_square()) {
+                let cand = MontgomeryPoint::new(x, one);
+                if !bool::from(cand.ladder(&pow248, &a24).is_infinity()) {
+                    break cand; // [2^248]P ≠ O ⇒ odd factor present to clear
+                }
+            }
+            x = x.add(&one);
+            guard += 1;
+            assert!(guard < 4096, "found a point on E0 with an odd factor");
+        };
+        // Sanity: P itself is NOT killed by 2^248 (has the odd part).
+        assert!(!bool::from(p.ladder(&pow248, &a24).is_infinity()));
+        let cleared = clear_cofactor_for_maximal_even_order(&p, &curve, 248);
+        // After clearing the odd cofactor, order divides 2^248 …
+        assert!(
+            bool::from(cleared.ladder(&pow248, &a24).is_infinity()),
+            "clear_cofactor removes the odd part (order | 2^248)",
+        );
+        // … and the point is non-trivial (clearing didn't annihilate it).
+        assert!(
+            !bool::from(cleared.is_infinity()),
+            "cleared point is non-trivial",
+        );
+    }
 
     // Affine arithmetic on E_A : y² = x³ + A x² + x (B = 1) — independent
     // ground truth for the biladder. Points are `Some((x, y))` or `None` (∞).

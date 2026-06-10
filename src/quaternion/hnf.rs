@@ -330,9 +330,11 @@ pub fn hnf_mod_core<const LIMBS: usize>(
     use crypto_bigint::{NonZero, Uint};
     let n = generators.len();
     debug_assert!(n >= 4, "hnf_mod_core needs at least 4 generators");
+    debug_assert!(n <= 8, "hnf_mod_core supports up to 8 generators");
     let zero = Int::<LIMBS>::from_i64(0);
 
-    let mut a: Vec<[Int<LIMBS>; 4]> = generators.to_vec();
+    let mut a = [[zero; 4]; 8];
+    a[..n].copy_from_slice(&generators[..n]);
     let mut w = [[zero; 4]; 4];
     let mut m = *modulus;
 
@@ -551,19 +553,19 @@ pub fn quat_lattice_add<const LIMBS: usize>(
 
     // Generators are the COLUMNS (the C `generators[j][i] = tmp[i][j]`):
     // first 4 from scaled1, next 4 from scaled2.
-    let mut generators: Vec<[Int<LIMBS>; 4]> = Vec::with_capacity(8);
+    let mut generators = [[zero; 4]; 8];
     for j in 0..4 {
-        generators.push([scaled1[0][j], scaled1[1][j], scaled1[2][j], scaled1[3][j]]);
+        generators[j] = [scaled1[0][j], scaled1[1][j], scaled1[2][j], scaled1[3][j]];
     }
     for j in 0..4 {
-        generators.push([scaled2[0][j], scaled2[1][j], scaled2[2][j], scaled2[3][j]]);
+        generators[j + 4] = [scaled2[0][j], scaled2[1][j], scaled2[2][j], scaled2[3][j]];
     }
 
     let det1 = det_4x4::<LIMBS>(&scaled1);
     let det2 = det_4x4::<LIMBS>(&scaled2);
     let modulus = uint_gcd_vartime(&det1.abs(), &det2.abs());
 
-    let hnf = hnf_mod_core::<LIMBS>(&generators, &modulus);
+    let hnf = hnf_mod_core::<LIMBS>(&generators[..], &modulus);
     let denom_prod = denom1.wrapping_mul(denom2);
     quat_lattice_reduce_denom::<LIMBS>(&hnf, &denom_prod)
 }

@@ -13,8 +13,10 @@
 //! See spec §5 (Geometric Algorithms) for formula references.
 
 pub mod clapotis;
+#[cfg(feature = "alloc")]
 pub mod clapotis_spine;
 pub mod endomorphism;
+#[cfg(feature = "alloc")]
 pub mod fixed_degree;
 pub mod gluing;
 pub mod splitting;

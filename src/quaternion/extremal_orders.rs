@@ -38,6 +38,34 @@ pub struct AltExtremalOrder {
     pub q: u32,
 }
 
+/// The STANDARD order O_0 (C `EXTREMAL_ORDERS[0]` / `quat_lattice_O0_set`),
+/// expressed as an [`AltExtremalOrder`] so the C-faithful `quat_represent_integer`
+/// port (`represent_integer_over_alt_order`) can serve the index-0 keygen
+/// fixed-degree path. `q = 1`, `z = i` (`z² = −1 = −q`), `t = j` (`t² = −p`).
+/// Order lattice (std `(1,i,j,ij)` coords, COLUMN convention, denom 2) is the C
+/// `quat_lattice_O0_set`: `basis[0][0]=2, basis[1][1]=2, basis[2][2]=1,
+/// basis[1][2]=1, basis[3][3]=1, basis[0][3]=1` — i.e. `O_0 = ⟨1, i, (i+j)/2,
+/// (1+ij)/2⟩`.
+#[allow(dead_code)]
+pub fn standard_order_o0_l1() -> AltExtremalOrder {
+    let n = |x: i64| Int::<8>::from_i64(x);
+    AltExtremalOrder {
+        // basis[i][j] = coord i of generator j (column-major), over denom 2.
+        order_basis: [
+            [n(2), n(0), n(0), n(1)], // row 0: [0][0]=2, [0][3]=1
+            [n(0), n(2), n(1), n(0)], // row 1: [1][1]=2, [1][2]=1
+            [n(0), n(0), n(1), n(0)], // row 2: [2][2]=1
+            [n(0), n(0), n(0), n(1)], // row 3: [3][3]=1
+        ],
+        order_denom: n(2),
+        z: Quaternion::<8>::new(n(0), n(1), n(0), n(0)), // z = i, z² = −1 = −q
+        z_denom: n(1),
+        t: Quaternion::<8>::new(n(0), n(0), n(1), n(0)), // t = j, t² = −p
+        t_denom: n(1),
+        q: 1,
+    }
+}
+
 /// Alternate extremal order 0 (C `EXTREMAL_ORDERS[1]`), q = 5.
 #[allow(dead_code)]
 pub fn alternate_extremal_order_0_l1() -> AltExtremalOrder {

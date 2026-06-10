@@ -189,7 +189,23 @@ impl<F: BaseField> Fp2<F> {
         let neg_x = x.negate();
         let out_re = F::conditional_select(&y, &x, f);
         let out_im = F::conditional_select(&neg_x, &y, f);
-        CtOption::new(Self::new(out_re, out_im), inner_is_some)
+        // Canonical sign normalization — match the C reference `fp2_sqrt`
+        // (Aardal et al., eprint 2024/1563): of the two roots ±r, return the
+        // one whose canonical (non-Montgomery) real part is EVEN; when the real
+        // part is zero, tie-break on the imaginary part. Without this the root
+        // SIGN is ambiguous and diverges from C in the model-bearing theta
+        // final steps (`theta_isogeny_compute_4`/`_2`), which is invisible to
+        // j-invariant/iso checks but breaks byte-exact keygen (S347).
+        let result = Self::new(out_re, out_im);
+        let mut buf = [0u8; 64];
+        out_re.to_bytes_le(&mut buf);
+        let re_odd = Choice::from(buf[0] & 1);
+        out_im.to_bytes_le(&mut buf);
+        let im_odd = Choice::from(buf[0] & 1);
+        let re_zero = out_re.is_zero();
+        let negate = re_odd | (re_zero & im_odd);
+        let normalized = Self::conditional_select(&result, &result.negate(), negate);
+        CtOption::new(normalized, inner_is_some)
     }
 
     /// Multiplicative inverse via `(a + bi)^{-1} = (a - bi) / (a^2 + b^2)`.

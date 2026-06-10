@@ -303,8 +303,49 @@ pub(crate) fn gluing_codomain<F: BaseField>(
     // Jacobian inputs via to_couple_xz.
     let k1_8_xz = xy_k1_8.to_couple_xz();
     let k2_8_xz = xy_k2_8.to_couple_xz();
+    #[cfg(feature = "kat")]
+    if std::env::var("PQSQ_DUMP_AC").is_ok() {
+        let mut b = [0u8; 64];
+        for (nm, p) in [
+            ("k1_8.p1", k1_8_xz.p1),
+            ("k1_8.p2", k1_8_xz.p2),
+            ("k2_8.p1", k2_8_xz.p1),
+            ("k2_8.p2", k2_8_xz.p2),
+        ] {
+            p.affine_x().to_bytes_le(&mut b);
+            std::eprint!("OURS_GL {nm} ");
+            for x in b {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+        for i in 0..4 {
+            for j in 0..4 {
+                m.m[i][j].to_bytes_le(&mut b);
+                std::eprint!("OURS_GL M{i}{j} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
+    }
     let tt1_pre = base_change(&m, &k1_8_xz);
     let tt2_pre = base_change(&m, &k2_8_xz);
+    #[cfg(feature = "kat")]
+    if std::env::var("PQSQ_DUMP_AC").is_ok() {
+        let mut b = [0u8; 64];
+        for (nm, p) in [("ttpre1", tt1_pre), ("ttpre2", tt2_pre)] {
+            for (i, c) in [p.x, p.y, p.z, p.w].iter().enumerate() {
+                c.to_bytes_le(&mut b);
+                std::eprint!("OURS_GL {nm}.{i} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
+    }
 
     // Step 5: squared-theta transform (= componentwise_square ∘ hadamard).
     let tt1 = tt1_pre.componentwise_square().hadamard();

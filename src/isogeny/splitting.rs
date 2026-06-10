@@ -548,7 +548,12 @@ fn sample_random_index<R: CryptoRng>(rng: &mut R) -> usize {
         rng.fill_bytes(&mut bytes);
         let seed = u32::from_le_bytes(bytes);
         if seed < 4_294_967_292 {
-            return (seed % 6) as usize;
+            let idx = (seed % 6) as usize;
+            #[cfg(feature = "kat")]
+            if std::env::var("PQSQ_DUMP_AC").is_ok() {
+                std::eprintln!("OURS_IDX {idx}");
+            }
+            return idx;
         }
     }
 }

@@ -10,9 +10,9 @@
 //!
 //! Steps: `θ = RepresentInteger(u·(2^length − u))` (O0-basis coords) → scale by
 //! `u^{-1} mod 2^(length+2)` → `B0 = basis_e0` (order `2^(length+extra)`),
-//! `Bθ = θ(B0)` via [`endomorphism_application_o0_coords`] → lift both to
-//! Jacobian ([`lift_basis`]) → form the couple kernel `(T1, T2)` →
-//! [`theta_chain_compute_and_eval`].
+//! `Bθ = θ(B0)` via `endomorphism_application_o0_coords` → lift both to
+//! Jacobian (`lift_basis`) → form the couple kernel `(T1, T2)` →
+//! `theta_chain_compute_and_eval`.
 
 use crate::ec::couple::ThetaKernelCouplePoints;
 use crate::ec::couple::{CoupleCurve, CoupleJacobianPoint, CoupleMontgomeryPoint, EcBasis};
@@ -100,6 +100,104 @@ pub(crate) fn fixed_degree_isogeny_and_eval<R: CryptoRng>(
         CoupleJacobianPoint::infinity(),
     );
 
+    let e12 = CoupleCurve::e0_e0();
+    let e34 = theta_chain_compute_and_eval(length, &e12, &ker, true, eval_points, out_points)?;
+    Some((length, e34))
+}
+
+/// KEYGEN-faithful fixed-degree isogeny (C `_fixed_degree_isogeny_impl` with
+/// `small = true`, index 0). Differs from [`fixed_degree_isogeny_and_eval`] in
+/// the three ways the C keygen path differs (S347):
+///
+/// - **`small = true` length** = `bitsize(p) + QUAT_repres_bound_input − u_bitsize`
+///   = `271 − u_bitsize` at lvl1 (not the fixed 246); `f_basis = length + HD`.
+/// - **C-faithful θ** from `represent_integer_over_alt_order(O_0, …)` (the
+///   `quat_represent_integer` port — positive data-dependent sampling matching
+///   the C DRBG draws), not the symmetric-bound `find_quaternion_…_wide`. Its
+///   `(γ_num, denom)` → O_0-coords via `standard_to_o0_basis(γ_num)/denom` (the
+///   `[(a−d)/2,(b−c)/2,c,d]` convention `endomorphism_application_o0_coords` wants).
+/// - **B0 doubled down** by `TORSION_EVEN_POWER − length − HD` (C
+///   `ec_dbl_iter_basis`, dim2id2iso.c:127), since `length < 246`.
+///
+/// The internal theta chain is already the deterministic
+/// [`theta_chain_compute_and_eval`] — the same one C keygen uses.
+#[allow(dead_code)]
+pub(crate) fn fixed_degree_isogeny_and_eval_keygen<R: CryptoRng>(
+    u: &Uint<QL>,
+    eval_points: &[CoupleMontgomeryPoint<Fp1Element>],
+    out_points: &mut [CoupleMontgomeryPoint<Fp1Element>],
+    witnesses: &[Uint<QL>],
+    max_trials: usize,
+    rng: &mut R,
+) -> Option<(u32, CoupleCurve<Fp1Element>)> {
+    use crate::quaternion::extremal_orders::standard_order_o0_l1;
+    use crate::quaternion::o0_mul::standard_to_o0_basis;
+    use crate::quaternion::represent_integer::represent_integer_over_alt_order;
+
+    const TORSION_EVEN_POWER: u32 = 248;
+    const HD: u32 = 2;
+    // bitsize(p) + QUAT_repres_bound_input at lvl1 (C-oracle-confirmed: φ_u
+    // u_bitsize 121 → length 150; φ_v 123 → 148).
+    const P_BITS_PLUS_BOUND: u32 = 271;
+
+    debug_assert!(u.as_words()[0] & 1 == 1, "u must be odd");
+    let u_bits = u.bits_vartime();
+    let length = P_BITS_PLUS_BOUND - u_bits;
+    let f_basis = (length + HD) as usize;
+
+    let two_len = Uint::<QL>::ONE.shl_vartime(length);
+    let target = u.wrapping_mul(&two_len.wrapping_sub(u)); // u·(2^length − u)
+
+    let p = crate::params::lvl1::prime().resize::<QL>();
+    let o0 = standard_order_o0_l1();
+    let (gamma, denom) =
+        represent_integer_over_alt_order::<QL, R>(&o0, &target, &p, max_trials, witnesses, rng)?;
+    debug_assert_eq!(
+        denom,
+        Int::<QL>::from_i64(2),
+        "O_0 represent_integer denom is 2"
+    );
+
+    // (γ_num, denom=2) → O_0-coords = standard_to_o0_basis(γ_num)/2 (exact;
+    // γ ∈ O_0 ⇒ standard_to_o0_basis(γ_num) is all-even).
+    let o0c = standard_to_o0_basis::<QL>(&gamma);
+    let mut theta: [Int<QL>; 4] = [
+        o0c[0].shr_vartime(1),
+        o0c[1].shr_vartime(1),
+        o0c[2].shr_vartime(1),
+        o0c[3].shr_vartime(1),
+    ];
+
+    // scale θ by u^{-1} mod 2^(length+2)
+    let modulus = Uint::<QL>::ONE.shl_vartime(length + 2);
+    let u_inv = crate::quaternion::sign_orchestration::uint_inv_mod_vartime::<QL>(u, &modulus)?;
+    let u_inv_i = Int::<QL>::from_words(u_inv.to_words());
+    for c in theta.iter_mut() {
+        *c = c.wrapping_mul(&u_inv_i);
+    }
+
+    // B0 = canonical even basis, doubled down by TORSION_EVEN_POWER−length−HD.
+    let curve = MontgomeryCurve::<Fp1Element>::e0();
+    let a24 = curve.a24();
+    let a24_curve = curve.to_a24();
+    let (bp0, bq0, bpmq0) = basis_e0_lvl1();
+    let ndbl = TORSION_EVEN_POWER - length - HD;
+    let bp = a24_curve.x_double_n(&bp0, ndbl);
+    let bq = a24_curve.x_double_n(&bq0, ndbl);
+    let bpmq = a24_curve.x_double_n(&bpmq0, ndbl);
+
+    let (rp, rq, rpmq) =
+        endomorphism_application_o0_coords::<QL>(&bp, &bq, &bpmq, &theta, f_basis, &a24)?;
+
+    let bas1 = EcBasis::new(bp, bq, bpmq);
+    let bas2 = EcBasis::new(rp, rq, rpmq);
+    let (p1, q1) = lift_basis(&bas1, &curve).ok()?;
+    let (p2, q2) = lift_basis(&bas2, &curve).ok()?;
+    let ker = ThetaKernelCouplePoints::new(
+        CoupleJacobianPoint::new(p1, p2),
+        CoupleJacobianPoint::new(q1, q2),
+        CoupleJacobianPoint::infinity(),
+    );
     let e12 = CoupleCurve::e0_e0();
     let e34 = theta_chain_compute_and_eval(length, &e12, &ker, true, eval_points, out_points)?;
     Some((length, e34))

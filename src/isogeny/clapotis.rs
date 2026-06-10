@@ -268,7 +268,7 @@ pub fn enumerate_hypercube<const LIMBS: usize>(
 /// ~500 bits and `vᵀGv` is ~506 bits — within `Int<8>` for a single
 /// product, but the divisibility invariant `adjusted_norm = denom² DIVIDES
 /// vᵀGv` is only exact when the GRAM ITSELF was computed without
-/// intermediate overflow (see [`pull_back_gram_wide`]). The caller passes
+/// intermediate overflow (see `pull_back_gram_wide`). The caller passes
 /// a `WIDE` gram from `pull_back_gram_wide` and `adjusted_norm = denom²`
 /// (S230: the C ref uses `denom²`, NOT the narrow path's spurious
 /// `4·denom²`). The accepted quotient (the reduced norm `d`) is small and
@@ -1292,7 +1292,7 @@ pub(crate) fn lattice_reduced_norm<const L: usize, const W: usize>(
 ///    [`crate::quaternion::ideal_mul::lideal_reduce_basis`]
 ///    (Cohen 2.6.3 in the `O_0` reduced-norm metric, S195-shipped).
 /// 2. Build the pulled-back Gram matrix `G_I = B · G_{O_0} · Bᵀ`
-///    via [`pull_back_gram`]; here `G_{O_0}` is the integer-safe
+///    via `pull_back_gram`; here `G_{O_0}` is the integer-safe
 ///    Gram from [`o0_reduced_norm_gram_matrix`] (factor of 4 baked
 ///    in for divisibility under `p ≡ 3 mod 4`).
 /// 3. Enumerate short vectors in `[-m, m]^4` under `G_I` via
@@ -1652,7 +1652,7 @@ fn rational_quaternion_in_lideal<const LIMBS: usize, const WIDE: usize>(
 /// - `Err(Error::Unimplemented)`: until S212+ wires the body.
 /// - Future: `Ok(FindUvResult)` with the cross-product Bezout output.
 ///
-/// The j>0 β finalize self-verifies via [`rational_quaternion_in_lideal`]
+/// The j>0 β finalize self-verifies via `rational_quaternion_in_lideal`
 /// (the C ref's own `quat_lattice_contains(ideal->lattice, β)` debug
 /// assertion, dim2id2iso.c:690-691) before returning `Ok` — a sound arbiter
 /// that distinguishes the correct β from the conjugation-swapped wrong one
@@ -2076,6 +2076,7 @@ mod enumerate_hypercube_tests {
 #[cfg(all(test, feature = "alloc"))]
 mod find_uv_tests {
     use super::*;
+    use alloc::vec;
 
     fn i(v: i64) -> Int<8> {
         Int::<8>::from_i64(v)

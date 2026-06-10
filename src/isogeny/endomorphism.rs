@@ -13,7 +13,7 @@
 //! `R = 2^256` and limb layout — verified against the reference's stored
 //! `C = 1` constant `{0x33, 0, 0, 0x0100000000000000}` (= `2^256 mod p`). So
 //! the reference limbs ARE our internal representation: we plug them straight
-//! in via [`ConstMontyForm::from_montgomery`], no conversion.
+//! in via `ConstMontyForm::from_montgomery`, no conversion.
 
 use crate::ec::montgomery::MontgomeryPoint;
 use crate::gf::fp2::Fp2;

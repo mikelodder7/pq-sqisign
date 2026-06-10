@@ -26,8 +26,8 @@
 //! whole chain) and the part that can be tested *deterministically*, with no
 //! field arithmetic or fixtures.
 //!
-//! So we separate the two concerns: [`drive_theta_chain`] owns the index logic
-//! and calls a [`ChainVisitor`] for every concrete operation (descend, glue,
+//! So we separate the two concerns: `drive_theta_chain` owns the index logic
+//! and calls a `ChainVisitor` for every concrete operation (descend, glue,
 //! step, push, finalize, split). The point-executing visitor — which owns the
 //! couple-Jacobian / theta-point stacks and threads the codomain — is wired in
 //! a later session against this already-verified control flow.
@@ -385,6 +385,25 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
             }
         }
         // set up the first codomain's theta structure (C-ref theta_precomputation)
+        #[cfg(feature = "kat")]
+        if std::env::var("PQSQ_DUMP_AC").is_ok() {
+            let n = gc.codomain;
+            // NORMALIZE projectively by .x (theta-null is projective; raw compare
+            // is scale-ambiguous). Output (y/x, z/x, w/x).
+            let xi = n.x.invert().unwrap_or(crate::gf::fp2::Fp2::zero());
+            let mut b = [0u8; 64];
+            for (i, c) in [n.y.mul(&xi), n.z.mul(&xi), n.w.mul(&xi)]
+                .iter()
+                .enumerate()
+            {
+                c.to_bytes_le(&mut b);
+                std::eprint!("OURS_TN glueN.{i} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
         match AbelianVariety2D::from_theta_null(gc.codomain) {
             Some(av) => self.theta = Some(av),
             None => {
@@ -447,6 +466,23 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
         if self.failed {
             return;
         }
+        #[cfg(feature = "kat")]
+        if std::env::var("PQSQ_DUMP_AC").is_ok() {
+            let n = self.variety().theta_null;
+            let mut b = [0u8; 64];
+            let xi = n.x.invert().unwrap_or(crate::gf::fp2::Fp2::zero());
+            for (i, c) in [n.y.mul(&xi), n.z.mul(&xi), n.w.mul(&xi)]
+                .iter()
+                .enumerate()
+            {
+                c.to_bytes_le(&mut b);
+                std::eprint!("OURS_TN in4N.{i} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
         let st = {
             let av = self.variety();
             theta_isogeny_compute_4(av, &self.theta_q1[0], &self.theta_q2[0], false, false)
@@ -460,6 +496,23 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
         };
         for j in 0..self.num_p {
             self.pts[j] = theta_isogeny_eval(&st, &self.pts[j]);
+        }
+        #[cfg(feature = "kat")]
+        if std::env::var("PQSQ_DUMP_AC").is_ok() {
+            let n = st.codomain_null;
+            let xi = n.x.invert().unwrap_or(crate::gf::fp2::Fp2::zero());
+            let mut b = [0u8; 64];
+            for (i, c) in [n.y.mul(&xi), n.z.mul(&xi), n.w.mul(&xi)]
+                .iter()
+                .enumerate()
+            {
+                c.to_bytes_le(&mut b);
+                std::eprint!("OURS_TN after4N.{i} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
         }
         self.theta = Some(set_codomain(st.codomain_null));
         self.step = Some(st);
@@ -482,6 +535,23 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
         };
         for j in 0..self.num_p {
             self.pts[j] = theta_isogeny_eval(&st, &self.pts[j]);
+        }
+        #[cfg(feature = "kat")]
+        if std::env::var("PQSQ_DUMP_AC").is_ok() {
+            let n = st.codomain_null;
+            let xi = n.x.invert().unwrap_or(crate::gf::fp2::Fp2::zero());
+            let mut b = [0u8; 64];
+            for (i, c) in [n.y.mul(&xi), n.z.mul(&xi), n.w.mul(&xi)]
+                .iter()
+                .enumerate()
+            {
+                c.to_bytes_le(&mut b);
+                std::eprint!("OURS_TN after2N.{i} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
         }
         self.theta = Some(set_codomain(st.codomain_null));
         self.step = Some(st);
@@ -551,6 +621,35 @@ pub(crate) fn theta_chain_compute_and_eval<F: BaseField>(
     // (mirrors the C reference's `theta_chain_compute_and_eval`; the
     // verify = true path is the signature-verification variant).
     if !drive_theta_chain(n, extra_torsion, false, &mut exec) {
+        return None;
+    }
+    let num_p = exec.num_p;
+    out_points[..num_p].copy_from_slice(&exec.out_pts[..num_p]);
+    exec.e34
+}
+
+/// Verification variant of [`theta_chain_compute_and_eval`].
+///
+/// Identical to the deterministic chain except it runs the driver with the
+/// `verify` flag set: the kernel comes from an untrusted signature, so each
+/// step performs the extra consistency checks (and the final splitting must
+/// genuinely split into an elliptic product). Returns `None` if any check
+/// fails — i.e. the supplied kernel does not describe a valid isogeny between
+/// elliptic products, which the caller treats as an invalid signature. Mirrors
+/// the C reference's `theta_chain_compute_and_eval_verify`.
+pub(crate) fn theta_chain_compute_and_eval_verify<F: BaseField>(
+    n: u32,
+    e12: &CoupleCurve<F>,
+    ker: &ThetaKernelCouplePoints<F>,
+    extra_torsion: bool,
+    eval_points: &[CoupleMontgomeryPoint<F>],
+    out_points: &mut [CoupleMontgomeryPoint<F>],
+) -> Option<CoupleCurve<F>> {
+    debug_assert_eq!(eval_points.len(), out_points.len());
+    debug_assert!(eval_points.len() <= MAX_CHAIN_EVAL_POINTS);
+    let mut exec = ChainExecutor::new(e12, ker, eval_points);
+    // Verification variant: the kernel is untrusted ⇒ verify = true.
+    if !drive_theta_chain(n, extra_torsion, true, &mut exec) {
         return None;
     }
     let num_p = exec.num_p;

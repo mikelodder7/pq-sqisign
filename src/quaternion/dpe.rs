@@ -20,7 +20,7 @@
 //! # Representation
 //!
 //! Value = `mant · 2^exp`, with `mant` a `double` and `exp` an `int`
-//! (`DPE_EXP_T = int`). After [`Dpe::normalize`], `mant ∈ [1/2, 1)` for
+//! (`DPE_EXP_T = int`). After `Dpe::normalize`, `mant ∈ [1/2, 1)` for
 //! nonzero finite values; zero is `mant = 0.0, exp = i32::MIN`
 //! (`DPE_EXPMIN`). The C build active on x86_64 (`DPE_USE_DOUBLE`,
 //! `DPE_BITSIZE = 53`) is the configuration ported here.
@@ -38,12 +38,28 @@ use crypto_bigint::{Int, Uint};
 /// `DPE_BITSIZE` for the `DPE_USE_DOUBLE` build: the `f64` significand bits.
 const BITSIZE: i32 = 53;
 
-/// `2^s` as an exact `f64`, for `s` in the range used here (`|s| <= 1023`).
-/// `powi` with base `2.0` is exact (every step multiplies by exactly 2),
-/// so this matches the C `dpe_scale_tab` power-of-two literals bit-for-bit.
+/// `2^s` as an exact `f64`, for the finite range used here.
+/// Constructing the IEEE-754 exponent directly keeps this available in
+/// `no_std` builds, where libm-backed float methods are not available.
 #[inline]
 fn pow2(s: i32) -> f64 {
-    2.0_f64.powi(s)
+    debug_assert!((-1074..=1023).contains(&s));
+    if s >= -1022 {
+        f64::from_bits(u64::try_from(s + 1023).expect("biased exponent is non-negative") << 52)
+    } else {
+        f64::from_bits(1u64 << u32::try_from(s + 1074).expect("subnormal shift is non-negative"))
+    }
+}
+
+/// Round to nearest integer with ties away from zero, matching C `round()`.
+///
+/// Callers only pass values whose rounded magnitude is below `2^53`, so the
+/// cast to `i64` is exact after the half-unit adjustment.
+#[inline]
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn round_ties_away(x: f64) -> f64 {
+    let adjusted = if x >= 0.0 { x + 0.5 } else { x - 0.5 };
+    (adjusted as i64) as f64
 }
 
 /// `frexp`: split a finite nonzero `x` into `(m, e)` with `x = m · 2^e` and
@@ -172,7 +188,7 @@ impl Dpe {
             if m < 0 { i.wrapping_neg() } else { i }
         } else {
             // 0 <= exp < 53: round to nearest integer, ties away from zero.
-            let r = ldexp(self.mant, self.exp).round();
+            let r = round_ties_away(ldexp(self.mant, self.exp));
             Int::<N>::from_i64(r as i64)
         }
     }
@@ -335,7 +351,7 @@ impl Dpe {
             *self
         } else {
             let d = ldexp(self.mant, self.exp);
-            Dpe::from_f64(d.round())
+            Dpe::from_f64(round_ties_away(d))
         }
     }
 }

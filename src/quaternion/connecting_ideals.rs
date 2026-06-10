@@ -232,6 +232,7 @@ pub fn alternate_connecting_ideal_5_l1() -> LeftIdeal<8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::eprintln;
 
     /// S214 regression: `cached_norm` equals `reduced_norm²` per the
     /// S201 lattice-index convention.

@@ -61,6 +61,9 @@
 #[cfg(feature = "alloc")]
 #[allow(unused_extern_crates)]
 extern crate alloc;
+#[cfg(test)]
+#[allow(unused_extern_crates)]
+extern crate std;
 
 pub mod ec;
 pub mod encoding;
@@ -75,6 +78,7 @@ pub mod quaternion;
 /// (they bring their own `CryptoRng`).
 #[cfg(feature = "kat")]
 pub mod rng;
+pub mod verification;
 pub mod wire;
 
 pub use crate::error::{Error, Result};
@@ -400,7 +404,24 @@ pub fn verify<P: Params>(msg: &[u8], sig: &[u8], pk: &[u8]) -> Result<()> {
         });
     }
     match P::LEVEL {
-        1 | 3 | 5 => isogeny::clapotis::evaluate_response_isogeny::<P>(sig, msg, pk),
+        1 => {
+            #[cfg(feature = "alloc")]
+            {
+                // Full lvl1 verification (verification::protocols_verify).
+                if verification::protocols_verify(sig, pk, msg) {
+                    Ok(())
+                } else {
+                    Err(Error::InvalidSignature)
+                }
+            }
+            #[cfg(not(feature = "alloc"))]
+            {
+                Err(Error::Unimplemented(
+                    "verify: lvl1 requires the alloc feature",
+                ))
+            }
+        }
+        3 | 5 => isogeny::clapotis::evaluate_response_isogeny::<P>(sig, msg, pk),
         _ => Err(Error::Unimplemented("verify: unsupported security level")),
     }
 }
@@ -578,26 +599,25 @@ mod tests {
 
     // ── S84 — verify wiring at all NIST levels ──
 
-    #[cfg(feature = "vrfy")]
+    #[cfg(all(feature = "vrfy", feature = "alloc"))]
     #[test]
-    fn verify_at_lvl1_reaches_clapotis_stub() {
-        // S84 — verify dispatches at L1 to the Clapotis-side
-        // `evaluate_response_isogeny` stub. Unlike keypair/sign, verify
-        // does not call klpt_body_wide_wn (no fresh ideal needed); the
-        // chain shape is "parse sig/pk → reconstruct isogeny → check
-        // codomain", all of which lives inside the Clapotis stub.
+    fn verify_at_lvl1_rejects_invalid_signature() {
+        // Verify at L1 now runs the full pipeline (verification::protocols_verify):
+        // parse sig/pk → challenge curve → canonical bases → dim-2 commitment
+        // curve → hash-to-challenge compare. A well-formed-but-non-matching
+        // signature (E0 pk, identity change matrix, tiny challenge) must be
+        // rejected with InvalidSignature, not accepted and not Unimplemented.
         let msg = b"test message";
-        let sig = [0u8; Level1::SIG_BYTES];
-        let pk = [0u8; Level1::PK_BYTES];
+        let mut sig = [0u8; Level1::SIG_BYTES];
+        sig[66] = 1; // mat[0][0] = 1  (offset: 64 + 2)
+        sig[114] = 1; // mat[1][1] = 1 (offset: 66 + 3·16)
+        sig[130] = 1; // chall_coeff = 1
+        let pk = [0u8; Level1::PK_BYTES]; // E0 curve, hint 0
 
-        let result = verify::<Level1>(msg, &sig, &pk);
-        let err = result.expect_err("S84: verify at L1 must fail at the Clapotis stub");
-        let Error::Unimplemented(msg) = err else {
-            unreachable!("S84: expected Unimplemented, got {err:?}");
-        };
-        assert!(
-            msg.contains("Clapotis") || msg.contains("dominant remaining scope"),
-            "S84: verify at L1 must reach the Clapotis stub; got: {msg}",
+        assert_eq!(
+            verify::<Level1>(msg, &sig, &pk),
+            Err(Error::InvalidSignature),
+            "verify at L1 rejects a non-matching signature",
         );
     }
 

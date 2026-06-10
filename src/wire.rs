@@ -461,6 +461,7 @@ pub type KeyPairLvl5 = KeyPair<crate::gf::fp::Fp5Element, 701>;
 mod tests {
     use super::*;
     use crate::gf::fp::Fp1Element;
+    use std::format;
 
     /// Generic helper: encode + decode round-trips identical to the
     /// original public key.

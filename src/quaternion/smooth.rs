@@ -108,6 +108,7 @@ pub fn next_smooth_at_least(primes: &[u64], floor: u128, bound: u128) -> Option<
 #[cfg(feature = "alloc")]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     #[test]
     fn powers_of_two_up_to_64() {

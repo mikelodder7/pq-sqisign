@@ -475,6 +475,27 @@ pub fn represent_integer_over_alt_order<const LIMBS: usize, R: CryptoRng>(
             None => continue,
         };
 
+        // Standard-order (q=1) extra constraints — C normeq.c:177-189, the
+        // `non_diag && standard_order` block: swap x,y so x's parity straddles
+        // t, then require (x−t) ≡ 2 and (y−z) ≡ 2 (mod 4) so the resulting
+        // endomorphism halves cleanly for the dim-2 setup. (q≠1 orders skip
+        // this — `standard_order` is false there.)
+        let (x, y) = if order.q == 1 {
+            let (mut xx, mut yy) = (x, y);
+            if (xx.as_words()[0] & 1) != (t.as_words()[0] & 1) {
+                core::mem::swap(&mut xx, &mut yy);
+            }
+            let m4 = |u: &Uint<LIMBS>| u.as_words()[0] & 3;
+            // (a − b) mod 4, computed in u64 (a4,b4 ∈ 0..3 ⇒ a4+4−b4 ∈ 1..7).
+            let diff_mod4 = |a: &Uint<LIMBS>, b: &Uint<LIMBS>| (m4(a) + 4 - m4(b)) & 3;
+            if diff_mod4(&xx, &t) != 2 || diff_mod4(&yy, &z) != 2 {
+                continue;
+            }
+            (xx, yy)
+        } else {
+            (x, y)
+        };
+
         // Build the order element in the ORTHOGONAL `(1, z_ord, t_ord,
         // t_ord·z_ord)` frame (C `quat_order_elem_create`, normeq.c:40):
         //   γ = x·1 + y·z_ord + z·t_ord + t·(t_ord·z_ord),
