@@ -1689,6 +1689,16 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
     // overflows on cached_norm ~p²; S225 calibration). The per-j products
     // below already wide-LLL via the WIDE const generic.
     let reduced = lideal_reduce_basis_wide::<LIMBS, 128>(lideal, p);
+    #[cfg(feature = "kat")]
+    {
+        let n_in = lattice_reduced_norm::<LIMBS, 32>(&reduced.basis, &reduced.denom);
+        std::eprintln!(
+            "DIAG fuv_alt: cached_norm bits={} is_sq={} lattice_N bits={:?}",
+            lideal.cached_norm.bits_vartime(),
+            lideal.reduced_norm_vartime().is_some(),
+            n_in.map(|n| n.bits_vartime()),
+        );
+    }
     let reduced_id = lideal_rescale_by_smallest_basis_element::<LIMBS>(&reduced, p).ok_or(
         Error::NoBezoutSolution(
             "find_uv_alternate_orders: rescale failed on input lideal — not SQIsign-shaped \
@@ -1696,10 +1706,17 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
         ),
     )?;
 
-    // Step 2: build per-j ideals. ideals[0] = reduced_id.
+    // Step 2: build per-j ideals. ideal[0] = the LLL-reduced ORIGINAL input
+    // (C ref `ideal[0] = quat_lideal_reduce_basis(lideal)`), NOT the rescaled
+    // reduced_id. Enumerating j=0 on the original ideal yields genuine short
+    // norms `d = N_red(β)/N(I)` (which may exceed 1) — the input's true
+    // Clapotis decomposition. Enumerating on reduced_id (≅ O_0) instead makes
+    // every short vector a unit ⇒ d=1 ⇒ a degenerate `u·1 + v·d2 = 2^F` split
+    // with u ≈ 2^F, v = 1, which the fixed-degree isogeny cannot construct.
+    // reduced_id is used ONLY to build the j≥1 connecting ideals.
     let conj_reduced_id = reduced_id.conjugate();
     let mut reduced_per_j: Vec<LeftIdeal<LIMBS>> = Vec::with_capacity(alt_connecting.len() + 1);
-    reduced_per_j.push(reduced_id);
+    reduced_per_j.push(reduced);
 
     for alt in alt_connecting {
         // ideal[j] = conj(reduced_id) · alt_connecting[j-1] (C ref line 560).
@@ -1753,7 +1770,28 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
         let denom_wide =
             crate::quaternion::lattice::widen_int_lattice::<LIMBS, FINDUV_WIDE>(&denom_int);
         let denom_sq_wide = denom_wide.wrapping_mul(&denom_wide);
-        let adjusted_norm_j_wide = Int::<FINDUV_WIDE>::from_i64(4).wrapping_mul(&denom_sq_wide);
+        // adjusted_norm = 4·denom²·N(ideal[j]) — the enumerated short norm is
+        // then d = N_red(β)/N(ideal[j]), the norm of β's CLASS (the connecting
+        // isogeny degree), not the raw N_red(β). This matches find_uv's proven
+        // j=0 adjusted_norm. For j=0 the ideal is the LLL-reduced original
+        // input (N(I) ~ 2^248), so omitting this factor would inflate d by
+        // N(I) and force a degenerate u≈2^F, v=1 Bezout split.
+        let n_ideal_j =
+            lattice_reduced_norm::<LIMBS, FINDUV_WIDE>(&reduced_j.basis, &reduced_j.denom).ok_or(
+                Error::NoBezoutSolution(
+                    "find_uv_alternate_orders: |det(basis)|/denom^4 not a perfect square — \
+                 ideal[j] is not a genuine left ideal (defensive)",
+                ),
+            )?;
+        let n_ideal_j_int = crate::quaternion::o0_mul::uint_as_nonneg_int::<LIMBS>(&n_ideal_j)
+            .ok_or(Error::Unimplemented(
+                "find_uv_alternate_orders: N(ideal[j]) exceeds Int<LIMBS> range (defensive)",
+            ))?;
+        let n_ideal_j_wide =
+            crate::quaternion::lattice::widen_int_lattice::<LIMBS, FINDUV_WIDE>(&n_ideal_j_int);
+        let adjusted_norm_j_wide = Int::<FINDUV_WIDE>::from_i64(4)
+            .wrapping_mul(&denom_sq_wide)
+            .wrapping_mul(&n_ideal_j_wide);
         let mut short_vecs_j = enumerate_hypercube_wide::<LIMBS, FINDUV_WIDE>(
             box_size,
             &gram_j_wide,
@@ -1765,6 +1803,19 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
             .iter()
             .map(|d| int_div_floor::<LIMBS>(target, d))
             .collect();
+        #[cfg(feature = "kat")]
+        {
+            let firsts: Vec<u32> = small_norms_j
+                .iter()
+                .take(6)
+                .map(|d| Uint::<LIMBS>::from_words(d.to_words()).bits_vartime())
+                .collect();
+            std::eprintln!(
+                "DIAG fuv_alt: j short_vecs={} first_d_bits={:?}",
+                small_norms_j.len(),
+                firsts,
+            );
+        }
         short_vecs_per_j.push(short_vecs_j);
         small_norms_per_j.push(small_norms_j);
         quotients_per_j.push(quotients_j);
@@ -1785,16 +1836,12 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
                 0,
             );
             if let Some(b) = bezout {
-                // S220: β finalize. The (0, 0) case is mathematically
-                // identical to `find_uv`'s proven j=0 path — same δ, same
-                // reduced_id (= reduced_per_j[0]), same enumerate/d
-                // convention — so we mirror it exactly and the result is
-                // byte-identical to `find_uv` on the equivalent input.
-                // That equivalence is the verification arbiter (a
-                // differential element-equality test), because the norm
-                // postcondition alone cannot distinguish β=β_lift·δ from
-                // β=conj(δ·β_lift) (norm is multiplicative and
-                // conjugation-invariant — the S207 trap).
+                // β finalize. The (0, 0) case is identical to `find_uv`'s
+                // proven j=0 path: `reduced_per_j[0]` is now the LLL-reduced
+                // ORIGINAL input (not the rescaled reduced_id), so β lifts
+                // DIRECTLY as `reduced·vec ∈ I` with NO δ-multiply — exactly
+                // the find_uv j=0 lift. This yields a byte-identical result to
+                // `find_uv` on the equivalent input.
                 if j1 == 0 && j2 == 0 {
                     let beta_prime_1_o0 = mat_4x4_transpose_eval::<LIMBS>(
                         &reduced_per_j[0].basis,
@@ -1807,16 +1854,16 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
                     let beta_prime_1_num = o0_basis_to_standard_doubled::<LIMBS>(&beta_prime_1_o0);
                     let beta_prime_2_num = o0_basis_to_standard_doubled::<LIMBS>(&beta_prime_2_o0);
                     let beta_prime_denom = two_uint.wrapping_mul(&reduced_per_j[0].denom);
-                    let beta_prime_1 = RationalQuaternion {
+                    let beta1 = RationalQuaternion {
                         num: beta_prime_1_num,
                         denom: beta_prime_denom,
-                    };
-                    let beta_prime_2 = RationalQuaternion {
+                    }
+                    .normalize();
+                    let beta2 = RationalQuaternion {
                         num: beta_prime_2_num,
                         denom: beta_prime_denom,
-                    };
-                    let beta1 = beta_prime_1.mul(&delta_rational, p).normalize();
-                    let beta2 = beta_prime_2.mul(&delta_rational, p).normalize();
+                    }
+                    .normalize();
                     return Ok(FindUvResult {
                         u: b.u,
                         v: b.v,
@@ -1831,12 +1878,10 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
                 // S345: general j>0 β finalize. Port of dim2id2iso.c:641-673,
                 // reconciled to our rescaled-frame representation:
                 //
-                //   - A j=0 component reconstructs the original-ideal β the
-                //     same way the (0,0) path does — `(β' · δ).normalize()`
-                //     with the un-mutated `delta_rational` — because our
-                //     reduced_per_j[0] is the RESCALED reduced_id (C keeps the
-                //     original frame and never δ-multiplies a j=0 component;
-                //     our δ-multiply undoes the rescale).
+                //   - A j=0 component lifts DIRECTLY as `β' = reduced·vec ∈ I`
+                //     (no δ-multiply): reduced_per_j[0] is the LLL-reduced
+                //     ORIGINAL input, matching the C ref which keeps the input
+                //     frame and never δ-multiplies a j=0 component.
                 //   - A j>0 component applies the C's mutated δ: the value is
                 //     `conj(smallest) / conj_ideal.norm` (the C `δ.denom /=
                 //     lideal.norm; δ.denom *= conj_ideal.norm` mutation — the
@@ -1862,7 +1907,7 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
                         denom: two_uint.wrapping_mul(&reduced_per_j[j].denom),
                     };
                     if j == 0 {
-                        bp.mul(&delta_rational, p).normalize()
+                        bp.normalize()
                     } else {
                         let delta_finalize = RationalQuaternion {
                             num: delta_rational.conjugate().num,

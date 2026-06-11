@@ -55,6 +55,7 @@ pub mod ideal;
 pub mod ideal_mul;
 pub mod klpt;
 pub mod lattice;
+pub mod lattice_ops;
 pub mod lll;
 pub mod norm_search;
 pub mod o0_mul;

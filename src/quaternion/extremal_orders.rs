@@ -902,7 +902,9 @@ fn minor3_det<const L: usize>(m: &[[Int<L>; 4]; 4], skip_r: usize, skip_c: usize
 /// `(adj, det)` with the invariant `adj · m = det · I`. `adj[i][j] =
 /// (−1)^(i+j) · minor3_det(m, j, i)` (cofactor transpose).
 #[allow(clippy::needless_range_loop)]
-fn adjugate_with_det<const L: usize>(m: &[[Int<L>; 4]; 4]) -> ([[Int<L>; 4]; 4], Int<L>) {
+pub(crate) fn adjugate_with_det<const L: usize>(
+    m: &[[Int<L>; 4]; 4],
+) -> ([[Int<L>; 4]; 4], Int<L>) {
     let mut adj = [[Int::<L>::from_i64(0); 4]; 4];
     for i in 0..4 {
         for j in 0..4 {

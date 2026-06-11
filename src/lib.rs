@@ -78,6 +78,8 @@ pub mod quaternion;
 /// (they bring their own `CryptoRng`).
 #[cfg(feature = "kat")]
 pub mod rng;
+#[cfg(feature = "kat")]
+pub mod signing;
 pub mod verification;
 pub mod wire;
 

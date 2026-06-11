@@ -378,9 +378,12 @@ fn clapotis_combine_indexed<R: CryptoRng>(
 
     let index1 = r.index_alternate_order_1;
     let index2 = r.index_alternate_order_2;
+    std::eprintln!("DIAG combine: idx=({index1},{index2}) step0");
 
     let n_id = lattice_reduced_norm::<L, 32>(&lideal.basis, &lideal.denom)?;
+    std::eprintln!("DIAG combine: step1 n_id ok");
     let theta = theta_endomorphism::<L, 32>(r, &n_id, p)?;
+    std::eprintln!("DIAG combine: step2 theta ok");
 
     let u_abs = abs_uint(&r.u);
     let v_abs = abs_uint(&r.v);
@@ -390,6 +393,13 @@ fn clapotis_combine_indexed<R: CryptoRng>(
     let v_s = v_abs.wrapping_shr(exp_gcd);
     let d1 = abs_uint(&r.d1);
 
+    std::eprintln!(
+        "DIAG combine: u_s bits={} v_s bits={} exp={} exp_gcd={}",
+        u_s.bits_vartime(),
+        v_s.bits_vartime(),
+        exp,
+        exp_gcd
+    );
     let inf = MontgomeryPoint::<Fp1Element>::infinity();
     let push = |a: MontgomeryPoint<Fp1Element>,
                 b: MontgomeryPoint<Fp1Element>,
@@ -415,6 +425,7 @@ fn clapotis_combine_indexed<R: CryptoRng>(
         max_trials,
         rng,
     )?;
+    std::eprintln!("DIAG combine: step3 fu ok");
     let bas_u = (out_u[0].p1, out_u[1].p1, out_u[2].p1);
 
     let (bp2, bq2, bpmq2) = starting_basis_indexed(index2);
@@ -430,6 +441,7 @@ fn clapotis_combine_indexed<R: CryptoRng>(
         max_trials,
         rng,
     )?;
+    std::eprintln!("DIAG combine: step4 fv ok");
     let bas2 = (out_v[0].p1, out_v[1].p1, out_v[2].p1);
 
     // 5. Apply θ (scaled by 1/(d1·N(conn[index2]))) to φ_v's image (D3); the
@@ -446,10 +458,12 @@ fn clapotis_combine_indexed<R: CryptoRng>(
         F as usize,
         &a24_fv1,
     )?;
+    std::eprintln!("DIAG combine: step5 theta_app ok");
 
     // 6. Couple kernel, double to 2^exp, randomized chain pushing bas_u.
     let (p1, q1) = lift_basis(&EcBasis::new(bas_u.0, bas_u.1, bas_u.2), &fu.e1).ok()?;
     let (p2, q2) = lift_basis(&EcBasis::new(t2p, t2q, t2pmq), &fv.e1).ok()?;
+    std::eprintln!("DIAG combine: step6 lift ok");
     let e01 = CoupleCurve::new(fu.e1, fv.e1);
     let ker = ThetaKernelCouplePoints::new(
         CoupleJacobianPoint::new(p1, p2),
@@ -469,6 +483,7 @@ fn clapotis_combine_indexed<R: CryptoRng>(
         &mut out_chain,
         rng,
     )?;
+    std::eprintln!("DIAG combine: step7 theta_chain ok");
     let (tt1, tt2, tt1m2) = (out_chain[0], out_chain[1], out_chain[2]);
 
     // 7. Weil-pairing factor selection — reference on the index1 NICE
@@ -501,6 +516,7 @@ fn clapotis_combine_indexed<R: CryptoRng>(
         F as usize,
         &a24_cod,
     )?;
+    std::eprintln!("DIAG combine: step8 beta1 ok");
 
     Some((codomain, EcBasis::new(op, oq, opmq)))
 }
@@ -551,8 +567,342 @@ pub(crate) fn ideal_to_isogeny_clapotis<R: CryptoRng>(
         widen(&ci::alternate_connecting_ideal_5_l1()),
     ];
 
-    let r = find_uv::<L>(&target, lideal, p, &alts, 2).ok()?;
-    clapotis_combine_indexed(&r, lideal, p, witnesses, sample_bound, max_trials, rng)
+    // Try the proven j=0-only decomposition first (empty alts → the
+    // find_uv path that enumerates the LLL-reduced input directly, with no
+    // principal-only δ-rescale). Only if it finds no Bezout do we expand to
+    // the 6 alternate connecting orders. This matches the C ref's structure
+    // (j=0 is the first (j1,j2) pair tried) and avoids the alternate-orders
+    // rescale on a non-principal aux ideal.
+    let r = match find_uv::<L>(&target, lideal, p, &[], 2) {
+        Ok(r) => r,
+        Err(_) => match find_uv::<L>(&target, lideal, p, &alts, 2) {
+            Ok(r) => r,
+            Err(_) => {
+                std::eprintln!("DIAG clap: find_uv failed (both j=0 and alt-orders)");
+                return None;
+            }
+        },
+    };
+    let out = clapotis_combine_indexed(&r, lideal, p, witnesses, sample_bound, max_trials, rng);
+    if out.is_none() {
+        std::eprintln!("DIAG clap: combine_indexed failed");
+    }
+    out
+}
+
+/// SQIsign signing commitment — C `commit` (`sign.c`). Sample a random `O_0`
+/// ideal of norm `COM_DEGREE`, reduce it to a prime-norm equivalent, bridge it
+/// into the spine `LeftIdeal`, and run the Clapotis spine to obtain the
+/// commitment curve `E_com` together with the canonical `E_0[2^f]` basis pushed
+/// through the commitment isogeny. Returns `(E_com, basis, spine_ideal)` (the
+/// ideal is needed later to derive the response quaternion). lvl1-pinned.
+///
+/// HEAVY: samples at `COM_DEGREE ≈ 2^512`, so the sampler runs wide LLL at an
+/// internal width `SL = 48` (the re-randomization multiply needs `64·SL ≳
+/// 2·bits(p) + 4·bits(COM_DEGREE)`); the prime-norm reduction and spine add
+/// more real-scale LLL. `witnesses` are the small-prime Miller–Rabin witnesses
+/// the spine's index sampler consumes (width `QL`).
+///
+/// `kat`-gated: the prime-norm reduction's box search consumes the byte-exact
+/// DRBG (mirrors `quat_lideal_prime_norm_reduced_equivalent`).
+#[cfg(feature = "kat")]
+#[allow(dead_code)] // consumed by sign orchestration (next session) + the kat integration test
+pub(crate) fn commit<R: CryptoRng>(
+    witnesses: &[Uint<QL>],
+    sample_bound: i64,
+    max_trials: usize,
+    rng: &mut R,
+) -> Option<(
+    MontgomeryCurve<Fp1Element>,
+    EcBasis<Fp1Element>,
+    LeftIdeal<L>,
+)> {
+    use crate::params::lvl1::{com_degree, prime};
+    use crate::quaternion::lattice::narrow_int_lattice;
+    use crate::quaternion::lll::quat_lideal_prime_norm_reduced_equivalent;
+    use crate::quaternion::o0_mul::{c_ideal_to_left_ideal, ideal_basis_o0_to_standard_col};
+    use crate::quaternion::represent_integer::sampling_random_ideal_o0_given_norm_wide_ret;
+
+    // SL = internal sampler width for the COM_DEGREE ≈ 2^512 re-randomization
+    // (N_red ~ (p·n²)² needs 64·SL ≳ 2^2552). WL = working width for the raw
+    // ideal + its reduction. WL=40 is NOT enough: the prime-norm J-construction
+    // computes det_4x4(I·ᾱ) whose intermediate products reach ~2^3348 (entries
+    // ~2^837), overflowing 2560 bits and yielding a NON-left-closed ideal.
+    // WL=64 (4096 bits) has the headroom (verified by left-closure of the
+    // reduced ideal — `reduced_norm_vartime` itself false-negatives at this
+    // scale because its own det_4x4 overflows, so it is NOT a validity oracle).
+    const SL: usize = 64;
+    const WL: usize = 64;
+    let com_sl = com_degree().resize::<SL>();
+    let p_sl = prime().resize::<SL>();
+    let p_wl = prime().resize::<WL>();
+    let p16 = prime().resize::<L>();
+    let wit_sl: [Uint<SL>; 12] =
+        [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
+    let wit_wl: [Uint<WL>; 12] =
+        [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
+
+    // 1. Random O_0 ideal of norm COM_DEGREE (is_prime: COM_DEGREE is prime),
+    //    returned at the wide working width WL.
+    let raw = sampling_random_ideal_o0_given_norm_wide_ret::<SL, WL, _>(
+        &com_sl,
+        &p_sl,
+        true,
+        None,
+        sample_bound,
+        max_trials,
+        &wit_sl,
+        rng,
+    )
+    .ok()?;
+
+    // 2. Convert O_0-coords row-major → standard column-major doubled basis
+    //    (denom → 2·denom) — the form `lideal_reduce_basis` consumes — then
+    //    reduce to a prime-norm equivalent (same right order ⇒ same codomain).
+    let std_col = ideal_basis_o0_to_standard_col::<WL>(&raw.basis);
+    let denom_wl = Int::<WL>::from_i64(2).wrapping_mul(raw.denom.as_int());
+    let (j_basis, j_denom, q) = quat_lideal_prime_norm_reduced_equivalent::<WL, _>(
+        &std_col,
+        &denom_wl,
+        &raw.cached_norm,
+        &p_wl,
+        64,
+        &wit_wl,
+        rng,
+    )?;
+
+    // 3. The reduced ideal has small prime norm q (≲ bitsize(p)) ⇒ narrow its
+    //    standard-col basis to the spine width L, bridge, and run Clapotis.
+    let mut jb16 = [[Int::<L>::from_i64(0); 4]; 4];
+    for r in 0..4 {
+        for c in 0..4 {
+            jb16[r][c] = narrow_int_lattice::<WL, L>(&j_basis[r][c]);
+        }
+    }
+    let jd16 = narrow_int_lattice::<WL, L>(&j_denom);
+    let q16 = q.resize::<L>();
+    let spine_ideal = c_ideal_to_left_ideal::<L>(&jb16, &jd16, &q16);
+    // Try the index-0 spine first (C tries index 0 before the alternate
+    // orders); fall back to the general alt-orders spine if idx0 doesn't apply.
+    let (e_com, basis) = ideal_to_isogeny_clapotis_idx0(
+        &spine_ideal,
+        &p16,
+        witnesses,
+        sample_bound,
+        max_trials,
+        false,
+        rng,
+    )
+    .or_else(|| {
+        ideal_to_isogeny_clapotis(&spine_ideal, &p16, witnesses, sample_bound, max_trials, rng)
+    })?;
+    Some((e_com, basis, spine_ideal))
+}
+
+/// Sign step 4 — the dim-2 `(2^n, 2^n)`-isogeny `Φ: E_com × E_aux → E_aux' ×
+/// E_chall'` with kernel `⟨(B_com.P, B_aux.P), (B_com.Q, B_aux.Q)⟩`, pushing the
+/// commitment basis through. Port of C `compute_dim2_isogeny_challenge`
+/// (`sign.c:225`). Mirrors `verification::compute_commitment_curve_verify` (the
+/// verify-side dim-2 core), plus: the auxiliary kernel half is scaled by
+/// `degree_resp_inv` (x-only ladder, valid since `s(P−Q)=sP−sQ`) and the kernel
+/// is doubled `exp_diadic` times, and the chain is the RANDOMIZED variant.
+/// Returns `(codomain E1×E2, pushed B_com basis as 3 couple points)`. lvl1.
+#[cfg(feature = "alloc")]
+#[allow(dead_code, clippy::too_many_arguments)]
+pub(crate) fn compute_dim2_isogeny_challenge<R: CryptoRng>(
+    e_com: &MontgomeryCurve<Fp1Element>,
+    b_com: &EcBasis<Fp1Element>,
+    e_aux: &MontgomeryCurve<Fp1Element>,
+    b_aux: &EcBasis<Fp1Element>,
+    degree_resp_inv: &[u8],
+    pow_dim2: u32,
+    exp_diadic: u32,
+    rng: &mut R,
+) -> Option<(
+    CoupleCurve<Fp1Element>,
+    [CoupleMontgomeryPoint<Fp1Element>; 3],
+)> {
+    use crate::ec::couple::{CoupleJacobianPoint, ThetaKernelCouplePoints};
+    use crate::ec::jacobian::lift_basis;
+    use crate::isogeny::theta_chain::theta_chain_compute_and_eval_randomized;
+
+    let e12 = CoupleCurve::new(*e_com, *e_aux);
+
+    // Scale the auxiliary basis by degree_resp_inv (x-only; the difference point
+    // stays consistent because s·(P−Q) = sP − sQ).
+    let a24_aux = e_aux.a24();
+    let b_aux_s = EcBasis::new(
+        b_aux.p.ladder(degree_resp_inv, &a24_aux),
+        b_aux.q.ladder(degree_resp_inv, &a24_aux),
+        b_aux.p_minus_q.ladder(degree_resp_inv, &a24_aux),
+    );
+
+    // Lift both bases; build the couple kernel with the REAL difference point
+    // T1m2 = T1 − T2 = (P_com − Q_com, P_aux − Q_aux). C `copy_bases_to_kernel`
+    // supplies the genuine difference (B_com.PmQ, B_aux.PmQ) and the (2,2)
+    // gluing consumes it for sign-consistency — the `infinity()` placeholder
+    // (valid only for the fixed_degree/keygen paths that seed gluing from
+    // T1,T2 alone) mis-glues the challenge isogeny → wrong codomain.
+    let (p1, q1) = lift_basis(b_com, e_com).ok()?;
+    let (p2, q2) = lift_basis(&b_aux_s, e_aux).ok()?;
+    let pmq1 = p1.sub(&q1, &e_com.a);
+    let pmq2 = p2.sub(&q2, &e_aux.a);
+    let mut ker = ThetaKernelCouplePoints::new(
+        CoupleJacobianPoint::new(p1, p2),
+        CoupleJacobianPoint::new(q1, q2),
+        CoupleJacobianPoint::new(pmq1, pmq2),
+    );
+    if exp_diadic > 0 {
+        ker = ker.double_iter(exp_diadic, &e12);
+    }
+
+    // Push the commitment basis (on E1) with O on the E2 factor.
+    let inf = MontgomeryPoint::<Fp1Element>::infinity();
+    let eval = [
+        CoupleMontgomeryPoint::new(b_com.p, inf),
+        CoupleMontgomeryPoint::new(b_com.q, inf),
+        CoupleMontgomeryPoint::new(b_com.p_minus_q, inf),
+    ];
+    let mut out = [CoupleMontgomeryPoint::infinity(); 3];
+    let codomain =
+        theta_chain_compute_and_eval_randomized(pow_dim2, &e12, &ker, true, &eval, &mut out, rng)?;
+    Some((codomain, out))
+}
+
+/// Functional (self-consistent, NOT byte-exact) keygen at lvl1. Reuses
+/// [`commit`]'s sampler→prime-norm-reduce→Clapotis-spine pipeline (the secret
+/// ideal is a random `O_0`-ideal of norm `SEC_DEGREE = COM_DEGREE`, reduced to a
+/// prime-norm equivalent; the spine maps it to `E_A` and pushes the `E_0[2^f]`
+/// basis through to `B_A0`), then assembles the secret-key fields:
+/// the canonical basis `B_Acan` + `hint_pk` (`ec_curve_to_basis_2f_to_hint`) and
+/// the basis-change matrix `mat_BAcan_to_BA0_two`
+/// ([`crate::verification::change_of_basis_matrix`]). Returns
+/// `(E_A, secret_ideal, mat_BAcan_BA0, B_Acan, hint_pk, B_A0)`. HEAVY (real-scale
+/// spine). lvl1-pinned. MATRIX DIRECTION: matches C keygen.c:54
+/// `change_of_basis_matrix_tate(&mat, &canonical_basis, &B_0_two, ...)` =
+/// `change_of_basis_matrix(B_Acan, B_A0)` — i.e. B_Acan EXPRESSED IN B_A0 coords
+/// (`B_Acan.P = mat00·B_A0.P + mat10·B_A0.Q`). The sign challenge-ideal step
+/// applies it directly to `[1, chall_coeff]` (canonical-basis kernel coords) to
+/// get the kernel coords in the secret-pushed E0 frame.
+#[cfg(feature = "kat")]
+#[allow(dead_code, clippy::type_complexity)]
+pub(crate) fn keygen_lvl1<R: CryptoRng>(
+    witnesses: &[Uint<QL>],
+    sample_bound: i64,
+    max_trials: usize,
+    rng: &mut R,
+) -> Option<(
+    MontgomeryCurve<Fp1Element>,
+    LeftIdeal<L>,
+    [[crypto_bigint::U256; 2]; 2],
+    EcBasis<Fp1Element>,
+    u8,
+    EcBasis<Fp1Element>,
+)> {
+    use crate::ec::biscalar::ec_curve_to_basis_2f_to_hint;
+    use crate::verification::change_of_basis_matrix;
+    const TORSION_EVEN_POWER: usize = 248;
+
+    // E_A + the pushed E0 basis (B_A0) + the (prime-norm-reduced) secret ideal.
+    let (e_a, b_a0, secret_ideal) = commit(witnesses, sample_bound, max_trials, rng)?;
+    // Canonical basis of E_A[2^f] + its hint.
+    let (b_acan, hint_pk) = ec_curve_to_basis_2f_to_hint(&e_a, TORSION_EVEN_POWER);
+    // Basis-change matrix = B_Acan expressed in B_A0 coords (C keygen.c:54
+    // change_of_basis_matrix_tate(canonical, B_0_two) = change_of_basis_matrix(
+    // B_Acan, B_A0)). Both bases at order 2^f.
+    let f = u32::try_from(TORSION_EVEN_POWER).expect("248 fits u32");
+    let mat = change_of_basis_matrix(&b_acan, &b_a0, &e_a, f)?;
+    Some((e_a, secret_ideal, mat, b_acan, hint_pk, b_a0))
+}
+
+/// Sign — the auxiliary isogeny step. Port of C
+/// `evaluate_random_aux_isogeny_signature` (`sign.c:193`): sample a random
+/// `O_0`-ideal of norm `random_aux_norm` (general path, `is_prime = false`, with
+/// `QUAT_prime_cofactor = 2^251 + 65`), intersect it with `lideal_com_resp`, and
+/// map the result through the Clapotis spine to `(E_aux, B_aux)`. HEAVY. lvl1.
+#[cfg(feature = "kat")]
+#[allow(dead_code, clippy::too_many_arguments)]
+pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
+    random_aux_norm: &Uint<L>,
+    lideal_com_resp: &LeftIdeal<L>,
+    witnesses: &[Uint<QL>],
+    sample_bound: i64,
+    max_trials: usize,
+    rng: &mut R,
+) -> Option<(MontgomeryCurve<Fp1Element>, EcBasis<Fp1Element>)> {
+    use crate::quaternion::ideal_mul::lideal_intersect_lattice;
+    use crate::quaternion::represent_integer::sampling_random_ideal_o0_given_norm_wide_ret;
+    const SL: usize = 48;
+
+    let p_sl = crate::params::lvl1::prime().resize::<SL>();
+    let p16 = crate::params::lvl1::prime().resize::<L>();
+    let wit_sl: [Uint<SL>; 12] =
+        [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
+    // QUAT_prime_cofactor = 2^251 + 65 (lvl1).
+    let cofactor = Uint::<SL>::ONE
+        .shl_vartime(251)
+        .wrapping_add(&Uint::<SL>::from_u64(65));
+    let norm_sl = random_aux_norm.resize::<SL>();
+
+    // 1. Random O_0 ideal of norm random_aux_norm (composite ⇒ is_prime=false,
+    //    cofactor·norm target), returned at the spine width L.
+    let aux = match sampling_random_ideal_o0_given_norm_wide_ret::<SL, L, _>(
+        &norm_sl,
+        &p_sl,
+        false,
+        Some(&cofactor),
+        sample_bound,
+        max_trials,
+        &wit_sl,
+        rng,
+    ) {
+        Ok(a) => a,
+        Err(_) => {
+            std::eprintln!(
+                "DIAG aux: sampler failed (norm bits={})",
+                random_aux_norm.bits_vartime()
+            );
+            return None;
+        }
+    };
+    let n_com_lat = lattice_reduced_norm::<L, 32>(&lideal_com_resp.basis, &lideal_com_resp.denom);
+    let n_aux_lat = lattice_reduced_norm::<L, 32>(&aux.basis, &aux.denom);
+    std::eprintln!(
+        "DIAG aux: aux.lat_N={:?} aux.denom_bits={} com.lat_N={:?} com.denom_bits={} gcd_cached_one={}",
+        n_aux_lat.map(|n| n.bits_vartime()),
+        aux.denom.bits_vartime(),
+        n_com_lat.map(|n| n.bits_vartime()),
+        lideal_com_resp.denom.bits_vartime(),
+        crate::quaternion::represent_integer::uint_gcd_vartime::<L>(
+            &aux.cached_norm,
+            &lideal_com_resp.cached_norm
+        ) == Uint::<L>::ONE,
+    );
+    // 2. Intersect with lideal_com_resp.
+    let aux_resp_com = match lideal_intersect_lattice::<L>(lideal_com_resp, &aux) {
+        Ok(x) => x,
+        Err(_) => {
+            std::eprintln!("DIAG aux: intersect failed");
+            return None;
+        }
+    };
+    std::eprintln!(
+        "DIAG aux: N(aux_resp_com) bits={}",
+        aux_resp_com.cached_norm.bits_vartime(),
+    );
+    // 3. Clapotis spine → (E_aux, B_aux).
+    let r = ideal_to_isogeny_clapotis(
+        &aux_resp_com,
+        &p16,
+        witnesses,
+        sample_bound,
+        max_trials,
+        rng,
+    );
+    if r.is_none() {
+        std::eprintln!("DIAG aux: spine failed");
+    }
+    r
 }
 
 #[cfg(all(test, feature = "kat"))]
@@ -568,6 +918,400 @@ mod tests {
             Uint::from_u64(7),
             Uint::from_u64(11),
         ]
+    }
+
+    #[ignore = "heavy: functional keygen via the real-scale Clapotis spine"]
+    #[test]
+    fn keygen_lvl1_produces_consistent_keypair() {
+        use crate::isogeny::endomorphism::matrix_application_even_basis;
+        use crate::verification::ec_curve_verify_a;
+        let w = witnesses();
+        let mut rng = NistPqcRng::new(&[0x77u8; 48]);
+        let (e_a, _ideal, mat, b_acan, _hint, b_a0) =
+            keygen_lvl1(&w, 64, 1 << 14, &mut rng).expect("functional keygen");
+        // E_A is a valid curve.
+        assert!(ec_curve_verify_a(&e_a.a), "E_A valid");
+        // The matrix expresses the canonical basis in B_A0 coords (C keygen
+        // direction): B_Acan = M · B_A0, so matrix_application(B_A0, M) = B_Acan.
+        let a24 = e_a.a24();
+        let (rp, rq, _rpmq) =
+            matrix_application_even_basis(&b_a0.p, &b_a0.q, &b_a0.p_minus_q, &mat, 248, &a24)
+                .expect("apply mat");
+        assert_eq!(rp.affine_x(), b_acan.p.affine_x(), "M·B_A0.P = B_Acan.P");
+        assert_eq!(rq.affine_x(), b_acan.q.affine_x(), "M·B_A0.Q = B_Acan.Q");
+    }
+
+    #[test]
+    fn compute_dim2_isogeny_challenge_runs_on_e0() {
+        // Smoke: the dim-2 challenge isogeny wiring runs on E0×E0 with a small
+        // kernel (degree_resp_inv=1, no diadic doubling) and either splits
+        // (Some ⇒ valid codomain factors) or not — without panicking on the
+        // aux-scaling / lift / randomized-chain composition.
+        use crate::ec::biscalar::ec_basis_e0_2f;
+        use crate::verification::ec_curve_verify_a;
+        let e0 = MontgomeryCurve::<Fp1Element>::e0();
+        let a24 = e0.to_a24();
+        let base = ec_basis_e0_2f(248);
+        // order 2^(HD_extra2 + pow4) = 2^6.
+        let b = EcBasis::new(
+            a24.x_double_n(&base.p, 242),
+            a24.x_double_n(&base.q, 242),
+            a24.x_double_n(&base.p_minus_q, 242),
+        );
+        let mut rng = NistPqcRng::new(&[0x66u8; 48]);
+        let res = compute_dim2_isogeny_challenge(&e0, &b, &e0, &b, &[1u8], 4, 0, &mut rng);
+        if let Some((cod, _pts)) = res {
+            assert!(ec_curve_verify_a(&cod.e1.a), "E1 valid");
+            assert!(ec_curve_verify_a(&cod.e2.a), "E2 valid");
+        }
+    }
+
+    #[ignore = "diagnostic: commit at a wide width (RET=40) for the raw COM_DEGREE ideal"]
+    #[test]
+    fn diag_commit_steps() {
+        use crate::params::lvl1::{com_degree, prime};
+        use crate::quaternion::lattice::widen_int_lattice;
+        use crate::quaternion::lll::quat_lideal_prime_norm_reduced_equivalent;
+        use crate::quaternion::o0_mul::ideal_basis_o0_to_standard_col;
+        use crate::quaternion::represent_integer::sampling_random_ideal_o0_given_norm_wide_ret;
+
+        // RET = WL = 40: the RAW COM_DEGREE ideal has entries ~2^513, so its
+        // det_4x4 (~2^2052) and the reduction Gram (p·(c²+d²) ~ 2^1274) both
+        // need ~33+ limbs; L16 silently overflowed → malformed ideal.
+        const SL: usize = 64;
+        const WL: usize = 64;
+        let mut rng = NistPqcRng::new(&[0x42u8; 48]);
+
+        let com_sl = com_degree().resize::<SL>();
+        let p_sl = prime().resize::<SL>();
+        let wit_sl: [Uint<SL>; 12] =
+            [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
+        let p_wl = prime().resize::<WL>();
+        let wit_wl: [Uint<WL>; 12] =
+            [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
+
+        // 1. Sample the raw COM_DEGREE ideal at output width WL.
+        let raw = sampling_random_ideal_o0_given_norm_wide_ret::<SL, WL, _>(
+            &com_sl,
+            &p_sl,
+            true,
+            None,
+            64,
+            1 << 14,
+            &wit_sl,
+            &mut rng,
+        )
+        .expect("sampler");
+        std::eprintln!(
+            "STEP1 sampler@RET40: cached_norm={} bits, reduced_norm(det)={:?} bits",
+            raw.cached_norm.bits_vartime(),
+            raw.reduced_norm_vartime().map(|n| n.bits_vartime()),
+        );
+
+        // 2. Convert O_0-coords row-major → standard column-major doubled
+        //    (denom = 2·raw.denom), then prime-norm reduce at width WL.
+        let std_col = ideal_basis_o0_to_standard_col::<WL>(&raw.basis);
+        let denom_wl = Int::<WL>::from_i64(2).wrapping_mul(raw.denom.as_int());
+        let rb = crate::quaternion::lll::lideal_reduce_basis::<WL>(
+            &std_col,
+            &denom_wl.abs(),
+            &raw.cached_norm,
+            &p_wl,
+        );
+        std::eprintln!("STEP2 reduce_basis std-col@WL40 some={}", rb.is_some());
+        let red = quat_lideal_prime_norm_reduced_equivalent::<WL, _>(
+            &std_col,
+            &denom_wl,
+            &raw.cached_norm,
+            &p_wl,
+            64,
+            &wit_wl,
+            &mut rng,
+        );
+        std::eprintln!("STEP3 prime_norm_reduce@WL40 some={}", red.is_some());
+        let (jb, jd, q) = red.expect("reduce");
+        std::eprintln!(
+            "  q bits={} (prime-norm equivalent found)",
+            q.bits_vartime()
+        );
+
+        // STEP 4: bridge at WL40 FIRST (like keygen — no narrowing of the
+        // std-col basis before the bridge), THEN narrow the O_0-coords ideal.
+        use crate::quaternion::lattice::narrow_int_lattice;
+        use crate::quaternion::o0_mul::c_ideal_to_left_ideal;
+        let p16 = prime().resize::<L>();
+        let ideal_wl = c_ideal_to_left_ideal::<WL>(&jb, &jd, &q);
+        // Check closure at the wide width (before any narrowing).
+        {
+            use crate::quaternion::o0_mul::multiply_o0_basis;
+            let mut closed_wl = true;
+            for r in 0..4 {
+                let g = ideal_wl.basis[r];
+                for k in 0..4 {
+                    let mut e = [Int::<WL>::from_i64(0); 4];
+                    e[k] = Int::<WL>::from_i64(1);
+                    if !ideal_wl.contains(&multiply_o0_basis::<WL>(&e, &g, &p_wl)) {
+                        closed_wl = false;
+                    }
+                }
+            }
+            std::eprintln!(
+                "  ideal_wl@WL40 left-closed={} reduced_norm={:?}",
+                closed_wl,
+                ideal_wl.reduced_norm_vartime().map(|n| n.bits_vartime())
+            );
+        }
+        let mut jb16 = [[Int::<L>::from_i64(0); 4]; 4];
+        for r in 0..4 {
+            for c in 0..4 {
+                jb16[r][c] = narrow_int_lattice::<WL, L>(&ideal_wl.basis[r][c]);
+            }
+        }
+        let spine_ideal = LeftIdeal::<L>::with_denom_and_norm(
+            jb16,
+            ideal_wl.denom.resize::<L>(),
+            ideal_wl.cached_norm.resize::<L>(),
+        );
+        std::eprintln!(
+            "  spine_ideal cached_norm bits={} reduced_norm={:?}",
+            spine_ideal.cached_norm.bits_vartime(),
+            spine_ideal.reduced_norm_vartime().map(|n| n.bits_vartime())
+        );
+        // Call find_uv directly (with the 6 widened alts, as the spine does)
+        // to see its exact error on this q-ideal.
+        use crate::quaternion::connecting_ideals as ci;
+        use crate::quaternion::lattice::widen_int_lattice as widen;
+        let widen_id = |id: &LeftIdeal<8>| {
+            let mut b = [[Int::<L>::from_i64(0); 4]; 4];
+            for r in 0..4 {
+                for c in 0..4 {
+                    b[r][c] = widen::<8, L>(&id.basis[r][c]);
+                }
+            }
+            LeftIdeal::<L>::with_denom_and_norm(
+                b,
+                id.denom.resize::<L>(),
+                id.cached_norm.resize::<L>(),
+            )
+        };
+        let alts = [
+            widen_id(&ci::alternate_connecting_ideal_0_l1()),
+            widen_id(&ci::alternate_connecting_ideal_1_l1()),
+            widen_id(&ci::alternate_connecting_ideal_2_l1()),
+            widen_id(&ci::alternate_connecting_ideal_3_l1()),
+            widen_id(&ci::alternate_connecting_ideal_4_l1()),
+            widen_id(&ci::alternate_connecting_ideal_5_l1()),
+        ];
+        let target = *Uint::<L>::ONE.shl_vartime(F).as_int();
+        let fuv = find_uv::<L>(&target, &spine_ideal, &p16, &alts, 2);
+        std::eprintln!(
+            "STEP4a find_uv(alts) = {:?}",
+            fuv.as_ref().map(|_| "Ok").map_err(|e| e)
+        );
+        let fuv0 = find_uv::<L>(&target, &spine_ideal, &p16, &[], 2);
+        std::eprintln!(
+            "STEP4b find_uv(idx0) = {:?}",
+            fuv0.as_ref().map(|_| "Ok").map_err(|e| e)
+        );
+        let wit_ql: [Uint<QL>; 5] = [2u64, 3, 5, 7, 11].map(Uint::from_u64);
+        let idx0 = ideal_to_isogeny_clapotis_idx0(
+            &spine_ideal,
+            &p16,
+            &wit_ql,
+            64,
+            1 << 14,
+            false,
+            &mut rng,
+        );
+        std::eprintln!("STEP4c idx0 spine some={}", idx0.is_some());
+        // Is the bridged commit ideal a valid LEFT O_0-ideal (left-closed)?
+        use crate::quaternion::o0_mul::multiply_o0_basis;
+        let mut closed = true;
+        for r in 0..4 {
+            let g = spine_ideal.basis[r];
+            for k in 0..4 {
+                let mut e = [Int::<L>::from_i64(0); 4];
+                e[k] = Int::<L>::from_i64(1);
+                let prod = multiply_o0_basis::<L>(&e, &g, &p16);
+                if !spine_ideal.contains(&prod) {
+                    closed = false;
+                }
+            }
+        }
+        std::eprintln!(
+            "STEP5 spine_ideal left-closed={} reduced_norm={:?}",
+            closed,
+            spine_ideal.reduced_norm_vartime().map(|n| n.bits_vartime())
+        );
+        let _ = widen_int_lattice::<8, WL>;
+    }
+
+    #[ignore = "diagnostic: isolate construction-vs-narrow in the sampler finalize at COM_DEGREE"]
+    #[test]
+    fn diag_sampler_finalize() {
+        use crate::params::lvl1::{com_degree, prime};
+        use crate::quaternion::Quaternion;
+        use crate::quaternion::o0_mul::{
+            left_ideal_from_element_and_integer_o0, multiply_o0_basis, standard_to_o0_basis,
+            uint_as_nonneg_int,
+        };
+        use crate::quaternion::represent_integer::{narrow_left_ideal, sample_fast_path_gen};
+        const SL: usize = 64;
+        const RET: usize = 40;
+        let com_sl = com_degree().resize::<SL>();
+        let p_sl = prime().resize::<SL>();
+        let mut rng = NistPqcRng::new(&[0x42u8; 48]);
+
+        let gen_u = sample_fast_path_gen::<SL, _>(&com_sl, &p_sl, 1 << 14, &mut rng).expect("gen");
+        let gen_std = Quaternion::<SL>::new(
+            uint_as_nonneg_int(&gen_u[0]).unwrap(),
+            uint_as_nonneg_int(&gen_u[1]).unwrap(),
+            uint_as_nonneg_int(&gen_u[2]).unwrap(),
+            uint_as_nonneg_int(&gen_u[3]).unwrap(),
+        );
+        let gen_o0 = standard_to_o0_basis::<SL>(&gen_std);
+        let rerand = [
+            Int::<SL>::from_i64(1),
+            Int::<SL>::from_i64(2),
+            Int::<SL>::from_i64(3),
+            Int::<SL>::from_i64(5),
+        ];
+        let gen_combined = multiply_o0_basis::<SL>(&gen_o0, &rerand, &p_sl);
+        let wide = left_ideal_from_element_and_integer_o0::<SL>(&gen_combined, &com_sl, &p_sl);
+
+        let closed =
+            |id_basis: &[[Int<SL>; 4]; 4], contains: &dyn Fn(&[Int<SL>; 4]) -> bool| -> bool {
+                for r in 0..4 {
+                    let g = id_basis[r];
+                    for k in 0..4 {
+                        let mut e = [Int::<SL>::from_i64(0); 4];
+                        e[k] = Int::<SL>::from_i64(1);
+                        if !contains(&multiply_o0_basis::<SL>(&e, &g, &p_sl)) {
+                            return false;
+                        }
+                    }
+                }
+                true
+            };
+        let wide_closed = closed(&wide.basis, &|x| wide.contains(x));
+        std::eprintln!(
+            "WIDE@SL64 closed={} reduced_norm={:?} cached_norm={} bits",
+            wide_closed,
+            wide.reduced_norm_vartime().map(|n| n.bits_vartime()),
+            wide.cached_norm.bits_vartime(),
+        );
+        let narrowed = narrow_left_ideal::<SL, RET>(&wide).expect("narrow");
+        let p_ret = prime().resize::<RET>();
+        let closed_ret = {
+            use crate::quaternion::o0_mul::multiply_o0_basis as mul_ret;
+            let mut ok = true;
+            for r in 0..4 {
+                let g = narrowed.basis[r];
+                for k in 0..4 {
+                    let mut e = [Int::<RET>::from_i64(0); 4];
+                    e[k] = Int::<RET>::from_i64(1);
+                    if !narrowed.contains(&mul_ret::<RET>(&e, &g, &p_ret)) {
+                        ok = false;
+                    }
+                }
+            }
+            ok
+        };
+        std::eprintln!(
+            "NARROW@RET40 closed={} cached_norm={} bits",
+            closed_ret,
+            narrowed.cached_norm.bits_vartime(),
+        );
+
+        // Round-trip the std-col conversion on the (valid) narrowed ideal.
+        use crate::quaternion::o0_mul::{
+            ideal_basis_o0_to_standard_col, ideal_basis_standard_col_to_o0,
+        };
+        let sc = ideal_basis_o0_to_standard_col::<RET>(&narrowed.basis);
+        let back = ideal_basis_standard_col_to_o0::<RET>(&sc);
+        let rt_ok = back == narrowed.basis;
+        std::eprintln!("STD-COL round-trip ok={rt_ok}");
+        // Reduce at a WIDER width WR=64 (the J-construction's det_4x4(prod)
+        // intermediate ~2^3348 overflows WL=40). Widen the valid narrowed
+        // ideal → WR, std-col convert, reduce, check OUTPUT closure.
+        use crate::quaternion::lattice::widen_int_lattice;
+        const WR: usize = 64;
+        let p_wr = prime().resize::<WR>();
+        let wit_wr: [Uint<WR>; 12] =
+            [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
+        let mut basis_wr = [[Int::<WR>::from_i64(0); 4]; 4];
+        for r in 0..4 {
+            for c in 0..4 {
+                basis_wr[r][c] = widen_int_lattice::<RET, WR>(&narrowed.basis[r][c]);
+            }
+        }
+        let ideal_wr = LeftIdeal::<WR>::with_denom_and_norm(
+            basis_wr,
+            narrowed.denom.resize::<WR>(),
+            narrowed.cached_norm.resize::<WR>(),
+        );
+        let sc_wr = ideal_basis_o0_to_standard_col::<WR>(&ideal_wr.basis);
+        let denom_wr = Int::<WR>::from_i64(2).wrapping_mul(ideal_wr.denom.as_int());
+        let red = crate::quaternion::lll::quat_lideal_prime_norm_reduced_equivalent::<WR, _>(
+            &sc_wr,
+            &denom_wr,
+            &ideal_wr.cached_norm,
+            &p_wr,
+            64,
+            &wit_wr,
+            &mut rng,
+        );
+        if let Some((jb, jd, q)) = red {
+            use crate::quaternion::o0_mul::c_ideal_to_left_ideal;
+            use crate::quaternion::o0_mul::multiply_o0_basis as mul2;
+            let red_ideal = c_ideal_to_left_ideal::<WR>(&jb, &jd, &q);
+            let mut ok = true;
+            for r in 0..4 {
+                let g = red_ideal.basis[r];
+                for k in 0..4 {
+                    let mut e = [Int::<WR>::from_i64(0); 4];
+                    e[k] = Int::<WR>::from_i64(1);
+                    if !red_ideal.contains(&mul2::<WR>(&e, &g, &p_wr)) {
+                        ok = false;
+                    }
+                }
+            }
+            std::eprintln!("REDUCE@WR64 out q bits={} closed={ok}", q.bits_vartime());
+        } else {
+            std::eprintln!("REDUCE@WR64 = None");
+        }
+    }
+
+    /// END-TO-END signing commitment via `commit`: sample a random O_0 ideal of
+    /// norm COM_DEGREE → prime-norm reduce → Clapotis spine. Validated by the
+    /// Weil-degree oracle: the commitment isogeny has degree q = N(spine_ideal)
+    /// (odd prime), so e_{2^F}(out.P, out.Q) = e_{2^F}(E0.P, E0.Q)^q (up to the
+    /// pairing orientation). HEAVY (wide LLL at SL=48 + real-scale spine).
+    #[ignore = "heavy: commit samples at COM_DEGREE (wide LLL) then runs the spine"]
+    #[test]
+    fn commit_produces_valid_commitment_curve_and_basis() {
+        let w = witnesses();
+        let mut rng = NistPqcRng::new(&[0x42u8; 48]);
+        let (e_com, basis, ideal) = commit(&w, 64, 1 << 14, &mut rng).expect("commit succeeds");
+
+        // Weil-degree oracle on the pushed canonical basis. The isogeny degree
+        // is N(ideal) = the reduced norm (= sqrt of cached_norm, which stores
+        // the index N²), NOT cached_norm itself.
+        let (bp, bq, bpmq) = basis_e0_lvl1();
+        let e0 = MontgomeryCurve::<Fp1Element>::e0();
+        let w_in = weil(F, &bp, &bq, &bpmq, &e0);
+        let q = ideal
+            .reduced_norm_vartime()
+            .expect("reduced ideal norm (small q fits L16)");
+        let expected = w_in.pow_vartime(&q.to_le_bytes());
+        let expected_inv = expected.invert().expect("pairing value is a unit");
+
+        let pq_out = basis.p.x_add(&basis.q, &basis.p_minus_q);
+        let w_out = weil(F, &basis.p, &basis.q, &pq_out, &e_com);
+        assert!(
+            w_out == expected || w_out == expected_inv,
+            "Weil-degree oracle: e(out) must be e(E0)^N(ideal)",
+        );
     }
 
     /// END-TO-END RUN of the Clapotis spine on a REALISTIC non-principal

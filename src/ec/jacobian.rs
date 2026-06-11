@@ -250,6 +250,71 @@ impl<F: BaseField> JacobianPoint<F> {
         (u, v, w)
     }
 
+    /// Complete Jacobian point addition `self + q` on the Montgomery curve
+    /// `y² = x³ + A·x² + x`. `a` is the affine coefficient `A`. Verbatim port
+    /// of the C reference `ADD` (`ec_jac.c:206`): handles all edge cases in
+    /// constant time — `P = ∞ ⇒ Q`, `Q = ∞ ⇒ P`, the doubling case
+    /// (`dx = dy = 0`), and `P = −Q ⇒ ∞` (falls out as `Z = 0`).
+    pub fn add(&self, q: &Self, a: &Fp2<F>) -> Self {
+        let ctl1 = self.z.is_zero(); // P == ∞
+        let ctl2 = q.z.is_zero(); // Q == ∞
+
+        let z1_sq = self.z.square();
+        let z2_sq = q.z.square();
+
+        // Ordinary-case dy, dx.
+        let v1 = z2_sq.mul(&q.z).mul(&self.y); // y1·z2³
+        let t2 = z1_sq.mul(&self.z).mul(&q.y); // y2·z1³
+        let mut dy = t2.sub(&v1); // y2·z1³ − y1·z2³
+        let u2 = z1_sq.mul(&q.x); // x2·z1²
+        let u1 = z2_sq.mul(&self.x); // x1·z2²
+        let mut dx = u2.sub(&u1); // x2·z1² − x1·z2²
+
+        // Doubling-case dy, dx.
+        let dx_dbl = self.y.double(); // 2y1
+        let mut t2d = a.double().mul(&self.x); // 2A·x1
+        t2d = t2d.add(&z1_sq); // 2A·x1 + z1²
+        t2d = t2d.mul(&z1_sq); // z1²·(2A·x1 + z1²)
+        let x1_sq = self.x.square();
+        t2d = t2d.add(&x1_sq).add(&x1_sq).add(&x1_sq); // 3x1² + z1²·(2Ax1+z1²)
+        let dy_dbl = t2d.mul(&q.z); // z2·(…)
+
+        // Switch to the doubling formulas when dx == dy == 0.
+        let ctl = dx.is_zero() & dy.is_zero();
+        dx = Fp2::conditional_select(&dx, &dx_dbl, ctl);
+        dy = Fp2::conditional_select(&dy, &dy_dbl, ctl);
+
+        let z1z2 = self.z.mul(&q.z);
+        let z1z2_sq = z1z2.square();
+        let dx_sq = dx.square();
+        let dy_sq = dy.square();
+
+        // x3 = dy² − dx²·(A·(z1z2)² + u1 + u2)
+        let mut x3 = a.mul(&z1z2_sq).add(&u1).add(&u2);
+        x3 = x3.mul(&dx_sq);
+        x3 = dy_sq.sub(&x3);
+
+        // y3 = dy·(u1·dx² − x3) − v1·dx³
+        let mut y3 = u1.mul(&dx_sq).sub(&x3).mul(&dy);
+        let dx_cube_v1 = dx_sq.mul(&dx).mul(&v1);
+        y3 = y3.sub(&dx_cube_v1);
+
+        // z3 = dx·z1·z2
+        let z3 = dx.mul(&z1z2);
+
+        let mut r = Self::new(x3, y3, z3);
+        // P == ∞ ⇒ R = Q; Q == ∞ ⇒ R = P.
+        r = Self::conditional_select(&r, q, ctl1);
+        r = Self::conditional_select(&r, self, ctl2);
+        r
+    }
+
+    /// Complete Jacobian point subtraction `self − q = self + (−q)`.
+    #[inline]
+    pub fn sub(&self, q: &Self, a: &Fp2<F>) -> Self {
+        self.add(&q.negate(), a)
+    }
+
     /// Convert to Montgomery x-only projective coordinates `(X : Z²)`.
     #[inline]
     pub fn to_montgomery_xz(&self) -> crate::ec::montgomery::MontgomeryPoint<F> {
@@ -805,6 +870,47 @@ mod tests {
     #[test]
     fn negate_negate_is_identity_at_lvl1() {
         check_negate_negate_is_identity::<Fp1Element>();
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn jac_sub_matches_known_difference_point_at_lvl1() {
+        // Lift the canonical E0[2^248] basis (P, Q, P−Q), then verify the
+        // complete ADD/SUB primitive against independent ground truth:
+        //  (1) P − Q computed via `sub` has x == x(P−Q) from the basis;
+        //  (2) P + (−P) == ∞ (Z == 0);
+        //  (3) x(P + Q) and x(P − Q) match `add_components` (u∓v)/w.
+        use crate::ec::couple::EcBasis;
+        use crate::isogeny::endomorphism::basis_e0_lvl1;
+        let e0 = MontgomeryCurve::<Fp1Element>::e0();
+        let a = e0.a;
+        let (px, qx, pmqx) = basis_e0_lvl1();
+        let basis = EcBasis::new(px, qx, pmqx);
+        let (p, q) = lift_basis(&basis, &e0).expect("lift E0 basis");
+
+        // (1) x(P − Q) == x(basis.p_minus_q).
+        let diff = p.sub(&q, &a);
+        let diff_x = diff.to_montgomery_xz().affine_x();
+        assert_eq!(
+            diff_x,
+            pmqx.affine_x(),
+            "x(P−Q) matches the basis difference point"
+        );
+
+        // (2) P + (−P) = ∞.
+        let zero = p.add(&p.negate(), &a);
+        assert!(bool::from(zero.is_infinity()), "P + (−P) = ∞");
+
+        // (3) Cross-check x(P+Q), x(P−Q) against add_components.
+        let (u, v, w) = p.add_components(&q, &a);
+        let w_inv = w
+            .invert()
+            .expect("w invertible for distinct, non-negated points");
+        let x_sum_ac = u.sub(&v).mul(&w_inv); // x(P+Q) = (u−v)/w
+        let x_dif_ac = u.add(&v).mul(&w_inv); // x(P−Q) = (u+v)/w
+        let sum_x = p.add(&q, &a).to_montgomery_xz().affine_x();
+        assert_eq!(sum_x, x_sum_ac, "x(P+Q) matches add_components");
+        assert_eq!(diff_x, x_dif_ac, "x(P−Q) matches add_components");
     }
 
     #[test]

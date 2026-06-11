@@ -29,6 +29,116 @@ const FP2_BYTES_LVL1: usize = 64;
 const MAT_ENTRY_BYTES_LVL1: usize = 16;
 /// Challenge-coefficient width: `SECURITY_BITS / 8 = 128 / 8 = 16` at lvl1.
 const CHALL_BYTES_LVL1: usize = 16;
+/// lvl1 secret-key wire size and field widths (C `secret_key_from_bytes`).
+/// `SK_BYTES = 65 (pk) + 32 (norm) + 4·32 (gen coords) + 4·32 (matrix) = 353`.
+const SK_BYTES_LVL1: usize = 353;
+/// `FP_ENCODED_BYTES` / `TORSION_2POWER_BYTES` at lvl1 (both 32).
+const SK_FIELD_BYTES_LVL1: usize = 32;
+
+/// Decode a `nbytes`-byte little-endian field into `Int<W>`. When `signed`, the
+/// top bit is the two's-complement sign (C `ibz_from_bytes` with `sgn=true`).
+fn decode_int_le<const W: usize>(bytes: &[u8], signed: bool) -> crypto_bigint::Int<W> {
+    let mut buf = [0u8; 32];
+    buf[..bytes.len().min(32)].copy_from_slice(&bytes[..bytes.len().min(32)]);
+    let raw = U256::from_le_slice(&buf);
+    let nbytes = bytes.len();
+    if signed && (bytes[nbytes - 1] >> 7) == 1 {
+        // negative two's complement over `nbytes` bits: |value| = 2^(8·nbytes) − raw.
+        let mag = if nbytes >= 32 {
+            raw.wrapping_neg() // 2^256 − raw
+        } else {
+            U256::ONE
+                .shl_vartime(u32::try_from(8 * nbytes).expect("8·nbytes fits u32"))
+                .wrapping_sub(&raw)
+        };
+        mag.resize::<W>().as_int().wrapping_neg()
+    } else {
+        *raw.resize::<W>().as_int()
+    }
+}
+
+/// Decoded secret key — C `secret_key_t` (the wire-relevant fields). Lives here
+/// alongside the other decoded wire forms. lvl1-pinned.
+#[derive(Clone, Debug)]
+pub struct SecretKeyData {
+    /// Affine Montgomery `A` of the public curve (== pk curve).
+    pub curve_a: Fp2<Fp1Element>,
+    /// Public-key basis hint.
+    pub hint_pk: u8,
+    /// The secret left ideal `O_0·gen + norm·O_0`, reconstructed from the
+    /// encoded generator and norm.
+    pub secret_ideal: crate::quaternion::ideal::LeftIdeal<16>,
+    /// Basis-change matrix `mat_BAcan_to_BA0_two`.
+    pub mat_bacan_to_ba0_two: [[U256; 2]; 2],
+}
+
+impl SecretKeyData {
+    /// Decode from the 353-byte lvl1 wire format — C `secret_key_from_bytes`.
+    /// Layout: `pk (65) || norm (32, unsigned) || gen.coord[0..3] (4×32, signed)
+    /// || mat[0][0],[0][1],[1][0],[1][1] (4×32, unsigned)`. The secret ideal is
+    /// rebuilt via `quat_lideal_create(gen, denom=1, norm, O_0)` (the encoded
+    /// generator's denominator is omitted — it does not change the ideal).
+    pub fn from_bytes_lvl1(enc: &[u8]) -> Result<Self> {
+        use crate::quaternion::Quaternion;
+        use crate::quaternion::lattice::narrow_int_lattice;
+        use crate::quaternion::o0_mul::{c_ideal_to_left_ideal, quat_lideal_create};
+        const W: usize = 24; // create width: norm~2^250 ⇒ det_4x4 needs headroom
+
+        if enc.len() < SK_BYTES_LVL1 {
+            return Err(Error::BufferTooSmall {
+                required: SK_BYTES_LVL1,
+                provided: enc.len(),
+            });
+        }
+        let pk = PublicKeyData::from_bytes_lvl1(&enc[..PK_BYTES_LVL1])?;
+        let mut off = PK_BYTES_LVL1;
+        let fb = SK_FIELD_BYTES_LVL1;
+
+        let norm = decode_int_le::<W>(&enc[off..off + fb], false).abs();
+        off += fb;
+        let gen_q = Quaternion::<W>::new(
+            decode_int_le::<W>(&enc[off..off + fb], true),
+            decode_int_le::<W>(&enc[off + fb..off + 2 * fb], true),
+            decode_int_le::<W>(&enc[off + 2 * fb..off + 3 * fb], true),
+            decode_int_le::<W>(&enc[off + 3 * fb..off + 4 * fb], true),
+        );
+        off += 4 * fb;
+
+        let read_u256 = |o: usize| -> U256 {
+            let mut buf = [0u8; 32];
+            buf[..fb].copy_from_slice(&enc[o..o + fb]);
+            U256::from_le_slice(&buf)
+        };
+        let mat = [
+            [read_u256(off), read_u256(off + fb)],
+            [read_u256(off + 2 * fb), read_u256(off + 3 * fb)],
+        ];
+
+        // Reconstruct the secret ideal at width W, narrow to LeftIdeal<16>.
+        let p_w = crate::params::lvl1::prime().resize::<W>();
+        let (basis, denom, n) =
+            quat_lideal_create::<W>(&gen_q, &crypto_bigint::Int::<W>::from_i64(1), &norm, &p_w);
+        let wide = c_ideal_to_left_ideal::<W>(&basis, &denom, &n);
+        let mut b16 = [[crypto_bigint::Int::<16>::from_i64(0); 4]; 4];
+        for (row16, row_w) in b16.iter_mut().zip(wide.basis.iter()) {
+            for (e16, e_w) in row16.iter_mut().zip(row_w.iter()) {
+                *e16 = narrow_int_lattice::<W, 16>(e_w);
+            }
+        }
+        let secret_ideal = crate::quaternion::ideal::LeftIdeal::<16>::with_denom_and_norm(
+            b16,
+            wide.denom.resize::<16>(),
+            wide.cached_norm.resize::<16>(),
+        );
+
+        Ok(Self {
+            curve_a: pk.curve_a,
+            hint_pk: pk.hint_pk,
+            secret_ideal,
+            mat_bacan_to_ba0_two: mat,
+        })
+    }
+}
 
 /// Decoded public key — C `public_key_t`. The curve is stored by its
 /// normalized affine Montgomery coefficient `A` (`C = 1`).
@@ -332,10 +442,40 @@ pub fn compute_and_set_basis_change_matrix(
     let b_can_chall_f = ec_dbl_iter_basis(&b_can_chall, e_diff, e_chall);
     let b_aux_2_can_f = ec_dbl_iter_basis(&b_aux_2_can, e_diff, e_aux_2);
 
+    #[cfg(feature = "kat")]
+    {
+        // Order probe: a point P has order exactly 2^f iff [2^f]P = O and
+        // [2^(f-1)]P != O. Reports the order status of every basis in play.
+        let ord = |bp: &crate::ec::montgomery::MontgomeryPoint<Fp1Element>,
+                   c: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>|
+         -> (bool, bool) {
+            let a24c = c.to_a24();
+            let full = a24c.x_double_n(bp, f32);
+            let near = a24c.x_double_n(bp, f32 - 1);
+            (
+                bool::from(full.is_infinity()),
+                bool::from(near.is_infinity()),
+            )
+        };
+        std::eprintln!(
+            "DIAG bcm: f={f} aux2.P=(2^f=O?{:?},2^(f-1)=O?{:?}) chall2.P=({:?},{:?}) auxcan_f.P=({:?},{:?})",
+            ord(&b_aux_2.p, e_aux_2).0,
+            ord(&b_aux_2.p, e_aux_2).1,
+            ord(&b_chall_2.p, e_chall).0,
+            ord(&b_chall_2.p, e_chall).1,
+            ord(&b_aux_2_can_f.p, e_aux_2).0,
+            ord(&b_aux_2_can_f.p, e_aux_2).1,
+        );
+    }
+
     // M_aux = "go from B_aux_2 to B_aux_2_can" (C's invert variant).
     let m_aux = match change_of_basis_matrix(b_aux_2, &b_aux_2_can_f, e_aux_2, f32) {
         Some(m) => m,
-        None => return false,
+        None => {
+            #[cfg(feature = "kat")]
+            std::eprintln!("DIAG bcm: m_aux change_of_basis failed (f={f})");
+            return false;
+        }
     };
     // Apply M_aux to the supplied challenge basis (points live on E_chall).
     let a24 = e_chall.a24();
@@ -348,20 +488,68 @@ pub fn compute_and_set_basis_change_matrix(
         &a24,
     ) {
         Some(t) => t,
-        None => return false,
+        None => {
+            #[cfg(feature = "kat")]
+            std::eprintln!("DIAG bcm: matrix_application failed");
+            return false;
+        }
     };
     let b_chall_2_adj = EcBasis::new(cp, cq, cpmq);
 
     // M_chall = canonical challenge basis → adjusted supplied basis.
     let m_chall = match change_of_basis_matrix(&b_chall_2_adj, &b_can_chall_f, e_chall, f32) {
         Some(m) => m,
-        None => return false,
+        None => {
+            #[cfg(feature = "kat")]
+            std::eprintln!("DIAG bcm: m_chall change_of_basis failed");
+            return false;
+        }
     };
 
     sig.mat = m_chall;
     sig.hint_chall = hint_chall;
     sig.hint_aux = hint_aux;
     true
+}
+
+/// Montgomery-curve isomorphism `from → to` (same j-invariant), as the linear
+/// map on `(x : z)`: `x ↦ Nx·x + Nz·z`, `z ↦ D·z`. Port of C `ec_isomorphism`
+/// (`isog_chains.c`) specialized to the affine `C = 1` representation. Returns
+/// `(Nx, Nz, D)`, or `None` in the rare degenerate case (`Nx = 0` or `D = 0`).
+pub fn ec_isomorphism(
+    from_a: &Fp2<Fp1Element>,
+    to_a: &Fp2<Fp1Element>,
+) -> Option<(Fp2<Fp1Element>, Fp2<Fp1Element>, Fp2<Fp1Element>)> {
+    let three = Fp2::<Fp1Element>::one().double().add(&Fp2::one());
+    let nine = three.double().add(&three);
+    let cube = |x: &Fp2<Fp1Element>| x.square().mul(x);
+    // λx = (2·toA³ − 9·toA)·(3 − fromA²);  λz = (2·fromA³ − 9·fromA)·(3 − toA²).
+    let mut nx = cube(to_a)
+        .double()
+        .sub(&nine.mul(to_a))
+        .mul(&three.sub(&from_a.square()));
+    let mut d = cube(from_a)
+        .double()
+        .sub(&nine.mul(from_a))
+        .mul(&three.sub(&to_a.square()));
+    // Nz = fromA·λx − toA·λz (C = 1).
+    let nz = from_a.mul(&nx).sub(&to_a.mul(&d));
+    // Scale by 3·fromC·toC = 3.
+    nx = nx.mul(&three);
+    d = d.mul(&three);
+    if bool::from(nx.is_zero()) || bool::from(d.is_zero()) {
+        return None;
+    }
+    Some((nx, nz, d))
+}
+
+/// Apply an [`ec_isomorphism`] `(Nx, Nz, D)` to an x-only point.
+pub fn apply_iso(
+    p: &crate::ec::montgomery::MontgomeryPoint<Fp1Element>,
+    isom: &(Fp2<Fp1Element>, Fp2<Fp1Element>, Fp2<Fp1Element>),
+) -> crate::ec::montgomery::MontgomeryPoint<Fp1Element> {
+    let (nx, nz, d) = isom;
+    crate::ec::montgomery::MontgomeryPoint::new(p.x.mul(nx).add(&p.z.mul(nz)), p.z.mul(d))
 }
 
 /// Verify the Montgomery coefficient `A` describes a valid curve: `A² − 4 ≠ 0`,
@@ -441,7 +629,7 @@ pub fn compute_challenge_verify(
 /// Double every point of a basis `n` times — C `ec_dbl_iter_basis`. Reduces a
 /// basis of order `2^k` to one of order `2^(k − n)`.
 #[cfg(feature = "alloc")]
-fn ec_dbl_iter_basis(
+pub(crate) fn ec_dbl_iter_basis(
     bas: &crate::ec::couple::EcBasis<Fp1Element>,
     n: u32,
     curve: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
@@ -739,9 +927,179 @@ pub fn protocols_verify(sig_bytes: &[u8], pk_bytes: &[u8], message: &[u8]) -> bo
     hash_to_challenge(&pk.curve_a, &e_com.a, message) == sig.chall_coeff
 }
 
+/// Sign — the short `2^r` response isogeny (`two_resp_length > 0`). Port of C
+/// `compute_small_chain_isogeny_signature` (`sign.c:304`): the response (of
+/// norm `2^two_resp`) gives a kernel via `id2iso_ideal_to_kernel_dlogs_even`;
+/// build that kernel point on `B_chall_2` reduced to order `2^two_resp`, take
+/// the `2^two_resp`-isogeny, and push the (original) challenge basis through it.
+/// Returns the updated `(E_chall_2, B_chall_2)`. lvl1.
+#[cfg(feature = "alloc")]
+pub fn compute_small_chain_isogeny_signature(
+    e_chall_2: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
+    b_chall_2: &crate::ec::couple::EcBasis<Fp1Element>,
+    resp_o0: &[crypto_bigint::Int<16>; 4],
+    pow_dim2: u32,
+    two_resp_length: u32,
+) -> Option<(
+    crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
+    crate::ec::couple::EcBasis<Fp1Element>,
+)> {
+    use crate::ec::biscalar::ec_biscalar_mul;
+    use crate::ec::couple::EcBasis;
+    use crate::ec::montgomery::MontgomeryCurve;
+    use crate::isogeny::endomorphism::id2iso_ideal_to_kernel_dlogs_even;
+    use crate::isogeny::two::IsogenyChain2e;
+    const HD: u32 = 2;
+
+    let length = usize::try_from(two_resp_length).ok()?;
+    // Kernel coordinates of the response ideal (norm 2^two_resp).
+    let vec2 = id2iso_ideal_to_kernel_dlogs_even::<16>(resp_o0, length);
+    // Reduce the challenge basis to order 2^two_resp; form the kernel point.
+    let b_red = ec_dbl_iter_basis(b_chall_2, pow_dim2 + HD, e_chall_2);
+    let a24 = e_chall_2.a24();
+    let ker = ec_biscalar_mul(
+        &vec2[0].to_le_bytes(),
+        &vec2[1].to_le_bytes(),
+        length,
+        &b_red.p,
+        &b_red.q,
+        &b_red.p_minus_q,
+        &a24,
+    )?;
+    // 2^two_resp-isogeny; push the original challenge basis through it.
+    let a24c = e_chall_2.to_a24();
+    let (chain, _) = IsogenyChain2e::new(a24c, ker, two_resp_length, None);
+    let push = |p: &crate::ec::montgomery::MontgomeryPoint<Fp1Element>| {
+        let mut q = *p;
+        for step in &chain.steps {
+            q = step.eval(&q);
+        }
+        q
+    };
+    let new_basis = EcBasis::new(
+        push(&b_chall_2.p),
+        push(&b_chall_2.q),
+        push(&b_chall_2.p_minus_q),
+    );
+    Some((
+        MontgomeryCurve::new(chain.codomain.to_affine_a()),
+        new_basis,
+    ))
+}
+
+/// Sign step 5 — recompute the challenge curve `E_chall` from the secret curve
+/// and `chall_coeff`, then map the dim-2 output basis `B_chall_2` (on the
+/// isomorphic `E_chall_2`) onto `E_chall` via the curve isomorphism. Port of C
+/// `compute_challenge_codomain_signature` (`sign.c:362`). The `E_chall`
+/// recomputation is identical to [`compute_challenge_verify`] but uses the
+/// supplied canonical basis directly. Returns `(E_chall, B_chall_2_on_E_chall)`.
+/// lvl1-pinned.
+#[cfg(feature = "alloc")]
+pub fn compute_challenge_codomain_signature(
+    sk_curve_a: &Fp2<Fp1Element>,
+    sk_canonical_basis: &crate::ec::couple::EcBasis<Fp1Element>,
+    chall_coeff: &U256,
+    backtracking: u8,
+    e_chall_2_a: &Fp2<Fp1Element>,
+    b_chall_2: &crate::ec::couple::EcBasis<Fp1Element>,
+) -> Option<(
+    crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
+    crate::ec::couple::EcBasis<Fp1Element>,
+)> {
+    use crate::ec::couple::EcBasis;
+    use crate::ec::montgomery::{MontgomeryCurve, MontgomeryPoint};
+    use crate::isogeny::two::IsogenyChain2e;
+    const TORSION_EVEN_POWER: usize = 248;
+
+    let curve = MontgomeryCurve::new(*sk_curve_a);
+    let length = TORSION_EVEN_POWER - usize::from(backtracking);
+    // kernel = P + [chall_coeff]·Q, doubled `backtracking` times.
+    let a24 = curve.a24();
+    let kernel = MontgomeryPoint::ladder3pt(
+        &sk_canonical_basis.p,
+        &sk_canonical_basis.q,
+        &sk_canonical_basis.p_minus_q,
+        &chall_coeff.to_le_bytes(),
+        &a24,
+    );
+    let a24c = curve.to_a24();
+    let kernel = a24c.x_double_n(&kernel, u32::from(backtracking));
+    let (chain, _) = IsogenyChain2e::new(
+        a24c,
+        kernel,
+        u32::try_from(length).expect("length ≤ 248 fits u32"),
+        None,
+    );
+    let e_chall = MontgomeryCurve::new(chain.codomain.to_affine_a());
+
+    #[cfg(feature = "kat")]
+    {
+        let e_chall_2_curve = MontgomeryCurve::new(*e_chall_2_a);
+        let j_eq = bool::from(e_chall.j_invariant().ct_eq(&e_chall_2_curve.j_invariant()));
+        std::eprintln!("DIAG ccs: j(E_chall)==j(E_chall_2)? {j_eq}");
+    }
+
+    // Map B_chall_2 (on the isomorphic E_chall_2) onto E_chall.
+    let isom = ec_isomorphism(e_chall_2_a, &e_chall.a)?;
+    let b_mapped = EcBasis::new(
+        apply_iso(&b_chall_2.p, &isom),
+        apply_iso(&b_chall_2.q, &isom),
+        apply_iso(&b_chall_2.p_minus_q, &isom),
+    );
+    Some((e_chall, b_mapped))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn compute_challenge_codomain_signature_recomputes_and_maps() {
+        use crate::ec::biscalar::ec_basis_e0_2f;
+        use crate::ec::montgomery::MontgomeryCurve;
+        // E0 secret curve, its canonical basis; small challenge, no backtracking.
+        let e0 = MontgomeryCurve::<Fp1Element>::e0();
+        let basis = ec_basis_e0_2f(248);
+        let c = U256::from_u64(98765);
+        // Learn E_chall via compute_challenge_verify (same chain, E0 basis from
+        // the E0 hint branch), then map with E_chall_2 == E_chall (identity isom).
+        let sig = SignatureData {
+            chall_coeff: c,
+            ..small_sig([[U256::ONE; 2]; 2], 0)
+        };
+        let e_chall = compute_challenge_verify(&e0, &sig, 0);
+        let (e_chall2, b_mapped) =
+            compute_challenge_codomain_signature(&e0.a, &basis, &c, 0, &e_chall.a, &basis)
+                .expect("codomain + identity map");
+        assert_eq!(e_chall2.a, e_chall.a, "E_chall is deterministic");
+        // Identity isomorphism (E_chall → E_chall) preserves the basis x-coords.
+        assert_eq!(b_mapped.p.affine_x(), basis.p.affine_x(), "P x preserved");
+        assert_eq!(b_mapped.q.affine_x(), basis.q.affine_x(), "Q x preserved");
+    }
+
+    #[test]
+    fn ec_isomorphism_self_is_identity() {
+        use crate::ec::montgomery::MontgomeryPoint;
+        // Isomorphism E → E is the identity projectively (Nz = 0, Nx = D), so a
+        // point's affine x is unchanged.
+        let a = Fp2::<Fp1Element>::new(
+            crate::ec::biscalar::fp_small::<Fp1Element>(5),
+            crate::ec::biscalar::fp_small::<Fp1Element>(3),
+        );
+        let isom = ec_isomorphism(&a, &a).expect("self-isom exists");
+        assert!(bool::from(isom.1.is_zero()), "Nz = 0 for E → E");
+        assert_eq!(isom.0, isom.2, "Nx = D for E → E");
+        let p = MontgomeryPoint::<Fp1Element>::new(
+            Fp2::<Fp1Element>::new(
+                crate::ec::biscalar::fp_small::<Fp1Element>(7),
+                Fp1Element::zero(),
+            ),
+            Fp2::<Fp1Element>::one(),
+        );
+        let q = apply_iso(&p, &isom);
+        assert_eq!(q.affine_x(), p.affine_x(), "identity isom preserves x");
+    }
 
     #[test]
     fn ec_curve_verify_a_rejects_plus_minus_two() {
@@ -1154,6 +1512,67 @@ mod tests {
         assert_eq!(sig.mat, m_known, "basis-change matrix recovers M_known");
         assert_eq!(sig.hint_chall, 0, "E0 challenge hint is 0");
         assert_eq!(sig.hint_aux, 0, "E0 aux hint is 0");
+    }
+
+    #[test]
+    fn decode_int_le_handles_sign() {
+        use crypto_bigint::Int;
+        assert_eq!(
+            decode_int_le::<8>(&[5, 0, 0, 0], false),
+            Int::<8>::from_i64(5)
+        );
+        // −2 as 4-byte two's complement.
+        assert_eq!(
+            decode_int_le::<8>(&[0xFE, 0xFF, 0xFF, 0xFF], true),
+            Int::<8>::from_i64(-2),
+        );
+        // −2 as 32-byte two's complement.
+        let mut neg2 = [0xFFu8; 32];
+        neg2[0] = 0xFE;
+        assert_eq!(decode_int_le::<8>(&neg2, true), Int::<8>::from_i64(-2));
+        // High bit set but unsigned ⇒ large positive.
+        assert!(!bool::from(
+            decode_int_le::<8>(&[0, 0, 0, 0x80], false).is_negative()
+        ));
+    }
+
+    #[test]
+    fn secret_key_decode_lvl1_reconstructs_secret_ideal() {
+        use crate::quaternion::o0_mul::multiply_o0_basis;
+        // Hand-build a 353-byte SK: E0 pk, gen = 1 + 2i (N_red = 5), norm = 5,
+        // identity-ish change matrix.
+        let mut buf = [0u8; SK_BYTES_LVL1];
+        // pk: A = 0 (E0), hint_pk = 0 (bytes already zero).
+        buf[65] = 5; // secret_ideal.norm = 5
+        buf[97] = 1; // gen.coord[0] = 1
+        buf[97 + SK_FIELD_BYTES_LVL1] = 2; // gen.coord[1] = 2
+        buf[225] = 1; // mat[0][0] = 1
+        buf[225 + 3 * SK_FIELD_BYTES_LVL1] = 1; // mat[1][1] = 1
+
+        let sk = SecretKeyData::from_bytes_lvl1(&buf).expect("decode SK");
+        assert_eq!(sk.curve_a, Fp2::<Fp1Element>::zero(), "E0 curve");
+        assert_eq!(sk.hint_pk, 0);
+        assert_eq!(sk.mat_bacan_to_ba0_two[0][0], U256::ONE);
+        assert_eq!(sk.mat_bacan_to_ba0_two[1][1], U256::ONE);
+        // The reconstructed secret ideal (norm 5) must be a valid left O_0-ideal.
+        let p16 = crate::params::lvl1::prime().resize::<16>();
+        for r in 0..4 {
+            let g = sk.secret_ideal.basis[r];
+            for k in 0..4 {
+                let mut e = [crypto_bigint::Int::<16>::from_i64(0); 4];
+                e[k] = crypto_bigint::Int::<16>::from_i64(1);
+                assert!(
+                    sk.secret_ideal
+                        .contains(&multiply_o0_basis::<16>(&e, &g, &p16)),
+                    "secret ideal must be left-O_0-closed",
+                );
+            }
+        }
+        assert_eq!(
+            sk.secret_ideal.reduced_norm_vartime(),
+            Some(crypto_bigint::Uint::<16>::from_u64(5)),
+            "secret ideal norm = 5",
+        );
     }
 
     #[test]

@@ -340,13 +340,83 @@ pub fn lideal_intersect<const LIMBS: usize>(
         Ok(ideal_multiply::<LIMBS>(i, j, p))
     } else {
         Err(crate::error::Error::Unimplemented(
-            "lideal_intersect: non-coprime case deferred to S191+ — \
-             implement the dual-lattice trick (L1 ∩ L2)* = L1* + L2* per \
-             C ref src/quaternion/ref/generic/lattice.c:127. SQIsign's \
-             signing flow never hits this case in practice (norms are \
-             coprime by construction in compute_random_aux_norm_and_helpers).",
+            "lideal_intersect: non-coprime case deferred — use \
+             lideal_intersect_lattice for the general dual-lattice trick.",
         ))
     }
+}
+
+/// General left-ideal intersection `I ∩ J` via the C reference's exact
+/// dual-lattice trick (`quat_lattice_intersect`, lattice.c:127):
+/// `I ∩ J = dual(dual(I) + dual(J))`.
+///
+/// Unlike [`lideal_intersect`]'s `I · J` product shortcut — which equals the
+/// set-intersection ONLY when the right order of `I` matches the left order of
+/// `J` — this computes the true lattice intersection for ANY two left
+/// O_0-ideals. It is required for the signing aux isogeny, where `lideal_com_resp`
+/// and the sampled aux ideal have incompatible right orders and the product
+/// shortcut silently collapses to `N(aux)` (dropping the `com_resp` factor).
+///
+/// The dual's adjugate/determinant intermediates (~2^780 at real signing
+/// scale) overflow `Int<LIMBS>`, so the whole computation runs at a wide
+/// internal width (`WIDE`) and the reduced basis is narrowed back to `LIMBS`.
+/// `cached_norm` is set to `|det(basis)|` (= `N(I∩J)²`, a perfect square),
+/// matching the `LeftIdeal::new` convention.
+#[cfg(feature = "alloc")]
+pub fn lideal_intersect_lattice<const LIMBS: usize>(
+    i: &LeftIdeal<LIMBS>,
+    j: &LeftIdeal<LIMBS>,
+) -> crate::error::Result<LeftIdeal<LIMBS>> {
+    const WIDE: usize = 64;
+    use crate::quaternion::lattice::{narrow_int_lattice, widen_int_lattice};
+    let zero_w = Int::<WIDE>::from_i64(0);
+    let widen_basis = |b: &[[Int<LIMBS>; 4]; 4]| -> [[Int<WIDE>; 4]; 4] {
+        let mut out = [[zero_w; 4]; 4];
+        for r in 0..4 {
+            for c in 0..4 {
+                out[r][c] = widen_int_lattice::<LIMBS, WIDE>(&b[r][c]);
+            }
+        }
+        out
+    };
+    let i_w = widen_basis(&i.basis);
+    let j_w = widen_basis(&j.basis);
+    let di_w = i.denom.resize::<WIDE>();
+    let dj_w = j.denom.resize::<WIDE>();
+
+    let (res_b_w, res_d_w) =
+        crate::quaternion::lattice_ops::lattice_intersect::<WIDE>(&i_w, &di_w, &j_w, &dj_w);
+
+    // cached_norm = |det(basis)|, matching the original `LeftIdeal::new`
+    // convention the old product-shortcut intersect used (so downstream
+    // response code that consumes this norm is unchanged). For an integral
+    // left O_0-ideal in O_0-coords this is N(I)², a perfect square — so the
+    // aux path's `reduced_norm_vartime` (√cached_norm) still recovers N(I).
+    let det_w = crate::quaternion::ideal::det_4x4(&res_b_w).abs();
+    let cached_norm = Uint::<LIMBS>::from_words({
+        let src = Uint::<WIDE>::from_words(det_w.to_words());
+        let mut w = [0u64; LIMBS];
+        for (k, slot) in w.iter_mut().enumerate() {
+            *slot = src.as_words()[k];
+        }
+        w
+    });
+
+    let zero = Int::<LIMBS>::from_i64(0);
+    let mut basis = [[zero; 4]; 4];
+    for r in 0..4 {
+        for c in 0..4 {
+            basis[r][c] = narrow_int_lattice::<WIDE, LIMBS>(&res_b_w[r][c]);
+        }
+    }
+    let denom = Uint::<LIMBS>::from_words({
+        let mut w = [0u64; LIMBS];
+        for (k, slot) in w.iter_mut().enumerate() {
+            *slot = res_d_w.as_words()[k];
+        }
+        w
+    });
+    Ok(LeftIdeal::with_denom_and_norm(basis, denom, cached_norm))
 }
 
 /// Rescale a left ideal by `conj(δ) / n(I)` where `δ` is the smallest-
@@ -541,16 +611,33 @@ mod tests {
     #[test]
     fn lideal_intersect_non_coprime_returns_unimplemented() {
         // Non-coprime case: both ideals scaled by 2 → both have norm
-        // 16 (= 2^4). gcd(16, 16) = 16 > 1 → general path triggers; current
-        // implementation surfaces Err(Unimplemented) with the deferred-body
-        // message naming S191.
+        // 16 (= 2^4). gcd(16, 16) = 16 > 1 → the coprime fast path is skipped;
+        // `lideal_intersect` defers the general case to `lideal_intersect_lattice`
+        // and surfaces Err(Unimplemented).
         use crate::error::Error;
         let p = Uint::<8>::from_u64(7);
         let two_id = Ideal::full_order().scale(2);
         let result = lideal_intersect::<8>(&two_id, &two_id, &p);
         assert!(
-            matches!(&result, Err(Error::Unimplemented(msg)) if msg.contains("non-coprime case deferred to S191")),
-            "non-coprime case must surface Err(Unimplemented) with S191 marker, got {result:?}",
+            matches!(&result, Err(Error::Unimplemented(msg)) if msg.contains("lideal_intersect_lattice")),
+            "non-coprime case must surface Err(Unimplemented) pointing to lideal_intersect_lattice, got {result:?}",
+        );
+    }
+
+    #[test]
+    fn lideal_intersect_lattice_matches_coprime_product_norm() {
+        // The general dual-trick intersection must agree with the coprime
+        // product on coprime inputs: I = 3·O_0 (norm 81), J = 5·O_0 (norm 625),
+        // I ∩ J = I·J has reduced norm 15 ⇒ cached_norm = |det| = 15^4 = 50625.
+        let p = Uint::<8>::from_u64(7);
+        let three_id = Ideal::full_order().scale(3);
+        let five_id = Ideal::full_order().scale(5);
+        let inter = lideal_intersect_lattice::<8>(&three_id, &five_id)
+            .expect("dual-trick intersection must succeed on coprime inputs");
+        assert_eq!(
+            inter.cached_norm,
+            Uint::<8>::from_u64(50625),
+            "I ∩ J norm (|det|) must be (3·5)^4 = 50625",
         );
     }
 
