@@ -19,7 +19,7 @@ const_monty_params!(
 pub type Fp3Element = crypto_bigint::modular::ConstMontyForm<Lvl3Modulus, { Lvl3Modulus::LIMBS }>;
 
 /// Marker type implementing [`Params`] at NIST Level 3.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Level3;
 
 impl Params for Level3 {
@@ -36,7 +36,7 @@ impl Params for Level3 {
     const HASH_ITERATIONS: usize = 256;
     const SECURITY_BITS: usize = 192;
     const FINDUV_BOX_SIZE: i64 = 3;
-    // L3 NUM_ALTERNATE = 7 — settled in S213 via verbatim quote from
+    // L3 NUM_ALTERNATE = 7 — confirmed via verbatim quote from
     // src/precomp/ref/lvl3/include/quaternion_data.h:4. Cross-check at
     // line 11 of the same header: CONNECTING_IDEALS[8] (= NUM + 1).
     const NUM_ALTERNATE_EXTREMAL_ORDERS: usize = 7;

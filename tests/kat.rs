@@ -8,14 +8,14 @@
 //! `smlen = …`, `sm = …`) separated by a blank line and led by a comment
 //! header naming the parameter set.
 //!
-//! For this session the harness only validates the *parse* — i.e. that
-//! every record decodes cleanly and that the per-level byte sizes match the
-//! `Params::PK_BYTES` / `SK_BYTES` / `SIG_BYTES` constants in
-//! [`pq_sqisign::params`]. The actual byte-exact key-generation /
-//! signing / verification verdicts arrive once the isogeny pipeline lands
-//! in subsequent sessions; until then the relevant assertions are marked
-//! `#[ignore]` so `cargo test` stays green while still documenting the
-//! intended verification.
+//! The lightweight tests validate the *parse* — every record decodes cleanly
+//! and the per-level byte sizes match the `Params::PK_BYTES` / `SK_BYTES` /
+//! `SIG_BYTES` constants in [`pq_sqisign::params`]. The heavier verdict tests
+//! are marked `#[ignore]` (they take tens of seconds) and run on demand:
+//! [`kat_lvl1_verify_only`] verifies all 100 C-generated KAT signatures.
+//! Byte-exact reproduction of the KAT *signatures* by our signer additionally
+//! requires aligning our DRBG to the NIST seed (see
+//! [`kat_lvl1_signs_and_verifies`]).
 
 use pq_sqisign::params::{Level1, Level3, Level5, Params};
 
@@ -129,33 +129,25 @@ fn kat_records_have_unique_seeds() {
     }
 }
 
-// Once the isogeny pipeline lands (subsequent sessions), the assertion
-// below should be enabled. It is the actual KAT-pass verdict for the
-// whole scheme. Until then it is gated `#[ignore]` so suites stay green.
-
-/// S351: verify a C-generated KAT signature with OUR verify, isolating
-/// verify + E_chall-recompute from our sign. `sm = sig || msg` (NIST), so
-/// `sig = sm[..SIG_BYTES]`. If this PASSES, our verify is correct and any
-/// sign↔verify-roundtrip failure is in our SIGN; if it FAILS, our verify
-/// (challenge recompute) is the bug.
+/// Verify every C-generated KAT signature with our verifier. `sm = sig || msg`
+/// (NIST), so `sig = sm[..SIG_BYTES]`. All 100 Level-1 vectors must accept.
+/// Heavy (tens of seconds), hence `#[ignore]`; run with `--ignored`.
 #[test]
-#[ignore = "S351 sign-verify diagnosis"]
+#[ignore = "heavy: verifies all 100 C-generated KAT signatures"]
 fn kat_lvl1_verify_only() {
     let records = parse_kat(KAT_LVL1);
-    let r = &records[0];
-    let sig = &r.sm[..Level1::SIG_BYTES];
-    match pq_sqisign::verify::<Level1>(&r.msg, sig, &r.pk) {
-        Ok(()) => std::eprintln!(
-            "S351 KAT verify[0]: ACCEPT (our verify is correct → bug is in our SIGN)"
-        ),
-        Err(e) => std::eprintln!(
-            "S351 KAT verify[0]: REJECT {e:?} (our verify/E_chall-recompute is the bug)"
-        ),
+    for r in &records {
+        let sig = &r.sm[..Level1::SIG_BYTES];
+        pq_sqisign::verify::<Level1>(&r.msg, sig, &r.pk)
+            .unwrap_or_else(|e| panic!("KAT verify[{}] must accept: {e:?}", r.count));
     }
 }
 
+/// Byte-exact KAT signing: our signer must reproduce each C-generated `sm`.
+/// Still a stub — SQIsign signing is randomized, so matching the KAT bytes
+/// requires seeding our DRBG from the record's NIST `seed` (not yet wired).
 #[test]
-#[ignore = "pending isogeny pipeline (KAT byte-exact compliance arrives in future sessions)"]
+#[ignore = "byte-exact KAT signing needs a seed-aligned DRBG (not yet wired)"]
 fn kat_lvl1_signs_and_verifies() {
     let records = parse_kat(KAT_LVL1);
     for r in &records {

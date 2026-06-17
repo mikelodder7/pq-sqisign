@@ -8,9 +8,9 @@
 //! small-discriminant element `z` with `z^2 = -q`; the norm-`p` element `t`
 //! with `t^2 = -p`, orthogonal to `z`; and `q = |z^2|`. Consumed by the
 //! dim2id2iso spine's `n_order != 0` path (represent-integer on the alternate
-//! order + `quat_lattice_contains`) — S340.
+//! order + `quat_lattice_contains`).
 //!
-//! Byte-exact from the C GMP-64 limbs (S340 extractor). Validated by
+//! Byte-exact from the C GMP-64 limbs. Validated by
 //! `alternate_extremal_orders_l1_satisfy_z2_q_t2_p`: `z` is trace-zero with
 //! `N(z) = q*z_denom^2`, and `N(t) = p*t_denom^2`.
 
@@ -1095,7 +1095,7 @@ mod tests {
     /// `t` with integer coordinates that round-trip through the basis. This
     /// simultaneously validates (a) the coordinate solve and (b) the
     /// `order_basis` transpose convention — a transposed basis would generally
-    /// reject `z`/`t` (mirroring the S338 connecting-ideal transpose bug).
+    /// reject `z`/`t` (mirroring the connecting-ideal transpose bug).
     #[test]
     fn alternate_extremal_orders_contain_one_z_t_with_roundtrip_coords() {
         let orders = [

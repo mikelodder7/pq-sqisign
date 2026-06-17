@@ -194,7 +194,7 @@ mod tests {
         assert_eq!(chain.steps.len(), 1);
     }
 
-    // ── S90 — 2-isogeny operations at production NIST levels ──
+    // ── 2-isogeny operations at production NIST levels ──
 
     /// Generic helper: verifies a 2-isogeny with kernel `(i, 0)`
     /// maps the kernel point to the identity on the codomain.
@@ -205,7 +205,7 @@ mod tests {
         let image = iso.eval(&kernel);
         assert!(
             bool::from(image.z.is_zero()),
-            "S90: kernel point must map to infinity on the codomain",
+            "kernel point must map to infinity on the codomain",
         );
     }
 
@@ -231,7 +231,7 @@ mod tests {
         assert_ne!(
             a_dst,
             Fp2::<F>::zero(),
-            "S90: codomain of 2-isogeny from E_0 with kernel (i, 0) must have A ≠ 0",
+            "codomain of 2-isogeny from E_0 with kernel (i, 0) must have A ≠ 0",
         );
     }
 
@@ -283,9 +283,9 @@ mod tests {
         let rhs = single.codomain.a24.mul(&chain.codomain.c24);
         assert_eq!(
             lhs, rhs,
-            "S90: chain length-1 must match single-step codomain",
+            "chain length-1 must match single-step codomain",
         );
-        assert_eq!(chain.steps.len(), 1, "S90: chain.steps.len() must equal 1");
+        assert_eq!(chain.steps.len(), 1, "chain.steps.len() must equal 1");
     }
 
     #[cfg(feature = "alloc")]

@@ -202,9 +202,8 @@ const _: fn() = || {
 ///
 /// The C reference uses this in `splitting_compute`'s signing-path
 /// normalization (one of 6 NORMALIZATION_TRANSFORMS matrices is
-/// selected via this secret index). The Rust splitting body is
-/// pending (S148+ when tables port unblocks); this helper is shipped
-/// in advance as the generic primitive.
+/// selected via this secret index), mirrored by the Rust splitting
+/// body in [`crate::isogeny::splitting`].
 ///
 /// # Constant-time properties
 ///
@@ -446,15 +445,15 @@ mod tests {
         );
     }
 
-    // S150 — sample_uniform_mod_6 tests.
+    // sample_uniform_mod_6 tests.
 
-    /// S150 oracle: hand-compute `sample_uniform_mod_6` output for a
+    /// oracle: hand-compute `sample_uniform_mod_6` output for a
     /// deterministically seeded `ChaCha20Rng`. Verifies the rejection-
     /// sampling + CT-mod-6 chain operates correctly without depending on
     /// any specific NistPqcRng state.
     ///
     /// We use `rand_chacha::ChaCha20Rng` (deterministic seedable) — same
-    /// pattern as the existing S133 blinding tests in jacobian.rs.
+    /// pattern as the existing blinding tests in jacobian.rs.
     /// With seed = [0x42; 32], the first 4 bytes drawn are deterministic.
     /// Per the algorithm: those 4 bytes interpreted as little-endian u32
     /// are checked against 4_294_967_292; if < threshold, we apply the
@@ -468,11 +467,11 @@ mod tests {
         let r = sample_uniform_mod_6(&mut rng);
         assert!(
             r < 6,
-            "S150: sample_uniform_mod_6 must return value in [0, 5]"
+            "sample_uniform_mod_6 must return value in [0, 5]"
         );
     }
 
-    /// S150: many-sample uniformity smoke. With 1024 samples from a
+    /// many-sample uniformity smoke. With 1024 samples from a
     /// deterministic ChaCha20Rng, every output bucket [0..6) should be
     /// hit at least once. Statistical guarantee: probability of any
     /// single bucket being empty after 1024 uniform draws is
@@ -486,18 +485,18 @@ mod tests {
         let mut counts = [0u32; 6];
         for _ in 0..1024 {
             let r = sample_uniform_mod_6(&mut rng);
-            assert!(r < 6, "S150: every draw must be in [0, 5]");
+            assert!(r < 6, "every draw must be in [0, 5]");
             counts[r as usize] += 1;
         }
         for (i, &c) in counts.iter().enumerate() {
             assert!(
                 c > 0,
-                "S150: bucket {i} should be hit at least once in 1024 uniform draws",
+                "bucket {i} should be hit at least once in 1024 uniform draws",
             );
         }
     }
 
-    /// S150: deterministic round-trip. Two ChaCha20Rngs seeded
+    /// deterministic round-trip. Two ChaCha20Rngs seeded
     /// identically must produce the same sample sequence (sanity check
     /// that the rejection loop doesn't introduce non-determinism via
     /// some side channel).
@@ -514,7 +513,7 @@ mod tests {
             let b = sample_uniform_mod_6(&mut rng_b);
             assert_eq!(
                 a, b,
-                "S150: identical seeds must produce identical sample sequence"
+                "identical seeds must produce identical sample sequence"
             );
         }
     }

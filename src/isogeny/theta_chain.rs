@@ -890,7 +890,7 @@ mod tests {
         assert_eq!(v.split, 1);
     }
 
-    /// S251 executor threading + graceful-failure smoke test. Feeds a
+    /// Executor threading + graceful-failure smoke test. Feeds a
     /// degenerate (infinity) kernel couple on E₀ × E₀ through the real
     /// point-executing `ChainExecutor` via `theta_chain_compute_and_eval`.
     /// This drives the full pipeline — seeding, the Phase-A couple-Jacobian
@@ -944,7 +944,7 @@ mod tests {
         const QL: usize = 12;
 
         /// Build a real `2^246` Kani kernel on `E0 × E0` for a given odd
-        /// `u` (the kernel-construction half of `φ`, S259/S264).
+        /// `u` (the kernel-construction half of `φ`).
         fn build_kernel(
             u: u64,
             rng: &mut NistPqcRng,

@@ -2,10 +2,10 @@
 //! `CURVES_WITH_ENDOMORPHISMS[1..7]` — the 6 NICE alternate starting curves
 //! with their 2^F torsion bases + endomorphism-action matrices, Rust
 //! transcriptions of the SQIsign C `endomorphism_action.c`. Curve data is
-//! fp2 in CANONICAL form (the C stores Montgomery; extracted via the S341/S342
+//! fp2 in CANONICAL form (the C stores Montgomery; extracted via the
 //! fp_encode oracle → canonical bytes → `Fp2::from_bytes_le`). Action matrices
 //! are `ibz` (GMP-64 extractor → `Int<8>`). Consumed by the dim2id2iso spine's
-//! n_order≠0 path (S343+): start curve + basis_even + endomorphism_application.
+//! n_order≠0 path: start curve + basis_even + endomorphism_application.
 //!
 //! Index 0 here = C `CURVES_WITH_ENDOMORPHISMS[1]` (the offset-by-1 NICE table;
 //! C index 0 is the standard curve E0). Matrices stored row-major

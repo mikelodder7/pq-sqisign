@@ -40,8 +40,7 @@
 //!    non-positive).
 //! 3. Compute `T = 4M − p · cd_sq`; reject if `T mod 4 ≠ 1` (Cornacchia
 //!    with `d = 1` needs `T ≡ 1 (mod 4)` for `−1` to be a QR mod T).
-//! 4. Miller-Rabin-test `T` for primality at WIDE precision (S44/S67
-//!    primitives); reject composites.
+//! 4. Miller-Rabin-test `T` for primality at WIDE precision; reject composites.
 //! 5. Call [`super::cornacchia::cornacchia_classical_uint`] to solve
 //!    `a² + b² = T`; reject if `None`.
 //! 6. Parity check: reject unless `a` ≡ `d` (mod 2) and `b` ≡ `c` (mod 2).
@@ -125,7 +124,7 @@ pub(crate) fn uint_gcd_vartime<const LIMBS: usize>(
 /// Variable-time on the rejection-loop's iteration count; intended for
 /// non-secret moduli. Requires `n > 0`.
 ///
-/// Security-review S187 Finding 3: earlier versions reduced modulo `n`
+/// Security-review Finding 3: earlier versions reduced modulo `n`
 /// without rejection, introducing a small (but non-zero) modulo bias.
 /// This version is bias-free.
 fn sample_uint_lt_vartime<const LIMBS: usize, R: CryptoRng>(
@@ -542,7 +541,7 @@ pub fn represent_integer_over_alt_order<const LIMBS: usize, R: CryptoRng>(
 
         // HNF-basis coords + content (C `quat_alg_make_primitive`); require
         // content == 2 (so the primitive element has norm n_gamma = 4n/4).
-        // The order math runs at width 8/16 (S344 primitive); γ's coords
+        // The order math runs at width 8/16; γ's coords
         // (~√(4n) ≤ 2^246 at L1) fit Int<8>.
         let elem8 = Quaternion::<8>::new(
             elem_num.a.resize::<8>(),
@@ -587,7 +586,7 @@ pub fn represent_integer_over_alt_order<const LIMBS: usize, R: CryptoRng>(
 
 /// Sample a random `O_0`-left-ideal of given norm, at `Uint<LIMBS>` precision.
 ///
-/// **Stub — S178 ships signature only; body deferred to S179+.** This is
+/// **Stub — body deferred.** This is
 /// the next layer above [`find_quaternion_in_full_order_with_norm_wide`]
 /// (the `quat_represent_integer` port). It mirrors the C reference
 /// `quat_sampling_random_ideal_O0_given_norm` in
@@ -796,10 +795,10 @@ fn finalize_random_ideal_o0_ret<const LIMBS: usize, const RET: usize, R: CryptoR
 /// multiplication so intermediates stay in `[0, norm²) ⊂ [0,
 /// 2^(2·bits(p)))` and fit within the general-path LIMBS budget.
 ///
-/// (An earlier S180 formulation built the full `b² + p·(c² + d²)`
+/// (An earlier formulation built the full `b² + p·(c² + d²)`
 /// before reducing, which required `64·LIMBS ≥ 3·bits(p) + 2` and
 /// would silently wrap at the general-path bound. The security
-/// review S187 Finding 2 surfaced that as a latent corruption
+/// review Finding 2 surfaced that as a latent corruption
 /// surface; the current implementation eliminates it.)
 ///
 /// The output's narrow `LeftIdeal<8>` is at the signing-flow norm
@@ -902,8 +901,8 @@ pub fn sampling_random_ideal_o0_given_norm_wide_ret<
             // formulation that built the full `b² + p·(c² + d²)` first
             // and reduced afterward required `64·LIMBS ≥ 3·bits(p) + 2`
             // and would silently `wrapping_mul`-overflow at the
-            // general-path LIMBS bound. Per the security review (S187
-            // Finding 2): no public API change needed once we reduce at
+            // general-path LIMBS bound. Per the security review
+            // (Finding 2): no public API change needed once we reduce at
             // each step.
             //
             // Each of `b_u, c_u, d_u` is already in `[0, norm)` per the
@@ -1295,7 +1294,7 @@ mod tests {
 
     #[test]
     fn represent_integer_wide_returns_none_when_m_below_4p_boundary() {
-        // S69 boundary marker: M = 1 at p = 7 has 4M = 4 < p, so the
+        // Boundary marker: M = 1 at p = 7 has 4M = 4 < p, so the
         // only candidate (c, d) = (0, 0) gives T = 4 which fails
         // `T ≡ 1 (mod 4)`. The search must exhaust and return None
         // cleanly (not panic, not loop forever). This documents the
@@ -1633,7 +1632,7 @@ mod tests {
     fn sampling_random_ideal_fast_path_at_real_lvl1_prime() {
         // Exercise the fast path at the real Level-1 prime
         // `p = 5·2^248 − 1` (bits(p) = 251). Per the F1 precision contract
-        // surfaced by S180's Forge audit, the fast path needs
+        // surfaced by the Forge audit, the fast path needs
         // `64·LIMBS ≥ 3·bits(p) + 2 = 755` at L1 → `LIMBS ≥ 12` for the
         // worst case where `norm ≈ p`. We use a small prime `norm = 11`
         // here (so the inner arithmetic stays well below the LIMBS=12
@@ -1674,7 +1673,7 @@ mod tests {
     fn sampling_random_ideal_fast_path_at_real_lvl3_prime() {
         // Exercise the fast path at the real Level-3 prime
         // `p = 65·2^376 − 1` (bits(p) = 383). Per the F1 precision contract
-        // surfaced by S180's Forge audit, the fast path needs
+        // surfaced by the Forge audit, the fast path needs
         // `64·LIMBS ≥ 3·bits(p) + 2 = 1151` at L3 → `LIMBS ≥ 18` for the
         // worst case where `norm ≈ p`. With small `norm = 11` the inner
         // arithmetic stays well below the LIMBS=18 ceiling, but we use
@@ -1710,7 +1709,7 @@ mod tests {
     fn sampling_random_ideal_fast_path_at_real_lvl5_prime() {
         // Exercise the fast path at the real Level-5 prime
         // `p = 27·2^500 − 1` (bits(p) = 505). Per the F1 precision contract
-        // surfaced by S180's Forge audit, the fast path needs
+        // surfaced by the Forge audit, the fast path needs
         // `64·LIMBS ≥ 3·bits(p) + 2 = 1517` at L5 → `LIMBS ≥ 24` for the
         // worst case where `norm ≈ p`. With small `norm = 11` we use
         // LIMBS=24 to confirm the F1 bound monomorphizes correctly at L5
@@ -1786,14 +1785,14 @@ mod tests {
         assert_eq!(r5.cached_norm, Uint::<8>::from_u64(11));
     }
 
-    /// S345: `represent_integer_over_alt_order` finds a primitive element of
+    /// `represent_integer_over_alt_order` finds a primitive element of
     /// the alternate extremal order 0 (q=5) with the target norm, at the real
     /// L1 prime. Standalone arbiter (no spine): the returned γ satisfies the
     /// reduced-norm postcondition `N(γ_num) = n · order_denom²` AND lies in the
     /// order (`alt_order_coords_of` → Some). Loops a few odd targets just above
     /// `p·q/4` so at least one is representable within the trial budget. Heavy.
     #[cfg(feature = "kat")]
-    #[ignore = "heavy: real-L1 represent_integer over an alternate order (S345)"]
+    #[ignore = "heavy: real-L1 represent_integer over an alternate order"]
     #[test]
     fn represent_integer_over_alt_order_0_norm_and_membership() {
         use crate::quaternion::extremal_orders::{

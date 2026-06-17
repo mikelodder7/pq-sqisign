@@ -68,9 +68,9 @@ pub fn ideal_right_multiply<const LIMBS: usize>(
 /// Returns `None` if any of the divisibility / norm-update integer
 /// divisions aren't exact, indicating an invariant violation.
 ///
-/// # Convention NOTE (S201 fix)
+/// # Convention NOTE (lattice-index convention fix)
 ///
-/// Prior to S201 the formula update was `N(I) · N_red(α) / α_denom²`
+/// The original formula update was `N(I) · N_red(α) / α_denom²`
 /// (the SQIsign C reference's `quat_lideal_mul` formula transcribed
 /// faithfully). The C reference's `cached_norm` is the **reduced
 /// quaternion ideal norm** `n(I) = N_red(γ_I)`, but this codebase's
@@ -78,7 +78,7 @@ pub fn ideal_right_multiply<const LIMBS: usize>(
 /// `|det(basis)|` which equals `N_red(γ_I)²` — the **lattice-index**
 /// convention. The two are off by a square; transcribing the C-ref
 /// formula directly produced a `cached_norm` value in the wrong
-/// convention. S201 squared the `N_red(α)` factor and quartic-ed
+/// convention. The fix squared the `N_red(α)` factor and quartic-ed
 /// the `α_denom` factor to match the lattice-index convention so
 /// the same ideal produced via two paths (e.g. `scale(3)` vs
 /// `ideal_right_multiply_rational(full_order, [3,0,0,0], 1, p, None)`)
@@ -86,7 +86,7 @@ pub fn ideal_right_multiply<const LIMBS: usize>(
 ///
 /// **KLPT compatibility**: every existing KLPT caller passes
 /// `caller_provided_new_norm = Some(q)` (bypassing the formula),
-/// so the S201 fix is transparent to KLPT. Callers that DO use
+/// so this fix is transparent to KLPT. Callers that DO use
 /// the autocompute path will now see lattice-index semantics.
 #[allow(clippy::needless_range_loop)]
 pub fn ideal_right_multiply_rational<const LIMBS: usize>(
@@ -107,7 +107,7 @@ pub fn ideal_right_multiply_rational<const LIMBS: usize>(
     let new_norm = match caller_provided_new_norm {
         Some(n) => n,
         None => {
-            // Lattice-index convention (S201 fix): cached_norm update is
+            // Lattice-index convention: cached_norm update is
             // cached_norm · N_red(α)² / α_denom⁴.
             let n_red_alpha_int = crate::quaternion::o0_mul::reduced_norm_o0_basis(alpha_coord, p);
             let n_red_alpha = n_red_alpha_int.abs();
@@ -133,7 +133,7 @@ pub fn ideal_right_multiply_rational<const LIMBS: usize>(
 /// inner `multiply_o0_basis` calls at `WIDE` precision via
 /// [`super::o0_mul::multiply_o0_basis_wide`], avoiding overflow when
 /// the ideal's basis entries are O(p) — the regime where the narrow
-/// rational right-multiply (S49) would wrap.
+/// rational right-multiply would wrap.
 ///
 /// The final basis entries (after multiplication and HNF) must still
 /// fit in `Int<NARROW>` (here pinned to `Int<8>` for compatibility
@@ -142,7 +142,7 @@ pub fn ideal_right_multiply_rational<const LIMBS: usize>(
 /// has bounded entries even when the integer numerator grows.
 ///
 /// `caller_provided_new_norm` overrides the lattice-index-convention
-/// formula `cached_norm · N_red(α)²/α_denom⁴` (S201 update — see
+/// formula `cached_norm · N_red(α)²/α_denom⁴` (lattice-index convention — see
 /// [`ideal_right_multiply_rational`]'s docstring for the convention
 /// rationale). KLPT callers supply `Some(q)` from the primality test
 /// to skip redundant arithmetic.
@@ -165,7 +165,7 @@ pub fn ideal_right_multiply_rational_wide<const WIDE: usize>(
     // |det| = |det(I)|·N(β)² which, for a real connecting ideal (N(I)~2^511,
     // N(β)~2^258), reaches ~2^1022 — the Int<8> HNF's intermediate
     // pivot/elimination products overflow its 511-bit range and silently
-    // corrupt the lattice (wrong |det|, not a valid ideal; S286/S287). The
+    // corrupt the lattice (wrong |det|, not a valid ideal). The
     // basis entries `gen·β` themselves fit Int<8> (~2^382), so widen them to
     // `Int<WIDE>`, run the HNF there, then narrow the reduced result back.
     let mut basis_w = [[Int::<WIDE>::from_i64(0); 4]; 4];
@@ -188,7 +188,7 @@ pub fn ideal_right_multiply_rational_wide<const WIDE: usize>(
         None => {
             // Auto-compute via the lattice-index-convention formula
             // `cached_norm(I·β) = cached_norm(I) · N_red(β_coord)² / β_denom⁴`
-            // at WIDE precision (S201 fix), then narrow result to Uint<8>.
+            // at WIDE precision (lattice-index convention), then narrow result to Uint<8>.
             let n_red_alpha_w: Int<WIDE> =
                 crate::quaternion::o0_mul::reduced_norm_o0_basis_wide::<8, WIDE>(alpha_coord, p);
             let n_red_alpha_w_u: Uint<WIDE> = n_red_alpha_w.abs();
@@ -231,7 +231,7 @@ pub fn ideal_right_multiply_rational_wide<const WIDE: usize>(
 /// authoritative value should read `WideIdealNorm.cached_norm`, not
 /// `WideIdealNorm.inner.cached_norm`.
 ///
-/// This is the S75 structural fix unblocking the L5 KLPT body.
+/// This structural type unblocks the L5 KLPT body.
 #[derive(Debug, Clone)]
 pub struct LeftIdealWideNorm<const NLIMBS: usize> {
     /// Underlying left ideal with basis at `Int<8>`. The inner
@@ -309,7 +309,7 @@ pub fn ideal_multiply<const LIMBS: usize>(
 ///
 /// For `gcd(N(I), N(J)) > 1`, the standard algorithm uses the
 /// dual-lattice trick `(L₁ ∩ L₂)* = L₁* + L₂*` — port pending in
-/// S191+. Returns `Err(Error::Unimplemented)` with a deferred-body
+/// (deferred). Returns `Err(Error::Unimplemented)` with a deferred-body
 /// message in this case.
 ///
 /// # Parameters
@@ -443,14 +443,14 @@ pub fn lideal_intersect_lattice<const LIMBS: usize, const WIDE: usize>(
 /// `ideal[i] = conj_ideal · ALTERNATE_CONNECTING_IDEALS[i-1]` for
 /// `i ∈ [1, num_alternate_order]`.
 ///
-/// # Convention NOTE (S199 fix)
+/// # Convention NOTE (reduced-norm denom fix)
 ///
-/// Prior to S199 this helper passed `ideal.cached_norm` (the
+/// The original helper passed `ideal.cached_norm` (the
 /// lattice index `= n(I)²`) as `α_denom`. That mismatched the C
 /// reference's formula which uses the reduced ideal norm `n(I)`
 /// itself, leading to the divisibility check
 /// `N(I)·N_red(δ)/α_denom²` failing for all non-trivial inputs.
-/// S199 corrected this by routing `α_denom` through
+/// Fixed by routing `α_denom` through
 /// [`LeftIdeal::reduced_norm_vartime`] which returns
 /// `√cached_norm`.
 ///
@@ -539,7 +539,7 @@ pub fn lideal_reduce_basis<const LIMBS: usize>(
 /// integer-GSO at `Uint<WIDE>` precision and narrows the reduced
 /// basis back to `Int<NARROW>`.
 ///
-/// **Why `_wide`**: S215 discovered that LLL's integer-GSO on basis
+/// **Why `_wide`**: LLL's integer-GSO on basis
 /// entries of `ALTERNATE_CONNECTING_IDEALS`-magnitude (128-bit at L1)
 /// panics inside `int_div_exact` at NARROW=8 (512-bit ceiling). The
 /// `d[k]` GSO determinants reach `det(Gram) = det(B)² · det(metric) ≈
@@ -573,7 +573,7 @@ mod tests {
 
     type Ideal = LeftIdeal<8>;
 
-    // ── lideal_intersect unit tests (S190) ─────────────────────────────
+    // ── lideal_intersect unit tests ─────────────────────────────────────
 
     #[test]
     fn lideal_intersect_coprime_matches_ideal_multiply() {
@@ -644,10 +644,10 @@ mod tests {
 
     #[test]
     fn rational_autocompute_agrees_with_scale_on_integer_right_mult() {
-        // S201 regression test for the cached_norm formula convention fix.
-        // Before S201: ideal_right_multiply_rational used N_red(α)/α_denom²
+        // regression test for the cached_norm formula convention fix.
+        // Before the fix: ideal_right_multiply_rational used N_red(α)/α_denom²
         //   (linear) → for I = full_order, α = (3,0,0,0): cached_norm = 9.
-        // After S201: uses N_red(α)²/α_denom⁴ (squared lattice-index)
+        // After the fix: uses N_red(α)²/α_denom⁴ (squared lattice-index)
         //   → cached_norm = 81, matching scale(3)'s 1·3^4 = 81.
         let p = Uint::<8>::from_u64(7);
         let full = Ideal::full_order();
@@ -861,7 +861,7 @@ mod tests {
         assert!(principal.equals_lattice(&composed));
     }
 
-    // ── lideal_reduce_basis unit tests (S195) ──────────────────────────
+    // ── lideal_reduce_basis unit tests ──────────────────────────────────
 
     #[test]
     fn lideal_reduce_basis_preserves_denom_and_cached_norm() {
@@ -889,7 +889,7 @@ mod tests {
         );
     }
 
-    // ── lideal_rescale_by_smallest_basis_element unit tests (S198) ─────
+    // ── lideal_rescale_by_smallest_basis_element unit tests ─────────────
 
     #[test]
     fn lideal_rescale_full_order_returns_full_order() {
@@ -914,7 +914,7 @@ mod tests {
     fn lideal_rescale_denom_follows_right_multiply_identity() {
         // The C ref's N(I·α_rational) = N(I)·N_red(α)/α_denom² identity
         // updates denom as: new_denom = ideal.denom · α_denom.
-        // For our S199-corrected delta-rescaling, α_denom = n(I) =
+        // For our corrected delta-rescaling, α_denom = n(I) =
         // √cached_norm (the reduced ideal norm).
         // So new_denom = ideal.denom · √cached_norm.
         // For full_order (denom=1, cached_norm=1, √=1): new_denom = 1.
@@ -939,7 +939,7 @@ mod tests {
         // and check the result matches calling the helper.
         //
         // Use full_order — the helper now succeeds on non-trivial inputs
-        // too (post-S199/S201 fixes), but full_order is the simplest
+        // too (post-fix), but full_order is the simplest
         // fixture for this byte-identical-composition check.
         let p = Uint::<8>::from_u64(7);
         let id = Ideal::full_order();
@@ -960,8 +960,8 @@ mod tests {
         assert_eq!(manual.cached_norm, helper.cached_norm);
     }
 
-    // ── S203: rescale-to-unit-lattice invariant on non-trivial principal
-    //         ideals (validates S199+S201 convention fixes end-to-end) ──
+    // ── rescale-to-unit-lattice invariant on non-trivial principal
+    //         ideals (validates convention fixes end-to-end) ──────────────
 
     /// **Load-bearing invariant**: for any SQIsign-shaped principal ideal
     /// `I = O_0·γ`, the sequence
@@ -980,15 +980,15 @@ mod tests {
     /// inputs since `δ = LLL.basis[0]` is the smallest-norm element).
     ///
     /// **This is the structural property the alternate-orders loop**
-    /// **(S204+) will rely on** — `reduced_id` being canonically the
+    /// **will rely on** — `reduced_id` being canonically the
     /// unit ideal means the `j > 0` iterations operate on a clean
     /// starting point (`conj(reduced_id) = O_0` too) before
     /// intersecting with `ALTERNATE_CONNECTING_IDEALS[j-1]`.
     ///
     /// Sweep across 4 γ shapes with N_red(γ) ∈ {3, 5, 9, 11} at p=7.
-    /// Pre-S199 this assertion would have failed because the rescale
+    /// Before the denom fix this assertion would have failed because the rescale
     /// helper used `cached_norm` (lattice index) as α_denom instead of
-    /// `√cached_norm` (reduced norm). Pre-S201 the formula's linear
+    /// `√cached_norm` (reduced norm). Before the formula fix the linear
     /// `N_red(α)` would have given the wrong new cached_norm even with
     /// the correct α_denom. Both fixes are exercised here.
     /// LIMBS-generic helper for the rescale-to-unit-lattice sweep.
@@ -998,9 +998,9 @@ mod tests {
     /// 2. `rescaled.equals_lattice(full_order())` (the rescaled ideal
     ///    IS `O_0` mathematically).
     ///
-    /// Used at LIMBS=8 (S203 L1 anchor), LIMBS=12 (S204 L3),
-    /// LIMBS=16 (S204 L5) to validate the rescale primitive is genuinely
-    /// LIMBS-generic and the S199+S201 fixes don't accidentally hard-code
+    /// Used at LIMBS=8 (L1 anchor), LIMBS=12 (L3),
+    /// LIMBS=16 (L5) to validate the rescale primitive is genuinely
+    /// LIMBS-generic and the convention fixes don't accidentally hard-code
     /// any LIMBS-8 behavior.
     fn run_rescale_to_unit_lattice_sweep<const LIMBS: usize>() {
         use crypto_bigint::{Int, Uint};
@@ -1059,7 +1059,7 @@ mod tests {
         run_rescale_to_unit_lattice_sweep::<8>();
     }
 
-    /// S204: L3 LIMBS (12) variant of the S203 sweep. Validates the
+    /// L3 LIMBS (12) variant of the rescale sweep. Validates the
     /// rescale primitive is LIMBS-generic at L3 magnitudes. p=7 is
     /// trivially small — this catches LIMBS-dependent COMPILATION
     /// bugs and behavior divergence, not production-magnitude bugs.
@@ -1070,7 +1070,7 @@ mod tests {
         run_rescale_to_unit_lattice_sweep::<12>();
     }
 
-    /// S204: L5 LIMBS (16) variant.
+    /// L5 LIMBS (16) variant.
     #[test]
     fn lideal_rescale_yields_unit_lattice_on_non_trivial_principal_ideals_at_l5_limbs() {
         run_rescale_to_unit_lattice_sweep::<16>();

@@ -419,7 +419,7 @@ pub(crate) fn find_nqr_factor<F: BaseField>(curve_a: &Fp2<F>, start: u8) -> (Fp2
 /// Deterministic x-only point difference `x(P − Q)` from `x(P)`, `x(Q)`.
 /// Port of the C reference `difference_point` (`src/ec/ref/lvlx/basis.c`,
 /// Prop. 3 of eprint 2017/518), specialized to normalized curves (`C = 1`;
-/// `curve_a` is the affine `A`). The canonical `Fp2::sqrt` sign (S347 fix)
+/// `curve_a` is the affine `A`). The canonical `Fp2::sqrt` sign convention
 /// makes the deterministic root choice match C. Used by `ec_curve_to_basis_2f`
 /// to set `PmQ` (which fixes `Q` above `(0,0)`).
 #[allow(dead_code)]
@@ -448,28 +448,7 @@ pub(crate) fn difference_point<F: BaseField>(
     // Solve the quadratic: PQ.x = Bxz + sqrt(Bxz² − Bxx·Bzz), PQ.z = Bzz.
     let disc = bxz.square().sub(&bxx.mul(&bzz));
     let s = disc.sqrt().into_option().unwrap_or_else(Fp2::<F>::zero);
-    let out = MontgomeryPoint::new(bxz.add(&s), bzz);
-    #[cfg(feature = "alloc")]
-    if std::env::var("PQSQ_DUMP_DP").is_ok() {
-        let mut b = [0u8; 64];
-        for (nm, v) in [
-            ("px", &p.x),
-            ("pz", &p.z),
-            ("qx", &q.x),
-            ("qz", &q.z),
-            ("outx", &out.x),
-            ("outz", &out.z),
-        ] {
-            v.to_bytes_le(&mut b);
-            std::eprint!("DP {nm}=");
-            for x in &b[..16] {
-                std::eprint!("{x:02x}");
-            }
-            std::eprint!(" ");
-        }
-        std::eprintln!();
-    }
-    out
+    MontgomeryPoint::new(bxz.add(&s), bzz)
 }
 
 /// Entangled basis for `E0` (`A = 0`), where the QR/NQR x-selectors do not
@@ -582,7 +561,7 @@ mod tests {
     use subtle::ConstantTimeEq;
 
     #[test]
-    fn s351_difference_point_c_chall_inputs() {
+    fn difference_point_c_chall_inputs() {
         use crate::ec::montgomery::MontgomeryPoint;
         fn hx(s: &str) -> Fp2<Fp1Element> {
             let bytes: Vec<u8> = (0..s.len() / 2)
@@ -616,7 +595,7 @@ mod tests {
         let out = difference_point(&p, &q, &a);
         let affine_match = bool::from(out.x.mul(&c_outz).ct_eq(&c_outx.mul(&out.z)));
         std::eprintln!(
-            "S351 DP(C-inputs): affine_match={affine_match} full_x={} full_z={}",
+            "DP(C-inputs): affine_match={affine_match} full_x={} full_z={}",
             out.x == c_outx,
             out.z == c_outz
         );
@@ -627,7 +606,7 @@ mod tests {
         let q3 = MontgomeryPoint::new(qx.mul(&three), qz.mul(&three));
         let out2 = difference_point(&p2, &q3, &a);
         let robust = bool::from(out2.x.mul(&out.z).ct_eq(&out.x.mul(&out2.z)));
-        std::eprintln!("S351 DP robustness (λ=2,μ=3): affine_same_as_unscaled={robust}");
+        std::eprintln!("DP robustness (λ=2,μ=3): affine_same_as_unscaled={robust}");
     }
 
     #[test]

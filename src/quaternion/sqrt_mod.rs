@@ -156,7 +156,7 @@ pub fn tonelli_shanks(a: u64, p: u64) -> Option<u64> {
 /// odd prime `p`.
 ///
 /// Mirrors the narrow [`tonelli_shanks`] structure at `Uint<LIMBS>`
-/// precision via `pow_mod_uint` (S43), `Uint::mul_mod_vartime`,
+/// precision via `pow_mod_uint`, `Uint::mul_mod_vartime`,
 /// `Uint::square_mod_vartime`, and `Uint::shr_vartime`.
 ///
 /// **Fast path** — when `p ≡ 3 (mod 4)`, returns the closed form
@@ -170,7 +170,7 @@ pub fn tonelli_shanks(a: u64, p: u64) -> Option<u64> {
 /// `O((log p)²)` candidates); runs the standard Tonelli-Shanks recursion.
 ///
 /// This is the prerequisite for the wide [`super::cornacchia::cornacchia`] port
-/// (S68+), which solves the modular-sqrt step for the
+/// (wide Cornacchia), which solves the modular-sqrt step for the
 /// `quat_represent_integer` outer loop.
 pub fn tonelli_shanks_uint<const LIMBS: usize>(
     a: &crypto_bigint::Uint<LIMBS>,
@@ -443,7 +443,7 @@ mod tests {
         assert_eq!(pow_mod_uint(&base, &exp, &m_nz), Uint::from_u64(1));
     }
 
-    // ── S67 — wide-Int Tonelli-Shanks (tonelli_shanks_uint) ──
+    // ── wide-Int Tonelli-Shanks (tonelli_shanks_uint) ──
 
     /// Verify `r² ≡ a (mod p)` at `Uint<LIMBS>` precision.
     fn check_wide<const LIMBS: usize>(
@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn tonelli_shanks_uint_parity_with_narrow_small_primes() {
-        // S67 parity: for every small prime p where the narrow
+        // Parity: for every small prime p where the narrow
         // `tonelli_shanks(a, p) = Some(r)`, the wide version at
         // `Uint<8>` must produce a valid square root (which may or
         // may not equal r — both ±r are valid).
@@ -478,7 +478,7 @@ mod tests {
                 );
                 assert!(
                     parity_ok,
-                    "S67 parity break at p={p} a={a}: narrow={narrow_result:?} wide={wide_result:?}",
+                    "parity break at p={p} a={a}: narrow={narrow_result:?} wide={wide_result:?}",
                 );
                 if let Some(wide_r) = wide_result {
                     check_wide(&a_w, &p_nz, &wide_r);
@@ -491,16 +491,16 @@ mod tests {
             }
         }
         // Confirm coverage of both branches across the sweep.
-        assert!(covered_p3 > 0, "S67 must exercise p ≡ 3 mod 4 fast path");
+        assert!(covered_p3 > 0, "must exercise p ≡ 3 mod 4 fast path");
         assert!(
             covered_p1 > 0,
-            "S67 must exercise p ≡ 1 mod 4 iterative path"
+            "must exercise p ≡ 1 mod 4 iterative path"
         );
     }
 
     #[test]
     fn tonelli_shanks_uint_real_lvl1_prime_p_mod_4_eq_3() {
-        // S67 production-scale test: real L1 prime p = 5·2^248 − 1
+        // Production-scale test: real L1 prime p = 5·2^248 − 1
         // hits the fast path (p ≡ 3 mod 4). Verify sqrt(4) and
         // sqrt(9) at Uint<8> precision.
         use crypto_bigint::{NonZero, Uint};

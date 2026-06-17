@@ -85,7 +85,7 @@ pub fn cornacchia_classical(d: u64, p: u64) -> Option<(u64, u64)> {
 /// Mirrors [`cornacchia_classical`]'s structure: Tonelli-Shanks for the
 /// modular square root + Euclidean ladder for the descent + perfect-square
 /// check on `(p − b²) / d`. All steps use existing wide primitives:
-/// [`super::sqrt_mod::tonelli_shanks_uint`] (S67),
+/// [`super::sqrt_mod::tonelli_shanks_uint`],
 /// `Uint::{rem_vartime, sub_mod, wrapping_mul, div_rem_vartime, floor_sqrt_vartime}`.
 ///
 /// **Precision contract**: the caller's `LIMBS` MUST be large enough that
@@ -96,8 +96,8 @@ pub fn cornacchia_classical(d: u64, p: u64) -> Option<(u64, u64)> {
 /// - L5 (`p ≈ 2^505`): `LIMBS ≥ 16` (1024 bits) is sufficient.
 ///
 /// The function does NOT validate this contract — under-sized `LIMBS`
-/// will produce silent overflow in the `b · b` step. Match the S55-S58
-/// pattern: caller widens to fit; function operates at the given width.
+/// will produce silent overflow in the `b · b` step. Caller must
+/// widen to fit; function operates at the given width.
 ///
 /// **Runtime**: `O((log p)²)` versus trial iteration's `O(√p)`. At L1
 /// scale (`p ≈ 2^248`) trial iteration would need ≈ `2^124` steps; the
@@ -106,7 +106,7 @@ pub fn cornacchia_classical(d: u64, p: u64) -> Option<(u64, u64)> {
 /// the heat death of the sun".
 ///
 /// **Use case**: this is the modular-sqrt path in `quat_represent_integer`
-/// (the wide β-finder; S69+). It is also the workhorse for any wide-Int
+/// (the wide β-finder). It is also the workhorse for any wide-Int
 /// sum-of-two-squares decomposition KLPT needs.
 pub fn cornacchia_classical_uint<const LIMBS: usize>(
     d: &crypto_bigint::Uint<LIMBS>,
@@ -378,7 +378,7 @@ mod tests {
         }
     }
 
-    // ── S68 — wide-Int classical Cornacchia (cornacchia_classical_uint) ──
+    // ── wide-Int classical Cornacchia (cornacchia_classical_uint) ──
 
     fn verify_wide<const LIMBS: usize>(
         d: &crypto_bigint::Uint<LIMBS>,
@@ -390,12 +390,12 @@ mod tests {
         let y_sq = y.wrapping_mul(&y);
         let dy_sq = d.wrapping_mul(&y_sq);
         let total = x_sq.wrapping_add(&dy_sq);
-        assert_eq!(total, *p, "S68 wide Cornacchia: x² + d·y² ≠ p");
+        assert_eq!(total, *p, "wide Cornacchia: x² + d·y² ≠ p");
     }
 
     #[test]
     fn cornacchia_classical_uint_parity_with_narrow() {
-        // S68 parity: for every (d, p) where narrow `cornacchia_classical`
+        // Parity: for every (d, p) where narrow `cornacchia_classical`
         // returns Some/None, the wide version at `Uint<8>` must AGREE on
         // solvability, and when Some the returned (x, y) must satisfy
         // x² + d·y² = p at wide precision (may not be the SAME (x, y)
@@ -424,7 +424,7 @@ mod tests {
             assert_eq!(
                 narrow,
                 wide.is_some(),
-                "S68 parity verdict mismatch at (d={d}, p={p}): narrow={narrow} wide={:?}",
+                "parity verdict mismatch at (d={d}, p={p}): narrow={narrow} wide={:?}",
                 wide.is_some(),
             );
             if let Some(sol) = wide {
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn cornacchia_classical_uint_d1_p_real_lvl1_prime_minus_1_unsolvable() {
-        // S68 real-prime-scale negative case: at the L1 prime
+        // Real-prime-scale negative case: at the L1 prime
         // p = 5·2^248 − 1, p ≡ 3 (mod 4) which means -1 is a QNR mod p,
         // so x² + y² = p has no integer solution (Cornacchia returns
         // None at Tonelli-Shanks: −1 mod p is a QNR). This proves the
@@ -448,13 +448,13 @@ mod tests {
         let r = cornacchia_classical_uint(&d, &p_nz);
         assert!(
             r.is_none(),
-            "S68: p = 5·2^248 − 1 is 3 mod 4; -1 is a QNR; sum of two squares must be unsolvable, got {r:?}",
+            "p = 5·2^248 − 1 is 3 mod 4; -1 is a QNR; sum of two squares must be unsolvable, got {r:?}",
         );
     }
 
     #[test]
     fn cornacchia_classical_uint_d1_pseudoprime_p_eq_5_solvable() {
-        // S68 minimal solvable case at wide precision: p = 5 ≡ 1 (mod 4),
+        // Minimal solvable case at wide precision: p = 5 ≡ 1 (mod 4),
         // so -1 IS a QR mod 5, Tonelli returns sqrt(-1) = sqrt(4) = ±2,
         // and the descent finds (1, 2): 1² + 1·2² = 5. Exercises the
         // FULL wide path (Tonelli iterative branch + Euclidean ladder

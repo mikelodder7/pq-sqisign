@@ -19,10 +19,10 @@
 //!   reference's `theta_isogenies.c:theta_isogeny_compute` (lines
 //!   618–696) verbatim.
 //!
-//! Downstream sessions ship `theta_isogeny_eval` (S143) and the 4-/2-
-//! torsion variants `theta_isogeny_compute_4` / `_compute_2` (S144+).
+//! Downstream sessions ship `theta_isogeny_eval` and the 4-/2-
+//! torsion variants `theta_isogeny_compute_4` / `_compute_2`.
 //!
-//! # Hadamard flag semantics (S142 advisor)
+//! # Hadamard flag semantics
 //!
 //! `hadamard_bool_1` controls whether the **input** 8-torsion points
 //! `T1_8` / `T2_8` are in *standard* (`false`) or *dual* (`true`)
@@ -100,11 +100,9 @@ pub struct ThetaIsogeny<F: BaseField> {
     /// Second 8-torsion kernel input, preserved as passed in.
     pub(crate) t2_8: ThetaPoint2D<F>,
     /// Cached projective factors used by downstream
-    /// `theta_isogeny_eval` (S143) for fast point evaluation. Per S142
-    /// advisor: **these semantics are UNVERIFIED in this session** —
-    /// smoke tests confirm structure but the `eval` consumer arrives
-    /// in S143, which is where end-to-end semantic correctness is
-    /// established.
+    /// `theta_isogeny_eval` for fast point evaluation. These semantics
+    /// are confirmed by smoke tests on structure; end-to-end semantic
+    /// correctness is established by the `eval` consumer.
     pub(crate) precomputation: ThetaPoint2D<F>,
 }
 
@@ -213,7 +211,7 @@ impl<F: BaseField> ThetaIsogeny<F> {
 /// 7. If `hadamard_bool_2` is `true`: apply `hadamard` to the
 ///    codomain null point.
 ///
-/// # Hadamard flag note (S142 advisor)
+/// # Hadamard flag note
 ///
 /// The two flags vary per chain step. `hadamard_bool_1` is the
 /// **input** convention (standard `false` vs dual `true`).
@@ -336,7 +334,7 @@ pub(crate) fn theta_isogeny_compute<F: BaseField>(
 /// codomain formulas. See `theta_isogenies.c:752`, `:754`,
 /// `:836`–`:838` for the C-reference call sites.
 ///
-/// # Sqrt sign convention (S144 advisor flag)
+/// # Sqrt sign convention
 ///
 /// `Fp2::sqrt` returns ONE of the two roots ±√x; the
 /// `CtOption` only carries existence, not sign. The Rust crate's
@@ -645,8 +643,8 @@ mod tests {
     use crate::gf::fp::Fp1Element;
     use crate::gf::fp2::Fp2;
 
-    // S142 smoke tests. End-to-end semantic correctness for the
-    // precomputation triple is deferred to S143 when
+    // Smoke tests. End-to-end semantic correctness for the
+    // precomputation triple is deferred to when
     // `theta_isogeny_eval` consumes those cached factors. These tests
     // confirm:
     //   1. The DegenerateFactor invariant fires on zero-valued inputs
@@ -694,7 +692,7 @@ mod tests {
         assert_eq!(
             result,
             Err(ThetaIsogenyError::DegenerateFactor),
-            "S142: zero input must trip the non-zero invariant check on TT1/TT2 factors",
+            "zero input must trip the non-zero invariant check on TT1/TT2 factors",
         );
     }
 
@@ -705,7 +703,7 @@ mod tests {
         let result = theta_isogeny_compute(&domain, &t1_8, &t2_8, false, false, false);
         assert!(
             result.is_ok(),
-            "S142: non-degenerate input must succeed (verify off)",
+            "non-degenerate input must succeed (verify off)",
         );
         let iso = result.expect("checked is_ok above");
         assert!(!iso.hadamard_bool_1, "hadamard_bool_1 preserved as false");
@@ -714,9 +712,9 @@ mod tests {
         assert_eq!(iso.t2_8, t2_8, "t2_8 must be preserved as-passed");
     }
 
-    /// S142 advisor: Hadamard flag permutations must all type-check and
+    /// Hadamard flag permutations must all type-check and
     /// complete. Catches accidental flag-swaps or constant-folding.
-    /// Doesn't verify semantics (precomputation truth is S143 territory)
+    /// Doesn't verify semantics (precomputation truth is deferred)
     /// but ensures all four branches are reachable on a single input.
     #[test]
     fn theta_isogeny_compute_handles_all_four_hadamard_permutations_at_lvl1() {
@@ -738,7 +736,7 @@ mod tests {
         }
     }
 
-    /// S142 advisor: verify-flag must be a real runtime check, not
+    /// Verify-flag must be a real runtime check, not
     /// compiled-out. Force a mismatch by constructing inputs where
     /// the four pairwise checks cannot all simultaneously hold (the
     /// synthetic non-degenerate values were not constructed to be
@@ -753,7 +751,7 @@ mod tests {
         let without_verify = theta_isogeny_compute(&domain, &t1_8, &t2_8, false, false, false);
         assert!(
             without_verify.is_ok(),
-            "S142: verify=false must accept the synthetic inputs",
+            "verify=false must accept the synthetic inputs",
         );
 
         // verify=true should fail because the synthetic inputs were
@@ -762,26 +760,26 @@ mod tests {
         assert_eq!(
             with_verify,
             Err(ThetaIsogenyError::VerifyFailed),
-            "S142: verify=true must reject non-isotropic synthetic inputs",
+            "verify=true must reject non-isotropic synthetic inputs",
         );
     }
 
-    // S143 — theta_isogeny_eval hand-computed oracle tests.
+    // theta_isogeny_eval hand-computed oracle tests.
     //
     // Goal: semantically validate the eval pipeline (input-side
     // Hadamard branch + squared_theta + componentwise scale + output-
     // side Hadamard branch) across all 4 (hadamard_bool_1, hadamard_bool_2)
     // permutations. Uses synthetic precomp + input theta point where the
     // expected output is hand-computed from the C-reference formula
-    // (NOT from this function's body), per the S137e/S138 "expected
-    // from formula, not function body" doctrine.
+    // (NOT from this function's body) — "expected from formula, not
+    // function body" doctrine.
     //
     // What this DOES validate: the eval routine's branching code,
     // componentwise scaling, and Hadamard application are correct.
-    // What this DOES NOT validate: that S142's precomputation VALUES
+    // What this DOES NOT validate: that the precomputation VALUES
     // produced by theta_isogeny_compute are themselves correct.
     // Precomp-value correctness needs end-to-end chain integration
-    // (~S145+ once splitting + theta_chain_compute_and_eval ship and
+    // (once splitting + theta_chain_compute_and_eval ship and
     // we can round-trip a known input through the chain).
 
     /// Hand-built ThetaIsogeny with specified precomp + flag config.
@@ -818,7 +816,7 @@ mod tests {
         Fp2::<Fp1Element>::zero().sub(&small_fp2(n))
     }
 
-    /// S143 oracle (false, false):
+    /// Oracle (false, false):
     /// `P = (1, 2, 3, 4)`, `precomp = (2, 3, 5, 7)`.
     /// `square(P) = (1, 4, 9, 16)`.
     /// `hadamard((1, 4, 9, 16)) = (30, -10, -20, 4)`.
@@ -831,13 +829,13 @@ mod tests {
 
         let r = theta_isogeny_eval(&phi, &p);
 
-        assert_eq!(r.x, small_fp2(60), "S143: out.x = 30 · 2 = 60");
-        assert_eq!(r.y, neg_fp2(30), "S143: out.y = -10 · 3 = -30");
-        assert_eq!(r.z, neg_fp2(100), "S143: out.z = -20 · 5 = -100");
-        assert_eq!(r.w, small_fp2(28), "S143: out.w = 4 · 7 = 28");
+        assert_eq!(r.x, small_fp2(60), "out.x = 30 · 2 = 60");
+        assert_eq!(r.y, neg_fp2(30), "out.y = -10 · 3 = -30");
+        assert_eq!(r.z, neg_fp2(100), "out.z = -20 · 5 = -100");
+        assert_eq!(r.w, small_fp2(28), "out.w = 4 · 7 = 28");
     }
 
-    /// S143 oracle (false, true): scale step same as above,
+    /// Oracle (false, true): scale step same as above,
     /// then apply final Hadamard:
     /// `hadamard((60, -30, -100, 28))`:
     ///   - out.x = 60 + (-30) + (-100) + 28 = -42
@@ -851,13 +849,13 @@ mod tests {
 
         let r = theta_isogeny_eval(&phi, &p);
 
-        assert_eq!(r.x, neg_fp2(42), "S143: final-hadamard out.x = -42");
-        assert_eq!(r.y, neg_fp2(38), "S143: final-hadamard out.y = -38");
-        assert_eq!(r.z, small_fp2(102), "S143: final-hadamard out.z = 102");
-        assert_eq!(r.w, small_fp2(218), "S143: final-hadamard out.w = 218");
+        assert_eq!(r.x, neg_fp2(42), "final-hadamard out.x = -42");
+        assert_eq!(r.y, neg_fp2(38), "final-hadamard out.y = -38");
+        assert_eq!(r.z, small_fp2(102), "final-hadamard out.z = 102");
+        assert_eq!(r.w, small_fp2(218), "final-hadamard out.w = 218");
     }
 
-    /// S143 oracle (true, false): input-side Hadamard first.
+    /// Oracle (true, false): input-side Hadamard first.
     /// `hadamard((1, 2, 3, 4)) = (10, -2, -4, 0)`.
     /// `square = (100, 4, 16, 0)`.
     /// `hadamard((100, 4, 16, 0)) = (120, 112, 88, 80)`.
@@ -873,26 +871,26 @@ mod tests {
         assert_eq!(
             r.x,
             small_fp2(240),
-            "S143: input-hadamard out.x = 120 · 2 = 240"
+            "input-hadamard out.x = 120 · 2 = 240"
         );
         assert_eq!(
             r.y,
             small_fp2(336),
-            "S143: input-hadamard out.y = 112 · 3 = 336"
+            "input-hadamard out.y = 112 · 3 = 336"
         );
         assert_eq!(
             r.z,
             small_fp2(440),
-            "S143: input-hadamard out.z = 88 · 5 = 440"
+            "input-hadamard out.z = 88 · 5 = 440"
         );
         assert_eq!(
             r.w,
             small_fp2(560),
-            "S143: input-hadamard out.w = 80 · 7 = 560"
+            "input-hadamard out.w = 80 · 7 = 560"
         );
     }
 
-    /// S143 oracle (true, true): input + output Hadamard both.
+    /// Oracle (true, true): input + output Hadamard both.
     /// After scale: (240, 336, 440, 560).
     /// Final Hadamard:
     ///   - out.x = 240 + 336 + 440 + 560 = 1576
@@ -906,19 +904,19 @@ mod tests {
 
         let r = theta_isogeny_eval(&phi, &p);
 
-        assert_eq!(r.x, small_fp2(1576), "S143: both-hadamard out.x = 1576");
-        assert_eq!(r.y, neg_fp2(216), "S143: both-hadamard out.y = -216");
-        assert_eq!(r.z, neg_fp2(424), "S143: both-hadamard out.z = -424");
-        assert_eq!(r.w, small_fp2(24), "S143: both-hadamard out.w = 24");
+        assert_eq!(r.x, small_fp2(1576), "both-hadamard out.x = 1576");
+        assert_eq!(r.y, neg_fp2(216), "both-hadamard out.y = -216");
+        assert_eq!(r.z, neg_fp2(424), "both-hadamard out.z = -424");
+        assert_eq!(r.w, small_fp2(24), "both-hadamard out.w = 24");
     }
 
-    // S144 — theta_isogeny_compute_4 + theta_isogeny_compute_2 tests.
+    // theta_isogeny_compute_4 + theta_isogeny_compute_2 tests.
     //
-    // Scope per S144 OBSERVE: smoke + sqrt-failure detection ONLY.
+    // Scope: smoke + sqrt-failure detection ONLY.
     // Sign-independent oracle tests (squared-identity invariants on
     // codomain components) are docketed for a focused follow-up session
     // because they require random-QR input generation and convention
-    // alignment with the C reference. See ISA S144 Decisions block.
+    // alignment with the C reference.
 
     #[test]
     fn theta_isogeny_compute_4_rejects_zero_domain_as_degenerate_or_sqrt_fail() {
@@ -937,7 +935,7 @@ mod tests {
         // sqrt(0) succeeds → Ok with all-zero codomain.
         assert!(
             result.is_ok(),
-            "S144: zero inputs to _4 produce Ok (sqrt(0) succeeds; no degeneracy check)",
+            "zero inputs to _4 produce Ok (sqrt(0) succeeds; no degeneracy check)",
         );
     }
 
@@ -955,11 +953,11 @@ mod tests {
         // sqrt(0) succeeds → Ok with all-zero codomain.
         assert!(
             result.is_ok(),
-            "S144: zero inputs to _2 produce Ok (sqrt(0) succeeds)",
+            "zero inputs to _2 produce Ok (sqrt(0) succeeds)",
         );
     }
 
-    /// S144: smoke test for `_4` with a non-trivial small-prime domain;
+    /// Smoke test for `_4` with a non-trivial small-prime domain;
     /// confirms the routine runs end-to-end without panicking and returns
     /// a `ThetaIsogeny` struct with the expected boolean flags + preserved
     /// kernel inputs. Sqrt-success depends on whether the chosen primes
@@ -967,7 +965,7 @@ mod tests {
     /// happens to succeed at L1.
     #[test]
     fn theta_isogeny_compute_4_smoke_at_lvl1() {
-        // Use the same nondegenerate inputs as S142's compute test.
+        // Use the same nondegenerate inputs as the compute test.
         // The domain's null determines whether sqrt(TT2.x·TT2.y) and
         // sqrt(TT2.x·TT2.z) succeed. If the chosen primes don't yield
         // QR products at L1, the test will return Err and we accept that
@@ -981,19 +979,19 @@ mod tests {
             Ok(iso) => {
                 assert!(!iso.hadamard_bool_1);
                 assert!(!iso.hadamard_bool_2);
-                assert_eq!(iso.t1_8, t1, "S144: T1_4 stored in t1_8 slot");
-                assert_eq!(iso.t2_8, t2, "S144: T2_4 stored in t2_8 slot");
+                assert_eq!(iso.t1_8, t1, "T1_4 stored in t1_8 slot");
+                assert_eq!(iso.t2_8, t2, "T2_4 stored in t2_8 slot");
             }
             Err(ThetaIsogenyError::SquareRootNotInField) => {
                 // Acceptable smoke outcome: the routine correctly
                 // propagated the QR-precondition violation. Structural
                 // code path was exercised.
             }
-            Err(other) => unreachable!("S144: unexpected error {other:?}"),
+            Err(other) => unreachable!("unexpected error {other:?}"),
         }
     }
 
-    /// S144: smoke test for `_2`. Same pattern as `_4` but with three
+    /// Smoke test for `_2`. Same pattern as `_4` but with three
     /// square roots (and on a 2-torsion-only input).
     #[test]
     fn theta_isogeny_compute_2_smoke_at_lvl1() {
@@ -1006,17 +1004,17 @@ mod tests {
             Ok(iso) => {
                 assert!(!iso.hadamard_bool_1);
                 assert!(!iso.hadamard_bool_2);
-                assert_eq!(iso.t1_8, t1, "S144: T1_2 stored in t1_8 slot");
-                assert_eq!(iso.t2_8, t2, "S144: T2_2 stored in t2_8 slot");
+                assert_eq!(iso.t1_8, t1, "T1_2 stored in t1_8 slot");
+                assert_eq!(iso.t2_8, t2, "T2_2 stored in t2_8 slot");
             }
             Err(ThetaIsogenyError::SquareRootNotInField) => {
                 // Acceptable smoke outcome.
             }
-            Err(other) => unreachable!("S144: unexpected error {other:?}"),
+            Err(other) => unreachable!("unexpected error {other:?}"),
         }
     }
 
-    /// S144: confirm Hadamard flag permutations all reachable for `_4`.
+    /// Confirm Hadamard flag permutations all reachable for `_4`.
     #[test]
     fn theta_isogeny_compute_4_handles_all_hadamard_permutations_at_lvl1() {
         let domain_null = ThetaPoint2D::new(small_fp2(2), small_fp2(3), small_fp2(5), small_fp2(7));
@@ -1030,13 +1028,13 @@ mod tests {
                 // an acceptable smoke outcome (no panic, no unrelated error).
                 match result {
                     Ok(_) | Err(ThetaIsogenyError::SquareRootNotInField) => {}
-                    Err(other) => unreachable!("S144: unexpected error {other:?} for ({b1}, {b2})"),
+                    Err(other) => unreachable!("unexpected error {other:?} for ({b1}, {b2})"),
                 }
             }
         }
     }
 
-    /// S144: confirm Hadamard flag permutations all reachable for `_2`.
+    /// Confirm Hadamard flag permutations all reachable for `_2`.
     #[test]
     fn theta_isogeny_compute_2_handles_all_hadamard_permutations_at_lvl1() {
         let domain_null = ThetaPoint2D::new(small_fp2(2), small_fp2(3), small_fp2(5), small_fp2(7));
@@ -1048,13 +1046,13 @@ mod tests {
                 let result = theta_isogeny_compute_2(&domain, &t1, &t2, b1, b2);
                 match result {
                     Ok(_) | Err(ThetaIsogenyError::SquareRootNotInField) => {}
-                    Err(other) => unreachable!("S144: unexpected error {other:?} for ({b1}, {b2})"),
+                    Err(other) => unreachable!("unexpected error {other:?} for ({b1}, {b2})"),
                 }
             }
         }
     }
 
-    // S156 — ThetaIsogeny method-form alias tests.
+    // ThetaIsogeny method-form alias tests.
 
     #[test]
     fn theta_isogeny_compute_method_matches_free_function_at_lvl1() {
@@ -1065,7 +1063,7 @@ mod tests {
         let via_free = theta_isogeny_compute(&domain, &t1_8, &t2_8, false, false, false);
         assert_eq!(
             via_method, via_free,
-            "S156: ThetaIsogeny::compute must match theta_isogeny_compute free function",
+            "ThetaIsogeny::compute must match theta_isogeny_compute free function",
         );
     }
 
@@ -1082,7 +1080,7 @@ mod tests {
         assert_eq!(
             result,
             Err(ThetaIsogenyError::DegenerateFactor),
-            "S156: method propagates DegenerateFactor identically to free function",
+            "method propagates DegenerateFactor identically to free function",
         );
     }
 
@@ -1095,11 +1093,11 @@ mod tests {
         let via_free = theta_isogeny_eval(&phi, &p);
         assert_eq!(
             via_method, via_free,
-            "S156: phi.eval(&p) must match theta_isogeny_eval(&phi, &p)",
+            "phi.eval(&p) must match theta_isogeny_eval(&phi, &p)",
         );
     }
 
-    /// S156: confirm eval method works across all 4 Hadamard permutations
+    /// Confirm eval method works across all 4 Hadamard permutations
     /// (delegates correctly regardless of flag config).
     #[test]
     fn theta_isogeny_eval_method_across_hadamard_permutations_at_lvl1() {
@@ -1111,13 +1109,13 @@ mod tests {
                 let via_free = theta_isogeny_eval(&phi, &p);
                 assert_eq!(
                     via_method, via_free,
-                    "S156: eval method matches free function for ({b1}, {b2})",
+                    "eval method matches free function for ({b1}, {b2})",
                 );
             }
         }
     }
 
-    // S157 — ThetaIsogeny::compute_4 + compute_2 method-form alias tests.
+    // ThetaIsogeny::compute_4 + compute_2 method-form alias tests.
 
     #[test]
     fn theta_isogeny_compute_4_method_matches_free_function_at_lvl1() {
@@ -1129,7 +1127,7 @@ mod tests {
         let via_free = theta_isogeny_compute_4(&domain, &t1, &t2, false, false);
         assert_eq!(
             via_method, via_free,
-            "S157: ThetaIsogeny::compute_4 must match theta_isogeny_compute_4 free function",
+            "ThetaIsogeny::compute_4 must match theta_isogeny_compute_4 free function",
         );
     }
 
@@ -1143,11 +1141,11 @@ mod tests {
         let via_free = theta_isogeny_compute_2(&domain, &t1, &t2, false, false);
         assert_eq!(
             via_method, via_free,
-            "S157: ThetaIsogeny::compute_2 must match theta_isogeny_compute_2 free function",
+            "ThetaIsogeny::compute_2 must match theta_isogeny_compute_2 free function",
         );
     }
 
-    /// S157: confirm compute_4 + compute_2 methods cover all four
+    /// Confirm compute_4 + compute_2 methods cover all four
     /// Hadamard permutations identically to the free functions.
     #[test]
     fn theta_isogeny_compute_torsion_variants_across_hadamard_permutations_at_lvl1() {
@@ -1159,11 +1157,11 @@ mod tests {
             for &b2 in &[false, true] {
                 let method_4 = ThetaIsogeny::compute_4(&domain, &t1, &t2, b1, b2);
                 let free_4 = theta_isogeny_compute_4(&domain, &t1, &t2, b1, b2);
-                assert_eq!(method_4, free_4, "S157: compute_4 ({b1}, {b2})");
+                assert_eq!(method_4, free_4, "compute_4 ({b1}, {b2})");
 
                 let method_2 = ThetaIsogeny::compute_2(&domain, &t1, &t2, b1, b2);
                 let free_2 = theta_isogeny_compute_2(&domain, &t1, &t2, b1, b2);
-                assert_eq!(method_2, free_2, "S157: compute_2 ({b1}, {b2})");
+                assert_eq!(method_2, free_2, "compute_2 ({b1}, {b2})");
             }
         }
     }

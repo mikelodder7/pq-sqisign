@@ -331,7 +331,7 @@ mod tests {
         assert_eq!(o, o2);
     }
 
-    // ── S88 — Fp byte round-trip at production NIST levels ──
+    // ── Fp byte round-trip at production NIST levels ──
 
     #[test]
     fn round_trip_zero_bytes_at_lvl3() {
@@ -424,10 +424,10 @@ mod tests {
         }
     }
 
-    // ── S93 — fuzz-style randomized Fp property tests at L1/L3/L5 ──
+    // ── fuzz-style randomized Fp property tests at L1/L3/L5 ──
 
     /// Generic helper: round-trip 8 pseudo-random Fp elements through
-    /// bytes. Mirrors S92's `check_fp2_random_roundtrip_bytes` at the
+    /// bytes. Mirrors `check_fp2_random_roundtrip_bytes` at the
     /// base-field layer.
     fn check_fp_random_roundtrip_bytes<F: BaseField>() {
         use crate::hash::hash_to_fp;
@@ -439,7 +439,7 @@ mod tests {
                 .unwrap_or_else(F::one);
             x.to_bytes_le(&mut buf[..n]);
             let y = F::from_bytes_le(&buf[..n]).unwrap_or_else(F::zero);
-            assert_eq!(x, y, "S93: Fp random round-trip failed at iteration {i}");
+            assert_eq!(x, y, "Fp random round-trip failed at iteration {i}");
         }
     }
 
@@ -474,7 +474,7 @@ mod tests {
             let r_sq = r.square();
             assert_eq!(
                 r_sq, sq,
-                "S93: sqrt(x²)² must equal x² for random Fp x at iteration {i}",
+                "sqrt(x²)² must equal x² for random Fp x at iteration {i}",
             );
         }
     }
@@ -513,7 +513,7 @@ mod tests {
             assert_eq!(
                 prod,
                 F::one(),
-                "S93: x · x.invert() must equal one for random Fp x at iteration {i}",
+                "x · x.invert() must equal one for random Fp x at iteration {i}",
             );
         }
     }

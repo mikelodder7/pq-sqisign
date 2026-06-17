@@ -10,8 +10,8 @@
 //!
 //! Bounds: with coefficient bound `B`, this checks `(2B+1)⁴` candidates,
 //! computes one `reduced_norm_o0_basis` each — fine for small fake-prime
-//! tests, useless at real SQIsign scale. The LLL-based fast path replaces
-//! the enumeration in a future session; the public surface stays the same.
+//! tests, useless at real SQIsign scale. The LLL-based fast path lives in
+//! the lattice module and shares this module's public surface.
 
 use crypto_bigint::{Int, Uint};
 

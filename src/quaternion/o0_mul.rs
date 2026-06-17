@@ -263,7 +263,7 @@ pub fn quat_lideal_create<const LIMBS: usize>(
 
 /// Bridge the C-faithful ideal representation — COLUMN-major standard
 /// `(1, i, j, ij)` coords + scalar `denom`, the output of
-/// [`quat_lideal_create`] and the S327
+/// [`quat_lideal_create`] and
 /// `quat_lideal_prime_norm_reduced_equivalent` — into the spine's
 /// [`LeftIdeal`](crate::quaternion::LeftIdeal) (ROW-major `O_0`-coords). This
 /// is the connective tissue between the byte-exact quaternion front and the
@@ -504,8 +504,8 @@ pub fn o0_reduced_norm_gram_matrix<const LIMBS: usize>(p: &Uint<LIMBS>) -> [[Int
 ///
 /// Returns `None` when `u`'s top bit (bit `64·LIMBS − 1`) is set — i.e.
 /// `*u.as_int()` would interpret the value as a NEGATIVE `Int<LIMBS>`.
-/// This guard prevents the silent sign-flip trap that Forge S184 M3
-/// caught for `uint_inv_mod_vartime` and that S188's security review
+/// This guard prevents the silent sign-flip trap that Forge audit
+/// caught for `uint_inv_mod_vartime` and that the security review
 /// surfaced at multiple sites across `algebra.rs`, `o0_mul.rs`, and
 /// `represent_integer.rs`.
 ///
@@ -821,7 +821,7 @@ mod tests {
         }
     }
 
-    // ── uint_as_nonneg_int unit tests (S189) ───────────────────────────
+    // ── uint_as_nonneg_int unit tests ────────────────────────────────────
 
     #[test]
     fn uint_as_nonneg_int_accepts_small_values() {
@@ -1231,7 +1231,7 @@ mod tests {
         assert_eq!(primitive, coords);
     }
 
-    /// S350 BYTE-EXACT ORACLE: the C reference `quat_lideal_create` output for
+    /// BYTE-EXACT ORACLE: the C reference `quat_lideal_create` output for
     /// the FIRST keygen secret ideal under the lvl1 KAT DRBG (seed 0), captured
     /// by instrumenting `the-sqisign` `normeq.c` (CDUMP). Feeds the SAME γ and N
     /// into our `quat_lideal_create` and asserts the canonical (HNF) basis,

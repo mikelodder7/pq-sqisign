@@ -414,12 +414,9 @@ fn clapotis_combine_indexed<R: CryptoRng>(
 
     let index1 = r.index_alternate_order_1;
     let index2 = r.index_alternate_order_2;
-    std::eprintln!("DIAG combine: idx=({index1},{index2}) step0");
 
     let n_id = lattice_reduced_norm::<L, 32>(&lideal.basis, &lideal.denom)?;
-    std::eprintln!("DIAG combine: step1 n_id ok");
     let theta = theta_endomorphism::<L, 32>(r, &n_id, p)?;
-    std::eprintln!("DIAG combine: step2 theta ok");
 
     let u_abs = abs_uint(&r.u);
     let v_abs = abs_uint(&r.v);
@@ -429,13 +426,6 @@ fn clapotis_combine_indexed<R: CryptoRng>(
     let v_s = v_abs.wrapping_shr(exp_gcd);
     let d1 = abs_uint(&r.d1);
 
-    std::eprintln!(
-        "DIAG combine: u_s bits={} v_s bits={} exp={} exp_gcd={}",
-        u_s.bits_vartime(),
-        v_s.bits_vartime(),
-        exp,
-        exp_gcd
-    );
     let inf = MontgomeryPoint::<Fp1Element>::infinity();
     let push = |a: MontgomeryPoint<Fp1Element>,
                 b: MontgomeryPoint<Fp1Element>,
@@ -461,7 +451,6 @@ fn clapotis_combine_indexed<R: CryptoRng>(
         max_trials,
         rng,
     )?;
-    std::eprintln!("DIAG combine: step3 fu ok");
     let bas_u = (out_u[0].p1, out_u[1].p1, out_u[2].p1);
 
     let (bp2, bq2, bpmq2) = starting_basis_indexed(index2);
@@ -477,7 +466,6 @@ fn clapotis_combine_indexed<R: CryptoRng>(
         max_trials,
         rng,
     )?;
-    std::eprintln!("DIAG combine: step4 fv ok");
     let bas2 = (out_v[0].p1, out_v[1].p1, out_v[2].p1);
 
     // 5. Apply θ (scaled by 1/(d1·N(conn[index2]))) to φ_v's image (D3); the
@@ -494,12 +482,10 @@ fn clapotis_combine_indexed<R: CryptoRng>(
         F as usize,
         &a24_fv1,
     )?;
-    std::eprintln!("DIAG combine: step5 theta_app ok");
 
     // 6. Couple kernel, double to 2^exp, randomized chain pushing bas_u.
     let (p1, q1) = lift_basis(&EcBasis::new(bas_u.0, bas_u.1, bas_u.2), &fu.e1).ok()?;
     let (p2, q2) = lift_basis(&EcBasis::new(t2p, t2q, t2pmq), &fv.e1).ok()?;
-    std::eprintln!("DIAG combine: step6 lift ok");
     let e01 = CoupleCurve::new(fu.e1, fv.e1);
     let ker = ThetaKernelCouplePoints::new(
         CoupleJacobianPoint::new(p1, p2),
@@ -519,7 +505,6 @@ fn clapotis_combine_indexed<R: CryptoRng>(
         &mut out_chain,
         rng,
     )?;
-    std::eprintln!("DIAG combine: step7 theta_chain ok");
     let (tt1, tt2, tt1m2) = (out_chain[0], out_chain[1], out_chain[2]);
 
     // 7. Weil-pairing factor selection — reference on the index1 NICE
@@ -552,7 +537,6 @@ fn clapotis_combine_indexed<R: CryptoRng>(
         F as usize,
         &a24_cod,
     )?;
-    std::eprintln!("DIAG combine: step8 beta1 ok");
 
     Some((codomain, EcBasis::new(op, oq, opmq)))
 }
@@ -613,17 +597,10 @@ pub(crate) fn ideal_to_isogeny_clapotis<R: CryptoRng>(
         Ok(r) => r,
         Err(_) => match find_uv::<L>(&target, lideal, p, &alts, 2) {
             Ok(r) => r,
-            Err(_) => {
-                std::eprintln!("DIAG clap: find_uv failed (both j=0 and alt-orders)");
-                return None;
-            }
+            Err(_) => return None,
         },
     };
-    let out = clapotis_combine_indexed(&r, lideal, p, witnesses, sample_bound, max_trials, rng);
-    if out.is_none() {
-        std::eprintln!("DIAG clap: combine_indexed failed");
-    }
-    out
+    clapotis_combine_indexed(&r, lideal, p, witnesses, sample_bound, max_trials, rng)
 }
 
 /// SQIsign signing commitment — C `commit` (`sign.c`). Sample a random `O_0`
@@ -893,78 +870,18 @@ pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
         rng,
     ) {
         Ok(a) => a,
-        Err(_) => {
-            std::eprintln!(
-                "DIAG aux: sampler failed (norm bits={})",
-                random_aux_norm.bits_vartime()
-            );
-            return None;
-        }
+        Err(_) => return None,
     };
-    let n_com_lat = lattice_reduced_norm::<L, 32>(&lideal_com_resp.basis, &lideal_com_resp.denom);
-    let n_aux_lat = lattice_reduced_norm::<L, 32>(&aux.basis, &aux.denom);
-    std::eprintln!(
-        "DIAG aux: aux.lat_N={:?} aux.denom_bits={} com.lat_N={:?} com.denom_bits={} gcd_cached_one={}",
-        n_aux_lat.map(|n| n.bits_vartime()),
-        aux.denom.bits_vartime(),
-        n_com_lat.map(|n| n.bits_vartime()),
-        lideal_com_resp.denom.bits_vartime(),
-        crate::quaternion::represent_integer::uint_gcd_vartime::<L>(
-            &aux.cached_norm,
-            &lideal_com_resp.cached_norm
-        ) == Uint::<L>::ONE,
-    );
     // 2. Intersect with lideal_com_resp.
     let aux_resp_com = match lideal_intersect_lattice::<L, 64>(lideal_com_resp, &aux) {
         Ok(x) => x,
-        Err(_) => {
-            std::eprintln!("DIAG aux: intersect failed");
-            return None;
-        }
+        Err(_) => return None,
     };
-    {
-        // Closure check at WIDE width — the L=16 `contains` adjugate (~2^1155
-        // for N~2^385 ideals) overflows Int<16> and false-negatives.
-        use crate::quaternion::lattice::widen_int_lattice;
-        use crate::quaternion::o0_mul::multiply_o0_basis;
-        const CW: usize = 48;
-        let p_cw = crate::params::lvl1::prime().resize::<CW>();
-        let widen = |id: &LeftIdeal<L>| -> LeftIdeal<CW> {
-            let mut b = [[Int::<CW>::from_i64(0); 4]; 4];
-            for (brow, srow) in b.iter_mut().zip(id.basis.iter()) {
-                for (be, se) in brow.iter_mut().zip(srow.iter()) {
-                    *be = widen_int_lattice::<L, CW>(se);
-                }
-            }
-            LeftIdeal::<CW>::with_denom_and_norm(
-                b,
-                id.denom.resize::<CW>(),
-                id.cached_norm.resize::<CW>(),
-            )
-        };
-        let closed = |id: &LeftIdeal<CW>| -> bool {
-            let o0 = LeftIdeal::<CW>::full_order();
-            for e in &o0.basis {
-                for g in &id.basis {
-                    if !id.contains(&multiply_o0_basis::<CW>(e, g, &p_cw)) {
-                        return false;
-                    }
-                }
-            }
-            true
-        };
-        std::eprintln!(
-            "DIAG aux: N(aux_resp_com) bits={} com_resp closed@48={} aux_resp_com closed@48={}",
-            aux_resp_com.cached_norm.bits_vartime(),
-            closed(&widen(lideal_com_resp)),
-            closed(&widen(&aux_resp_com)),
-        );
-    }
     // 3. Clapotis spine → (E_aux, B_aux). Try the PROVEN idx0 path first
     // (the (0,0) decomposition the commit uses; keygen=false), falling back to
     // the general alternate-orders evaluator. The general combine_indexed
     // (0,0) path's randomized (2,2)-split fails on these aux ideals.
-    let r = ideal_to_isogeny_clapotis_idx0(
+    ideal_to_isogeny_clapotis_idx0(
         &aux_resp_com,
         &p16,
         witnesses,
@@ -974,7 +891,6 @@ pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
         rng,
     )
     .or_else(|| {
-        std::eprintln!("DIAG aux: idx0 failed, trying general");
         ideal_to_isogeny_clapotis(
             &aux_resp_com,
             &p16,
@@ -983,11 +899,7 @@ pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
             max_trials,
             rng,
         )
-    });
-    if r.is_none() {
-        std::eprintln!("DIAG aux: spine failed");
-    }
-    r
+    })
 }
 
 #[cfg(all(test, feature = "kat"))]
@@ -1418,7 +1330,7 @@ mod tests {
         // BUILD width L=24 (1536-bit): the quaternion finder needs
         // 64·BL ≥ 3·bits(target_m). For n1~2^250 (≈bitsize(p) — the real
         // reduced-secret-ideal scale), target_m=n1·n2~2^500 needs ≥1500 bits,
-        // so BL=24 (1536); BL=16 (1024) was the S301 limit that failed at
+        // so BL=24 (1536); BL=16 (1024) was a limit that failed at
         // ~2^253. The built ideal is narrowed to the spine's L=16.
         const BL: usize = 24;
         let p16 = crate::params::lvl1::prime().resize::<BL>();
@@ -1442,7 +1354,7 @@ mod tests {
         // Two distinct odd primes ~2^250 (≈ bitsize(p) = 251): the magnitude
         // of the reduced secret/connecting ideal that the real protocol feeds
         // the spine (SEC_DEGREE → prime-norm-reduced equivalent ~ bitsize(p)).
-        // Built at BL=24 (the S301 fixture-build limit at BL=16 fails here);
+        // Built at BL=24 (BL=16 is too narrow for this scale);
         // narrowed to the spine's L=16 (n1 ~2^250 < Int<16>).
         let n1 = next_prime(Uint::<BL>::ONE.shl_vartime(250).wrapping_add(&Uint::ONE));
         let n2 = next_prime(Uint::<BL>::ONE.shl_vartime(249).wrapping_add(&Uint::ONE));
@@ -1468,7 +1380,7 @@ mod tests {
 
         // Multiple independent seeds → distinct (same-norm n1) connecting
         // ideals → distinct find_uv/spine execution paths (robustness gate;
-        // the even-θ-denominator fix landed in S300 made these all pass).
+        // the even-θ-denominator fix made these all pass).
         for seed in [0x5Au8, 0x77, 0xC3] {
             let mut rng = NistPqcRng::new(&[seed; 48]);
             let gamma = find_quaternion_in_full_order_with_norm_wide::<BL, _>(
@@ -1628,7 +1540,7 @@ mod tests {
     /// SEC_DEGREE = 2^512 + 75 is PRIME. The C-ref keygen samples the secret
     /// ideal with `is_prime = 1`, so the FAST-path sampler applies (no
     /// prime_cofactor / general path needed) — KAT-exact keygen is the
-    /// S307 fast-path flow at SEC_DEGREE scale (sampler internal width
+    /// fast-path flow at SEC_DEGREE scale (sampler internal width
     /// ~L≥40 for the rerand-combined gen ~ (p·SEC²)² ~ 2^2556).
     #[test]
     fn sec_degree_is_prime() {
@@ -1645,7 +1557,7 @@ mod tests {
     /// KAT-exact keygen FRONT: sample the GENUINE secret O_0-ideal at norm
     /// SEC_DEGREE = 2^512 + 75 via the wide-RETURN production sampler.
     ///
-    /// This is the piece S307's reduced-scale keygen could not reach: the
+    /// This is the piece an earlier reduced-scale keygen could not reach: the
     /// secret ideal's basis entries are ~2^512, which exceed `Int<8>`
     /// (2^511), so the fixed-`LeftIdeal<8>` return of
     /// `sampling_random_ideal_o0_given_norm_wide` overflows on the narrow.
@@ -1711,7 +1623,7 @@ mod tests {
     /// the verification `hint_pk` (a separate basis-hint computation we don't
     /// port here), so only pk[0..64] — the cryptographic curve content — is
     /// compared. Heavy (real-scale dpe-LLL + spine), hence ignored.
-    #[ignore = "end-to-end keygen vs lvl1 KAT pk[0]: blocked on a DEGENERATE find_uv (0,0) (d1=1, u~2^248) for the KAT secret ideal — BOTH find_uv paths agree, so the defect is the byte-exact keygen front / J narrowing, not find_uv or the combine (S345)"]
+    #[ignore = "end-to-end keygen vs lvl1 KAT pk[0]: blocked on a DEGENERATE find_uv (0,0) (d1=1, u~2^248) for the KAT secret ideal — BOTH find_uv paths agree, so the defect is the byte-exact keygen front / J narrowing, not find_uv or the combine"]
     #[test]
     fn keygen_end_to_end_matches_kat_pk0() {
         use crate::quaternion::ideal::LeftIdeal;
@@ -1737,7 +1649,7 @@ mod tests {
             keygen_byte_exact_secret_ideal::<WN, _>(&sec, &p48, 8192, 64, &wit48, &mut rng)
                 .expect("byte-exact keygen front must produce a prime-norm ideal");
 
-        // C-ORACLE BISECT (S349): our reduced secret ideal has the SAME prime
+        // C-ORACLE BISECT: our reduced secret ideal has the SAME prime
         // norm q (0x1879C1CC66949175BB052455BDB16319419) and SAME |det|=(2q)² as
         // C's, and standard-coords basis rows 1-3 match C BYTE-FOR-BYTE, but
         // row0 differs (the q-coefficient sits on i for us vs j for C) ⇒ a
@@ -1760,10 +1672,8 @@ mod tests {
         let p16 = crate::params::lvl1::prime().resize::<L>();
         let w = witnesses();
 
-        // STATUS (S347 — supersedes the S336/S337/S345 blocker comments, all of
-        // which are now DISPROVEN): the idx0 spine runs to completion and produces
-        // E_A. find_uv returns a BALANCED index-(0,0) decomposition (NOT the
-        // principal-like degeneracy the S345 comment claimed — that was stale).
+        // STATUS: the idx0 spine runs to completion and produces E_A.
+        // find_uv returns a BALANCED index-(0,0) decomposition.
         // The byte-exact front + bridge are sound: the secret ideal lands in the
         // CORRECT ideal class. PROOF: the produced E_A has a j-invariant
         // BYTE-IDENTICAL to the official KAT public-key curve (see the
@@ -1771,14 +1681,12 @@ mod tests {
         // that E_A comes out in a different Montgomery MODEL than C's canonical
         // curve (same j, different A coefficient; A_kat ∉ {A_ours, -A_ours}, so
         // it is one of the other 2-torsion-labeling models in the S₃ orbit). The
-        // S346 "denom-2 layer-1" diagnosis is REFUTED. The twist branch is RULED
-        // OUT (diag_keygen_e_a_twist_check). The keygen-deterministic path is now
-        // WIRED (keygen=true below): `small=true` length + C-faithful θ (verified
-        // byte-exact by diag_represent_integer_keygen_phi_u_matches_c) + B0
-        // doubling + deterministic split. It produces the CORRECT class (j==KAT,
-        // diag_keygen_e_a_isomorphism_to_kat) but the MODEL still diverges
-        // (A_kat ∉ {A_ours,-A_ours}). OPEN (next increment): byte-exact Fu/Fv
-        // model bisect vs the C oracle — prime suspect `basis_e0_lvl1()` vs C
+        // twist branch is RULED OUT (diag_keygen_e_a_twist_check). The
+        // keygen-deterministic path is wired (keygen=true below): `small=true`
+        // length + C-faithful θ + B0 doubling + deterministic split. It produces
+        // the CORRECT class (j==KAT) but the MODEL still diverges
+        // (A_kat ∉ {A_ours,-A_ours}). OPEN: byte-exact Fu/Fv model bisect vs
+        // the C oracle — prime suspect `basis_e0_lvl1()` vs C
         // `CURVES_WITH_ENDOMORPHISMS[0].basis_even`. SQIsign keygen applies NO
         // post-hoc normalization, so the fix is a construction match.
         let (e_a, _basis) =
@@ -1804,21 +1712,21 @@ mod tests {
         );
     }
 
-    /// S347 DIAGNOSTIC: prove the item-8 pk mismatch is a Montgomery-MODEL
-    /// difference, not a wrong-curve / wrong-class bug. Runs the byte-exact
-    /// keygen → idx0 spine → E_A for KAT seed 0, then compares E_A against the
-    /// curve decoded from the official KAT pk[0..64]:
+    /// DIAGNOSTIC: prove the pk mismatch is a Montgomery-MODEL difference, not
+    /// a wrong-curve / wrong-class bug. Runs the byte-exact keygen → idx0
+    /// spine → E_A for KAT seed 0, then compares E_A against the curve
+    /// decoded from the official KAT pk[0..64]:
     ///   - `j(E_A) == j(E_kat)` — TRUE (verified): E_A is isomorphic to the KAT
     ///     curve, so the secret ideal is in the correct ideal class and the
     ///     spine produces the right curve up to isomorphism.
     ///   - `A_kat == A_ours` / `A_kat == -A_ours` — both FALSE: it is not the
     ///     trivial sign model-swap; A_kat is another element of the ≤6-value
     ///     S₃ orbit (a different 2-torsion point at the Montgomery origin).
-    /// This refutes the S346 "denom-2 bridge" diagnosis. OPEN: this does NOT by
-    /// itself exclude the quadratic twist (twists share j); the next increment
-    /// computes the full model orbit to confirm iso-not-twist, then matches C's
-    /// construction (2^f basis ordering / `small=true` length) so the canonical
-    /// model falls out. Asserts only the j-equality (the proven invariant).
+    /// OPEN: this does NOT by itself exclude the quadratic twist (twists share
+    /// j); the next increment computes the full model orbit to confirm
+    /// iso-not-twist, then matches C's construction (2^f basis ordering /
+    /// `small=true` length) so the canonical model falls out. Asserts only the
+    /// j-equality (the proven invariant).
     #[ignore = "diagnostic: E_A vs KAT curve — same j (iso), different Montgomery model"]
     #[test]
     fn diag_keygen_e_a_isomorphism_to_kat() {
@@ -1878,7 +1786,7 @@ mod tests {
         );
     }
 
-    /// S347 TWIST CHECK: rule out the quadratic twist that j-equality cannot.
+    /// TWIST CHECK: rule out the quadratic twist that j-equality cannot.
     ///
     /// A Montgomery curve and its quadratic twist share the SAME Kummer line
     /// (x-only model) and hence the SAME A-coefficient orbit — so an
@@ -1990,9 +1898,9 @@ mod tests {
         );
     }
 
-    /// S347 RNG-DEPENDENCE CHECK: does the codomain Montgomery MODEL (A coeff)
+    /// RNG-DEPENDENCE CHECK: does the codomain Montgomery MODEL (A coeff)
     /// depend on the spine's chain randomization? The C `dim2id2iso` is
-    /// DETERMINISTIC (keygen draws no further randomness, S329), but our spine
+    /// DETERMINISTIC (keygen draws no further randomness), but our spine
     /// uses `theta_chain_compute_and_eval_randomized` + `fixed_degree_isogeny_and_eval`
     /// with rng. If our A varies with rng → we must de-randomize to match C's
     /// deterministic model. If A is rng-INVARIANT → the model is fixed by the
@@ -2059,10 +1967,10 @@ mod tests {
         );
     }
 
-    /// S347 PORT VERIFICATION: the C-faithful `represent_integer_over_alt_order`
+    /// PORT VERIFICATION: the C-faithful `represent_integer_over_alt_order`
     /// with the O_0 standard order (q=1) + the new q=1 swap/%4 branch must
     /// reproduce C's φ_u θ byte-exactly. Positions the DRBG at C's pre-φ_u state
-    /// (keygen front → find_uv, the front being byte-aligned per S347) then calls
+    /// (keygen front → find_uv, the front being byte-aligned) then calls
     /// represent_integer at the C `small=true` length (150 for u_bitsize 121) and
     /// compares θ to the C-oracle ground truth (CDUMP_FD record 0, φ_u):
     /// θ.coord = (ddb8c08f…67, 3a7aa0a3…de, 0x548, -0x85), denom = 2.
@@ -2141,7 +2049,7 @@ mod tests {
         assert_eq!(gamma.d, Int::<W>::from_i64(-0x85), "θ.d must be -0x85");
     }
 
-    /// S345 DIAGNOSTIC: is the byte-exact keygen secret ideal J principal-like
+    /// DIAGNOSTIC: is the byte-exact keygen secret ideal J principal-like
     /// (find_uv d1=1, the spine blocker), and does a FRESH sampler ideal of the
     /// SAME norm q behave the same? Prints find_uv's (idx, u-bits, d1-bits) +
     /// N/denom for J vs a sampler ideal of norm q. If J→d1=1 but sampler→balanced,

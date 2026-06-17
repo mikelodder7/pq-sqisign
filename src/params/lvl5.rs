@@ -19,7 +19,7 @@ const_monty_params!(
 pub type Fp5Element = crypto_bigint::modular::ConstMontyForm<Lvl5Modulus, { Lvl5Modulus::LIMBS }>;
 
 /// Marker type implementing [`Params`] at NIST Level 5.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Level5;
 
 impl Params for Level5 {

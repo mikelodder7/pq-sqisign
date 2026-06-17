@@ -257,7 +257,7 @@ pub(crate) fn narrow_int_lattice<const WIDE: usize, const NARROW: usize>(
 /// At `NARROW = WIDE` this reduces to [`lll_4x4_in_metric`] with extra
 /// widen/narrow round-trips — useful as a parity check. For
 /// `WIDE > NARROW` (typically `WIDE = 2·NARROW`), this avoids the
-/// wrapping-corruption that S55 confirmed at L1 large-γ scale where the
+/// wrapping-corruption confirmed at L1 large-γ scale where the
 /// Lovász intermediate `4·d[k-1]·d[k+1]` can reach `2^514 > 2^511 = Int<8>::MAX`.
 ///
 /// **Caller invariant**: the *reduced* basis entries must fit in
@@ -266,8 +266,8 @@ pub(crate) fn narrow_int_lattice<const WIDE: usize, const NARROW: usize>(
 /// function will silently truncate if the invariant is violated. If
 /// downstream code samples in the reduced basis and the samples
 /// themselves overflow narrow, those overflows are a separate concern
-/// for the *search-path* wide variant (`find_prime_norm_quaternion_in_ideal_wide`,
-/// future session).
+/// handled by the *search-path* wide variant
+/// (`find_prime_norm_quaternion_in_ideal_wide`).
 #[allow(clippy::needless_range_loop)]
 pub fn lll_4x4_in_metric_wide<const NARROW: usize, const WIDE: usize>(
     basis: &[[Int<NARROW>; 4]; 4],
@@ -338,7 +338,7 @@ pub fn pull_back_gram<const LIMBS: usize>(
 /// and `M ~ 2^251` (`o0_reduced_norm_gram_matrix`), the `Bᵀ·M·B`
 /// INTERMEDIATE products reach ~`2^749`, which wraps `Int<8>` (511-bit
 /// signed) even though the final Gram entries are small enough to fit.
-/// S230 proved a `WIDE`-precision pullback restores the exact
+/// A `WIDE`-precision pullback restores the exact
 /// `denom² | vᵀGv` divisibility the narrow path silently corrupts.
 /// Mirrors [`qf_eval_4x4_wide`]'s widen-then-compute shape.
 #[allow(clippy::needless_range_loop)]
@@ -509,11 +509,11 @@ pub fn lll_4x4_in_metric<const LIMBS: usize>(
 /// At `NARROW = WIDE` this matches [`qf_eval_4x4`] with extra widen
 /// round-trips. For `WIDE > NARROW` (typically `WIDE = 2·NARROW`),
 /// the wide arithmetic avoids overflow when intermediates can reach
-/// `~NARROW · 64 · 3` bits — the regime where S55 confirmed L1 large-γ
+/// `~NARROW · 64 · 3` bits — the regime where L1 large-γ
 /// `reduced_norm_o0_basis` was wrapping. Combine with
 /// [`lll_4x4_in_metric_wide`] and a future
 /// `pull_back_gram_wide` to compose the wide search path that flips
-/// the S55 `#[should_panic]` L1 large-γ test.
+/// the `#[should_panic]` L1 large-γ test.
 #[allow(clippy::needless_range_loop)]
 pub fn qf_eval_4x4_wide<const NARROW: usize, const WIDE: usize>(
     c: &[Int<NARROW>; 4],
@@ -1033,7 +1033,7 @@ mod tests {
     use super::*;
     use crate::quaternion::hnf::hnf_4x4;
 
-    // ── mat_4x4_eval unit tests (S194) ─────────────────────────────────
+    // ── mat_4x4_eval unit tests ──────────────────────────────────────────
 
     #[test]
     fn mat_4x4_eval_identity_returns_v_unchanged() {
@@ -1154,7 +1154,7 @@ mod tests {
         //   Bᵀ · v = (1, 1, 0, 0)
         // Document that B and Bᵀ produce different results on a
         // non-symmetric matrix — this is exactly the case where the
-        // S195 transpose bug hid (caught by Forge audit).
+        // Transpose bug hid (caught by Forge audit).
         let b = [
             [
                 Int::<8>::from_i64(1),

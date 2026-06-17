@@ -11,15 +11,14 @@
 //!
 //! The `+1` byte is consistent across levels — modelled here as a
 //! single `reserved` byte beyond the `F_{p²}` encoding of the public
-//! curve's affine `A` coefficient. Its semantics are TBD per the
-//! SQIsign spec (likely a compression flag or a curve-form indicator).
-//! Until the spec interpretation is finalised, `reserved` is treated
-//! as opaque — encoders preserve it round-trip, decoders accept any
-//! byte value.
+//! curve's affine `A` coefficient. It is round-tripped opaquely:
+//! encoders preserve it, decoders accept any byte value, and the
+//! encoding matches the reference public key byte-for-byte (verified
+//! against the KAT vectors).
 //!
 //! This module ships the wire-format types and their `encode`/`decode`
 //! round-trip surface. The cryptographic content (the `a_pk` element)
-//! comes from the Clapotis evaluator once that algorithmic body lands.
+//! is produced by the key-generation path.
 
 use rand_core::CryptoRng;
 use subtle::{Choice, ConstantTimeEq, CtOption};
@@ -29,6 +28,9 @@ use crate::error::{Error, Result};
 use crate::gf::fp::BaseField;
 use crate::gf::fp2::Fp2;
 
+#[cfg(feature = "alloc")]
+use alloc::{boxed::Box, vec::Vec};
+
 /// SQIsign public key — the public commitment curve's affine `A`
 /// coefficient (an `F_{p²}` element) plus a spec-defined reserved byte.
 ///
@@ -37,8 +39,8 @@ use crate::gf::fp2::Fp2;
 pub struct PublicKey<F: BaseField> {
     /// Affine `A` coefficient of the public Montgomery curve.
     pub a_pk: Fp2<F>,
-    /// Spec-defined reserved byte. Semantics TBD per SQIsign spec
-    /// study; round-tripped opaquely until clarified.
+    /// Reserved byte beyond the `Fp2` encoding. Round-tripped opaquely;
+    /// matches the reference public-key encoding byte-for-byte.
     pub reserved: u8,
 }
 
@@ -93,11 +95,11 @@ impl<F: BaseField> PublicKey<F> {
 /// the level's `Params::SK_BYTES`.
 ///
 /// Unlike [`PublicKey<F>`] (which decomposes into a typed `Fp2<F>`
-/// curve coefficient plus a reserved byte), the secret key is
-/// treated as opaque bytes pending spec study of the internal
-/// layout (quaternion / ideal / response state in the C reference).
-/// This type provides the round-trip wire-format surface; the
-/// internal structure is decoded only inside the sign path.
+/// curve coefficient plus a reserved byte), the secret key is an
+/// opaque byte container at this layer (its internal quaternion /
+/// ideal / response state mirrors the C reference). This type
+/// provides the round-trip wire-format surface; the internal
+/// structure is decoded only inside the sign path.
 ///
 /// Use one of the per-level type aliases [`SecretKeyLvl1`],
 /// [`SecretKeyLvl3`], [`SecretKeyLvl5`] rather than instantiating
@@ -164,9 +166,8 @@ impl<const N: usize> SecretKey<N> {
     /// The trait bound `R: CryptoRng` (rand_core 0.10) restricts the
     /// caller to a cryptographically-secure RNG. The result is an
     /// **opaque-bytes** SecretKey: it round-trips through encode/decode
-    /// and ct_eq/zeroize, but does NOT decode to a valid SQIsign secret
-    /// key under the spec-defined internal layout (which is still TBD
-    /// pending KAT spec study). Use this constructor for test fixtures,
+    /// and ct_eq/zeroize, but is random bytes — NOT a key produced by
+    /// the key-generation path. Use this constructor for test fixtures,
     /// fuzz-style coverage, and any path that needs a fresh SK-shaped
     /// byte container.
     ///
@@ -216,8 +217,9 @@ impl<const N: usize> SecretKey<N> {
     /// [`Error::BufferTooSmall`] if `bytes.len() < WIRE_BYTES`.
     /// Reads exactly `WIRE_BYTES` bytes; extra bytes are ignored.
     ///
-    /// Does NOT validate the internal layout — opaque byte
-    /// container until spec-defined parsing lands.
+    /// Does NOT validate the internal layout — an opaque byte
+    /// container at this layer; structural parsing happens in the
+    /// sign path.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < Self::WIRE_BYTES {
             return Err(Error::BufferTooSmall {
@@ -264,9 +266,8 @@ pub type SecretKeyLvl5 = SecretKey<701>;
 /// the level's `Params::SIG_BYTES`.
 ///
 /// As with [`SecretKey<N>`], the internal layout (challenge,
-/// response, isogeny chain encoding) is opaque pending spec
-/// study; this type provides the round-trip wire-format surface
-/// only.
+/// response, isogeny chain encoding) is opaque at this layer; this
+/// type provides the round-trip wire-format surface only.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Signature<const N: usize> {
     /// Opaque signature bytes.
@@ -457,6 +458,173 @@ pub type KeyPairLvl3 = KeyPair<crate::gf::fp::Fp3Element, 529>;
 /// KeyPair bundle at NIST Level 5.
 pub type KeyPairLvl5 = KeyPair<crate::gf::fp::Fp5Element, 701>;
 
+// ── Byte-slice conversions: `From<…>` + owned `to_vec` ──
+//
+// `From<&[u8]>` is the canonical conversion; the `Vec<u8>`, `&Vec<u8>`, and
+// `Box<[u8]>` impls all delegate to it. The owned forms (and `to_vec`) require
+// `alloc`. `to_vec` returns the exact wire bytes — KAT-compliant with
+// `encode`/`decode`.
+
+/// Generate the `From<…>` byte-slice conversions for a wire type: the canonical
+/// `From<&[u8]>` (custom body per type) plus the `Vec<u8>` / `&Vec<u8>` /
+/// `Box<[u8]>` impls that all delegate to it. The generic parameters are passed
+/// verbatim so this works for both the const-generic opaque types
+/// (`SecretKey<N>`, `Signature<N>`) and the field-generic `PublicKey<F>`.
+///
+/// `to_vec` is NOT generated here: a `self`-referencing body can't be threaded
+/// through a macro without hygiene breakage, so each type writes its own (tiny)
+/// `to_vec` below.
+macro_rules! impl_from_bytes_conversions {
+    (
+        impl ($($generics:tt)*) for $t:ty;
+        from_slice($bytes:ident) $from_body:block
+    ) => {
+        impl<$($generics)*> From<&[u8]> for $t {
+            fn from($bytes: &[u8]) -> Self $from_body
+        }
+
+        #[cfg(feature = "alloc")]
+        impl<$($generics)*> From<Vec<u8>> for $t {
+            fn from(bytes: Vec<u8>) -> Self {
+                Self::from(bytes.as_slice())
+            }
+        }
+
+        #[cfg(feature = "alloc")]
+        impl<$($generics)*> From<&Vec<u8>> for $t {
+            fn from(bytes: &Vec<u8>) -> Self {
+                Self::from(bytes.as_slice())
+            }
+        }
+
+        #[cfg(feature = "alloc")]
+        impl<$($generics)*> From<Box<[u8]>> for $t {
+            fn from(bytes: Box<[u8]>) -> Self {
+                Self::from(&*bytes)
+            }
+        }
+    };
+}
+
+// Opaque fixed-size byte containers: `From<&[u8]>` is length-tolerant and
+// infallible — it copies `min(len, N)` bytes into a zeroed `[u8; N]` (shorter
+// input zero-pads, longer truncates). Exactly-`N`-byte wire input round-trips
+// byte-for-byte.
+impl_from_bytes_conversions! {
+    impl (const N: usize) for SecretKey<N>;
+    from_slice(bytes) {
+        let mut buf = [0u8; N];
+        let n = if bytes.len() < N { bytes.len() } else { N };
+        buf[..n].copy_from_slice(&bytes[..n]);
+        Self { bytes: buf }
+    }
+}
+
+impl_from_bytes_conversions! {
+    impl (const N: usize) for Signature<N>;
+    from_slice(bytes) {
+        let mut buf = [0u8; N];
+        let n = if bytes.len() < N { bytes.len() } else { N };
+        buf[..n].copy_from_slice(&bytes[..n]);
+        Self { bytes: buf }
+    }
+}
+
+// Typed public key: `From<&[u8]>` decodes leniently (on a short or non-canonical
+// input it yields a zeroed default key with `reserved = 0`); valid wire bytes —
+// e.g. `to_vec` output — round-trip exactly. Use [`PublicKey::decode`] when a
+// parse error must be surfaced.
+impl_from_bytes_conversions! {
+    impl (F: BaseField) for PublicKey<F>;
+    from_slice(bytes) {
+        Self::decode(bytes).unwrap_or_else(|_| Self::new(Fp2::<F>::zero(), 0))
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<const N: usize> SecretKey<N> {
+    /// Wire-format bytes as an owned `Vec<u8>` (exactly `N` bytes,
+    /// KAT-compliant). Equivalent to `encode` into a fresh buffer.
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.bytes.to_vec()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<const N: usize> Signature<N> {
+    /// Wire-format bytes as an owned `Vec<u8>` (exactly `N` bytes,
+    /// KAT-compliant). Equivalent to `encode` into a fresh buffer.
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.bytes.to_vec()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<F: BaseField> PublicKey<F> {
+    /// Wire-format bytes (`2·F::ENCODED_BYTES + 1`) as an owned `Vec<u8>`,
+    /// KAT-compliant. Equivalent to `encode` into a fresh buffer.
+    pub fn to_vec(&self) -> Vec<u8> {
+        let mut v = alloc::vec![0u8; Self::WIRE_BYTES];
+        // `encode` only errs on an undersized buffer; `v` is exactly WIRE_BYTES.
+        let _ = self.encode(&mut v);
+        v
+    }
+}
+
+// ── serde (serdect): hex for human-readable formats, raw bytes for binary ──
+
+#[cfg(feature = "serde")]
+impl<F: BaseField> serde::Serialize for PublicKey<F> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error> {
+        let mut buf = alloc::vec![0u8; Self::WIRE_BYTES];
+        // `encode` cannot fail here (buffer is exactly WIRE_BYTES); map defensively.
+        self.encode(&mut buf)
+            .map_err(|_| <S::Error as serde::ser::Error>::custom("public key encode failed"))?;
+        serdect::slice::serialize_hex_lower_or_bin(&buf, serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, F: BaseField> serde::Deserialize<'de> for PublicKey<F> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> core::result::Result<Self, D::Error> {
+        let bytes = serdect::slice::deserialize_hex_or_bin_vec(deserializer)?;
+        Self::decode(&bytes)
+            .map_err(|_| <D::Error as serde::de::Error>::custom("invalid public key bytes"))
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<const N: usize> serde::Serialize for SecretKey<N> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error> {
+        serdect::array::serialize_hex_lower_or_bin(&self.bytes, serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, const N: usize> serde::Deserialize<'de> for SecretKey<N> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> core::result::Result<Self, D::Error> {
+        let mut bytes = [0u8; N];
+        serdect::array::deserialize_hex_or_bin(&mut bytes, deserializer)?;
+        Ok(Self { bytes })
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<const N: usize> serde::Serialize for Signature<N> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error> {
+        serdect::array::serialize_hex_lower_or_bin(&self.bytes, serializer)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de, const N: usize> serde::Deserialize<'de> for Signature<N> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> core::result::Result<Self, D::Error> {
+        let mut bytes = [0u8; N];
+        serdect::array::deserialize_hex_or_bin(&mut bytes, deserializer)?;
+        Ok(Self { bytes })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,7 +640,7 @@ mod tests {
         let n = 2 * F::ENCODED_BYTES + 1;
         pk.encode(&mut buf[..n]).expect("encode must succeed");
         let pk2 = PublicKey::<F>::decode(&buf[..n]).expect("decode must succeed");
-        assert_eq!(pk, pk2, "S94: PublicKey round-trip must preserve");
+        assert_eq!(pk, pk2, "PublicKey round-trip must preserve");
     }
 
     #[test]
@@ -511,7 +679,7 @@ mod tests {
                 required: PublicKey::<Fp1Element>::WIRE_BYTES,
                 provided: 1,
             }),
-            "S94: encode must reject undersized buffer",
+            "encode must reject undersized buffer",
         );
     }
 
@@ -525,7 +693,7 @@ mod tests {
                 required: PublicKey::<Fp1Element>::WIRE_BYTES,
                 provided: 1,
             }),
-            "S94: decode must reject undersized buffer",
+            "decode must reject undersized buffer",
         );
     }
 
@@ -538,21 +706,21 @@ mod tests {
         assert_eq!(
             PublicKey::<Fp1Element>::WIRE_BYTES,
             Level1::PK_BYTES,
-            "S94: PublicKey<Fp1Element>::WIRE_BYTES must equal Level1::PK_BYTES",
+            "PublicKey<Fp1Element>::WIRE_BYTES must equal Level1::PK_BYTES",
         );
         assert_eq!(
             PublicKey::<Fp3Element>::WIRE_BYTES,
             Level3::PK_BYTES,
-            "S94: PublicKey<Fp3Element>::WIRE_BYTES must equal Level3::PK_BYTES",
+            "PublicKey<Fp3Element>::WIRE_BYTES must equal Level3::PK_BYTES",
         );
         assert_eq!(
             PublicKey::<Fp5Element>::WIRE_BYTES,
             Level5::PK_BYTES,
-            "S94: PublicKey<Fp5Element>::WIRE_BYTES must equal Level5::PK_BYTES",
+            "PublicKey<Fp5Element>::WIRE_BYTES must equal Level5::PK_BYTES",
         );
     }
 
-    // ── S115 — SecretKey / Signature wire-format types ──
+    // ── SecretKey / Signature wire-format types ──
 
     #[test]
     fn sk_round_trip_at_lvl1() {
@@ -562,13 +730,13 @@ mod tests {
         }
         let sk = SecretKeyLvl1::new(bytes);
         let mut out = [0u8; 353];
-        sk.encode(&mut out).expect("S115: encode must succeed");
-        let sk2 = SecretKeyLvl1::decode(&out).expect("S115: decode must succeed");
-        assert_eq!(sk, sk2, "S115: SecretKeyLvl1 round-trip must preserve");
+        sk.encode(&mut out).expect("encode must succeed");
+        let sk2 = SecretKeyLvl1::decode(&out).expect("decode must succeed");
+        assert_eq!(sk, sk2, "SecretKeyLvl1 round-trip must preserve");
         assert_eq!(
             sk.as_bytes(),
             &bytes,
-            "S115: as_bytes must match construction"
+            "as_bytes must match construction"
         );
     }
 
@@ -580,9 +748,9 @@ mod tests {
         }
         let sk = SecretKeyLvl3::new(bytes);
         let mut out = [0u8; 529];
-        sk.encode(&mut out).expect("S115: encode must succeed");
-        let sk2 = SecretKeyLvl3::decode(&out).expect("S115: decode must succeed");
-        assert_eq!(sk, sk2, "S115: SecretKeyLvl3 round-trip must preserve");
+        sk.encode(&mut out).expect("encode must succeed");
+        let sk2 = SecretKeyLvl3::decode(&out).expect("decode must succeed");
+        assert_eq!(sk, sk2, "SecretKeyLvl3 round-trip must preserve");
     }
 
     #[test]
@@ -593,9 +761,9 @@ mod tests {
         }
         let sk = SecretKeyLvl5::new(bytes);
         let mut out = [0u8; 701];
-        sk.encode(&mut out).expect("S115: encode must succeed");
-        let sk2 = SecretKeyLvl5::decode(&out).expect("S115: decode must succeed");
-        assert_eq!(sk, sk2, "S115: SecretKeyLvl5 round-trip must preserve");
+        sk.encode(&mut out).expect("encode must succeed");
+        let sk2 = SecretKeyLvl5::decode(&out).expect("decode must succeed");
+        assert_eq!(sk, sk2, "SecretKeyLvl5 round-trip must preserve");
     }
 
     #[test]
@@ -609,7 +777,7 @@ mod tests {
                 required: SecretKeyLvl1::WIRE_BYTES,
                 provided: 1,
             }),
-            "S115: encode must reject undersized buffer",
+            "encode must reject undersized buffer",
         );
     }
 
@@ -623,7 +791,7 @@ mod tests {
                 required: SecretKeyLvl1::WIRE_BYTES,
                 provided: 1,
             }),
-            "S115: decode must reject undersized buffer",
+            "decode must reject undersized buffer",
         );
     }
 
@@ -633,17 +801,17 @@ mod tests {
         assert_eq!(
             SecretKeyLvl1::WIRE_BYTES,
             Level1::SK_BYTES,
-            "S115: SecretKeyLvl1::WIRE_BYTES must equal Level1::SK_BYTES",
+            "SecretKeyLvl1::WIRE_BYTES must equal Level1::SK_BYTES",
         );
         assert_eq!(
             SecretKeyLvl3::WIRE_BYTES,
             Level3::SK_BYTES,
-            "S115: SecretKeyLvl3::WIRE_BYTES must equal Level3::SK_BYTES",
+            "SecretKeyLvl3::WIRE_BYTES must equal Level3::SK_BYTES",
         );
         assert_eq!(
             SecretKeyLvl5::WIRE_BYTES,
             Level5::SK_BYTES,
-            "S115: SecretKeyLvl5::WIRE_BYTES must equal Level5::SK_BYTES",
+            "SecretKeyLvl5::WIRE_BYTES must equal Level5::SK_BYTES",
         );
     }
 
@@ -655,13 +823,13 @@ mod tests {
         }
         let sig = SignatureLvl1::new(bytes);
         let mut out = [0u8; 148];
-        sig.encode(&mut out).expect("S115: encode must succeed");
-        let sig2 = SignatureLvl1::decode(&out).expect("S115: decode must succeed");
-        assert_eq!(sig, sig2, "S115: SignatureLvl1 round-trip must preserve");
+        sig.encode(&mut out).expect("encode must succeed");
+        let sig2 = SignatureLvl1::decode(&out).expect("decode must succeed");
+        assert_eq!(sig, sig2, "SignatureLvl1 round-trip must preserve");
         assert_eq!(
             sig.as_bytes(),
             &bytes,
-            "S115: as_bytes must match construction"
+            "as_bytes must match construction"
         );
     }
 
@@ -673,9 +841,9 @@ mod tests {
         }
         let sig = SignatureLvl3::new(bytes);
         let mut out = [0u8; 224];
-        sig.encode(&mut out).expect("S115: encode must succeed");
-        let sig2 = SignatureLvl3::decode(&out).expect("S115: decode must succeed");
-        assert_eq!(sig, sig2, "S115: SignatureLvl3 round-trip must preserve");
+        sig.encode(&mut out).expect("encode must succeed");
+        let sig2 = SignatureLvl3::decode(&out).expect("decode must succeed");
+        assert_eq!(sig, sig2, "SignatureLvl3 round-trip must preserve");
     }
 
     #[test]
@@ -686,9 +854,9 @@ mod tests {
         }
         let sig = SignatureLvl5::new(bytes);
         let mut out = [0u8; 292];
-        sig.encode(&mut out).expect("S115: encode must succeed");
-        let sig2 = SignatureLvl5::decode(&out).expect("S115: decode must succeed");
-        assert_eq!(sig, sig2, "S115: SignatureLvl5 round-trip must preserve");
+        sig.encode(&mut out).expect("encode must succeed");
+        let sig2 = SignatureLvl5::decode(&out).expect("decode must succeed");
+        assert_eq!(sig, sig2, "SignatureLvl5 round-trip must preserve");
     }
 
     #[test]
@@ -702,7 +870,7 @@ mod tests {
                 required: SignatureLvl1::WIRE_BYTES,
                 provided: 1,
             }),
-            "S115: encode must reject undersized buffer",
+            "encode must reject undersized buffer",
         );
     }
 
@@ -716,7 +884,7 @@ mod tests {
                 required: SignatureLvl1::WIRE_BYTES,
                 provided: 1,
             }),
-            "S115: decode must reject undersized buffer",
+            "decode must reject undersized buffer",
         );
     }
 
@@ -726,21 +894,21 @@ mod tests {
         assert_eq!(
             SignatureLvl1::WIRE_BYTES,
             Level1::SIG_BYTES,
-            "S115: SignatureLvl1::WIRE_BYTES must equal Level1::SIG_BYTES",
+            "SignatureLvl1::WIRE_BYTES must equal Level1::SIG_BYTES",
         );
         assert_eq!(
             SignatureLvl3::WIRE_BYTES,
             Level3::SIG_BYTES,
-            "S115: SignatureLvl3::WIRE_BYTES must equal Level3::SIG_BYTES",
+            "SignatureLvl3::WIRE_BYTES must equal Level3::SIG_BYTES",
         );
         assert_eq!(
             SignatureLvl5::WIRE_BYTES,
             Level5::SIG_BYTES,
-            "S115: SignatureLvl5::WIRE_BYTES must equal Level5::SIG_BYTES",
+            "SignatureLvl5::WIRE_BYTES must equal Level5::SIG_BYTES",
         );
     }
 
-    // ── S116 — Zeroize + ZeroizeOnDrop for SecretKey<N> ──
+    // ── Zeroize + ZeroizeOnDrop for SecretKey<N> ──
 
     #[test]
     fn sk_zeroize_explicit_wipes_bytes_at_lvl1() {
@@ -753,13 +921,13 @@ mod tests {
         // would be vacuous).
         assert!(
             bytes.iter().any(|&b| b != 0),
-            "S116: setup error — pseudo-random bytes are all zero",
+            "setup error — pseudo-random bytes are all zero",
         );
         let mut sk = SecretKeyLvl1::new(bytes);
         sk.zeroize();
         assert!(
             sk.bytes.iter().all(|&b| b == 0),
-            "S116: zeroize must wipe all secret-key bytes",
+            "zeroize must wipe all secret-key bytes",
         );
     }
 
@@ -774,7 +942,7 @@ mod tests {
         sk.zeroize();
         assert!(
             sk.bytes.iter().all(|&b| b == 0),
-            "S116: zeroize must wipe all secret-key bytes at lvl3",
+            "zeroize must wipe all secret-key bytes at lvl3",
         );
     }
 
@@ -789,7 +957,7 @@ mod tests {
         sk.zeroize();
         assert!(
             sk.bytes.iter().all(|&b| b == 0),
-            "S116: zeroize must wipe all secret-key bytes at lvl5",
+            "zeroize must wipe all secret-key bytes at lvl5",
         );
     }
 
@@ -807,12 +975,12 @@ mod tests {
         // Original is unaffected.
         assert_eq!(
             sk_a.bytes, original_bytes,
-            "S116: zeroizing a clone must not affect the original",
+            "zeroizing a clone must not affect the original",
         );
         // Clone is wiped.
         assert!(
             sk_b.bytes.iter().all(|&b| b == 0),
-            "S116: the cloned-then-zeroized SK must be all-zero",
+            "the cloned-then-zeroized SK must be all-zero",
         );
     }
 
@@ -828,7 +996,7 @@ mod tests {
         assert_zeroize_on_drop::<SecretKeyLvl5>();
     }
 
-    // ── S117 — ConstantTimeEq for SecretKey<N> ──
+    // ── ConstantTimeEq for SecretKey<N> ──
 
     #[test]
     fn sk_ct_eq_reflexive_at_lvl1() {
@@ -839,7 +1007,7 @@ mod tests {
         let sk = SecretKeyLvl1::new(bytes);
         assert!(
             bool::from(sk.ct_eq(&sk)),
-            "S117: ct_eq must be reflexive on SecretKey",
+            "ct_eq must be reflexive on SecretKey",
         );
     }
 
@@ -857,7 +1025,7 @@ mod tests {
         let sk_b = SecretKeyLvl1::new(bytes_b);
         assert!(
             !bool::from(sk_a.ct_eq(&sk_b)),
-            "S117: ct_eq must distinguish independent SecretKeys",
+            "ct_eq must distinguish independent SecretKeys",
         );
     }
 
@@ -877,7 +1045,7 @@ mod tests {
         let sk_b = SecretKeyLvl1::new(bytes_b);
         assert!(
             !bool::from(sk_a.ct_eq(&sk_b)),
-            "S117: ct_eq must detect a single-byte difference at the end of the buffer",
+            "ct_eq must detect a single-byte difference at the end of the buffer",
         );
     }
 
@@ -890,7 +1058,7 @@ mod tests {
         let sk = SecretKeyLvl3::new(bytes);
         assert!(
             bool::from(sk.ct_eq(&sk)),
-            "S117: ct_eq must be reflexive on SecretKey at lvl3",
+            "ct_eq must be reflexive on SecretKey at lvl3",
         );
     }
 
@@ -903,11 +1071,11 @@ mod tests {
         let sk = SecretKeyLvl5::new(bytes);
         assert!(
             bool::from(sk.ct_eq(&sk)),
-            "S117: ct_eq must be reflexive on SecretKey at lvl5",
+            "ct_eq must be reflexive on SecretKey at lvl5",
         );
     }
 
-    // ── S118 — random<R: CryptoRng> ctor for SecretKey<N> and Signature<N> ──
+    // ── random<R: CryptoRng> ctor for SecretKey<N> and Signature<N> ──
 
     fn make_rng(domain: &[u8]) -> crate::hash::Shake256Rng {
         let mut h = crate::hash::Shake256::new();
@@ -922,7 +1090,7 @@ mod tests {
         // With high probability, a CryptoRng-filled SK is not all-zero.
         assert!(
             sk.bytes.iter().any(|&b| b != 0),
-            "S118: random SK must be non-zero",
+            "random SK must be non-zero",
         );
     }
 
@@ -932,7 +1100,7 @@ mod tests {
         let sk = SecretKeyLvl3::random(&mut rng);
         assert!(
             sk.bytes.iter().any(|&b| b != 0),
-            "S118: random SK at lvl3 must be non-zero",
+            "random SK at lvl3 must be non-zero",
         );
     }
 
@@ -942,7 +1110,7 @@ mod tests {
         let sk = SecretKeyLvl5::random(&mut rng);
         assert!(
             sk.bytes.iter().any(|&b| b != 0),
-            "S118: random SK at lvl5 must be non-zero",
+            "random SK at lvl5 must be non-zero",
         );
     }
 
@@ -952,11 +1120,11 @@ mod tests {
         let sk = SecretKeyLvl1::random(&mut rng);
         let mut out = [0u8; 353];
         sk.encode(&mut out)
-            .expect("S118: encode random SK must succeed");
-        let sk2 = SecretKeyLvl1::decode(&out).expect("S118: decode must succeed");
+            .expect("encode random SK must succeed");
+        let sk2 = SecretKeyLvl1::decode(&out).expect("decode must succeed");
         assert_eq!(
             sk, sk2,
-            "S118: random SK must round-trip through encode/decode",
+            "random SK must round-trip through encode/decode",
         );
     }
 
@@ -968,7 +1136,7 @@ mod tests {
         let sk_b = SecretKeyLvl1::random(&mut rng_b);
         assert!(
             !bool::from(sk_a.ct_eq(&sk_b)),
-            "S118: distinct seeds must produce distinct random SKs",
+            "distinct seeds must produce distinct random SKs",
         );
     }
 
@@ -978,7 +1146,7 @@ mod tests {
         let sig = SignatureLvl1::random(&mut rng);
         assert!(
             sig.bytes.iter().any(|&b| b != 0),
-            "S118: random signature must be non-zero",
+            "random signature must be non-zero",
         );
     }
 
@@ -988,15 +1156,15 @@ mod tests {
         let sig = SignatureLvl3::random(&mut rng);
         let mut out = [0u8; 224];
         sig.encode(&mut out)
-            .expect("S118: encode random sig must succeed");
-        let sig2 = SignatureLvl3::decode(&out).expect("S118: decode must succeed");
+            .expect("encode random sig must succeed");
+        let sig2 = SignatureLvl3::decode(&out).expect("decode must succeed");
         assert_eq!(
             sig, sig2,
-            "S118: random signature must round-trip through encode/decode",
+            "random signature must round-trip through encode/decode",
         );
     }
 
-    // ── S119 — KeyPair bundle type ──
+    // ── KeyPair bundle type ──
 
     fn make_test_pk<F: BaseField>(reserved: u8) -> PublicKey<F> {
         let a = Fp2::<F>::new(F::one().double(), F::one()); // (2, 1) in (re, im)
@@ -1008,7 +1176,7 @@ mod tests {
         assert_eq!(
             KeyPairLvl1::WIRE_BYTES,
             PublicKey::<Fp1Element>::WIRE_BYTES + SecretKeyLvl1::WIRE_BYTES,
-            "S119: KeyPair::WIRE_BYTES must equal PK::WIRE_BYTES + SK::WIRE_BYTES",
+            "KeyPair::WIRE_BYTES must equal PK::WIRE_BYTES + SK::WIRE_BYTES",
         );
     }
 
@@ -1018,7 +1186,7 @@ mod tests {
         assert_eq!(
             KeyPairLvl3::WIRE_BYTES,
             PublicKey::<Fp3Element>::WIRE_BYTES + SecretKeyLvl3::WIRE_BYTES,
-            "S119: KeyPairLvl3::WIRE_BYTES must equal PK::WIRE_BYTES + SK::WIRE_BYTES",
+            "KeyPairLvl3::WIRE_BYTES must equal PK::WIRE_BYTES + SK::WIRE_BYTES",
         );
     }
 
@@ -1028,7 +1196,7 @@ mod tests {
         assert_eq!(
             KeyPairLvl5::WIRE_BYTES,
             PublicKey::<Fp5Element>::WIRE_BYTES + SecretKeyLvl5::WIRE_BYTES,
-            "S119: KeyPairLvl5::WIRE_BYTES must equal PK::WIRE_BYTES + SK::WIRE_BYTES",
+            "KeyPairLvl5::WIRE_BYTES must equal PK::WIRE_BYTES + SK::WIRE_BYTES",
         );
     }
 
@@ -1040,12 +1208,12 @@ mod tests {
         let kp = KeyPairLvl1::new(pk, sk);
         let mut buf = [0u8; KeyPairLvl1::WIRE_BYTES];
         kp.to_bytes_combined(&mut buf)
-            .expect("S119: encode_combined must succeed");
+            .expect("encode_combined must succeed");
         let kp2 =
-            KeyPairLvl1::from_bytes_combined(&buf).expect("S119: decode_combined must succeed");
+            KeyPairLvl1::from_bytes_combined(&buf).expect("decode_combined must succeed");
         assert_eq!(
             kp, kp2,
-            "S119: KeyPair combined round-trip must preserve at lvl1",
+            "KeyPair combined round-trip must preserve at lvl1",
         );
     }
 
@@ -1058,12 +1226,12 @@ mod tests {
         let kp = KeyPairLvl3::new(pk, sk);
         let mut buf = [0u8; KeyPairLvl3::WIRE_BYTES];
         kp.to_bytes_combined(&mut buf)
-            .expect("S119: encode_combined must succeed at lvl3");
+            .expect("encode_combined must succeed at lvl3");
         let kp2 = KeyPairLvl3::from_bytes_combined(&buf)
-            .expect("S119: decode_combined must succeed at lvl3");
+            .expect("decode_combined must succeed at lvl3");
         assert_eq!(
             kp, kp2,
-            "S119: KeyPair combined round-trip must preserve at lvl3",
+            "KeyPair combined round-trip must preserve at lvl3",
         );
     }
 
@@ -1076,12 +1244,12 @@ mod tests {
         let kp = KeyPairLvl5::new(pk, sk);
         let mut buf = [0u8; KeyPairLvl5::WIRE_BYTES];
         kp.to_bytes_combined(&mut buf)
-            .expect("S119: encode_combined must succeed at lvl5");
+            .expect("encode_combined must succeed at lvl5");
         let kp2 = KeyPairLvl5::from_bytes_combined(&buf)
-            .expect("S119: decode_combined must succeed at lvl5");
+            .expect("decode_combined must succeed at lvl5");
         assert_eq!(
             kp, kp2,
-            "S119: KeyPair combined round-trip must preserve at lvl5",
+            "KeyPair combined round-trip must preserve at lvl5",
         );
     }
 
@@ -1098,7 +1266,7 @@ mod tests {
                 required: KeyPairLvl1::WIRE_BYTES,
                 provided: 1,
             }),
-            "S119: to_bytes_combined must reject undersized buffer",
+            "to_bytes_combined must reject undersized buffer",
         );
     }
 
@@ -1112,7 +1280,7 @@ mod tests {
                 required: KeyPairLvl1::WIRE_BYTES,
                 provided: 1,
             }),
-            "S119: from_bytes_combined must reject undersized buffer",
+            "from_bytes_combined must reject undersized buffer",
         );
     }
 
@@ -1133,15 +1301,15 @@ mod tests {
         let sk = SecretKeyLvl1::random(&mut rng);
         let sk_copy_bytes = sk.bytes;
         let kp = KeyPairLvl1::new(pk, sk);
-        assert_eq!(kp.public_key().reserved, 0x42, "S119: pk accessor");
+        assert_eq!(kp.public_key().reserved, 0x42, "pk accessor");
         assert_eq!(
             kp.secret_key().as_bytes(),
             &sk_copy_bytes,
-            "S119: sk accessor",
+            "sk accessor",
         );
     }
 
-    // ── S120 — security hardening: redacted Debug impls ──
+    // ── security hardening: redacted Debug impls ──
 
     #[test]
     fn sk_debug_redacts_byte_values_at_lvl1() {
@@ -1156,11 +1324,11 @@ mod tests {
         // The redacted Debug must say "SecretKey" and "redacted".
         assert!(
             dbg.contains("SecretKey"),
-            "S120: Debug must include the type name",
+            "Debug must include the type name",
         );
         assert!(
             dbg.contains("redacted"),
-            "S120: Debug must include the 'redacted' marker",
+            "Debug must include the 'redacted' marker",
         );
         // Critically: the byte values must NOT appear in the formatted output.
         // Sample a few distinctive bytes from the SK and assert each is absent
@@ -1176,7 +1344,7 @@ mod tests {
                 let pattern3 = format!("{},", b); // matches "..., NNN," style
                 assert!(
                     !dbg.contains(&pattern) && !dbg.contains(&pattern2) && !dbg.contains(&pattern3),
-                    "S120: Debug output must NOT contain SK byte value {} (formatted byte_str: {byte_str:?})",
+                    "Debug output must NOT contain SK byte value {} (formatted byte_str: {byte_str:?})",
                     b,
                 );
             }
@@ -1191,15 +1359,15 @@ mod tests {
         let sk5 = SecretKeyLvl5::new([0u8; 701]);
         assert!(
             format!("{:?}", sk1).contains("353 bytes"),
-            "S120: Debug must show byte count at lvl1",
+            "Debug must show byte count at lvl1",
         );
         assert!(
             format!("{:?}", sk3).contains("529 bytes"),
-            "S120: Debug must show byte count at lvl3",
+            "Debug must show byte count at lvl3",
         );
         assert!(
             format!("{:?}", sk5).contains("701 bytes"),
-            "S120: Debug must show byte count at lvl5",
+            "Debug must show byte count at lvl5",
         );
     }
 
@@ -1217,15 +1385,15 @@ mod tests {
         // Must include the type name and the SK redaction marker.
         assert!(
             dbg.contains("KeyPair"),
-            "S120: KeyPair Debug must include the type name",
+            "KeyPair Debug must include the type name",
         );
         assert!(
             dbg.contains("redacted"),
-            "S120: KeyPair Debug must include the SK redaction marker",
+            "KeyPair Debug must include the SK redaction marker",
         );
         assert!(
             dbg.contains("353 bytes"),
-            "S120: KeyPair Debug must include the SK byte count",
+            "KeyPair Debug must include the SK byte count",
         );
         // SK bytes must not leak into the formatted output (same probe as
         // the SK-only test).
@@ -1236,7 +1404,7 @@ mod tests {
                 let pattern3 = format!("{},", b);
                 assert!(
                     !dbg.contains(&pattern) && !dbg.contains(&pattern2) && !dbg.contains(&pattern3),
-                    "S120: KeyPair Debug must NOT contain SK byte value {}",
+                    "KeyPair Debug must NOT contain SK byte value {}",
                     b,
                 );
             }

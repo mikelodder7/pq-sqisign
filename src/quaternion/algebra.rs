@@ -429,7 +429,7 @@ impl<P: Params> MaximalOrder<P> {
 mod tests {
     use super::*;
 
-    // ── RationalQuaternion unit tests (S194) ───────────────────────────
+    // ── RationalQuaternion unit tests ──────────────────────────────────
 
     #[test]
     fn rational_quaternion_one_is_unit_over_unit_denom() {
@@ -449,7 +449,7 @@ mod tests {
         assert!(!a.equals_raw(&d));
     }
 
-    // ── RationalQuaternion arithmetic (S197) ───────────────────────────
+    // ── RationalQuaternion arithmetic ──────────────────────────────────
 
     #[test]
     fn rational_quaternion_mul_identity_preserves_operand() {

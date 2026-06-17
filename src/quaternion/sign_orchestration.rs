@@ -88,7 +88,7 @@ pub(crate) fn uint_inv_mod_vartime<const LIMBS: usize>(
     if *m == zero_u || *m == one_u {
         return None;
     }
-    // Precondition (Forge S184 M2/M3): the bezout coefficient `t` and the
+    // Precondition (Forge audit M2/M3): the bezout coefficient `t` and the
     // intermediate `q · t1` are tracked in `Int<LIMBS>`, which has only
     // `64·LIMBS − 1` magnitude bits. The classical extended-Euclidean
     // bound `|t_i| < m` plus `|q · t1|` near `m` requires `m`'s top bit
@@ -230,7 +230,7 @@ pub struct AuxNormHelpers<const LIMBS: usize> {
 /// 6. Build `lideal_com_resp = O_0 · conj(resp_quat) + O_0 ·
 ///    (lideal_commit_norm · degree_odd_resp)` via
 ///    [`super::o0_mul::left_ideal_from_element_and_integer_o0`] (the
-///    S179 helper).
+///    left_ideal_from_element_and_integer_o0 helper).
 /// 7. `pow_dim2_deg_resp = response_bits − exp_diadic_val_full_resp −
 ///    backtracking`. This is the function's gate value (return value
 ///    in the C ref).
@@ -353,7 +353,7 @@ pub fn compute_random_aux_norm_and_helpers<const LIMBS: usize>(
     // divides lattice_content, so the product lideal_commit_norm ·
     // degree_odd_resp divides degree_full_resp_pre_strip = N_red(resp_quat),
     // hence also divides N_red(conj(resp_quat)) (conjugation preserves
-    // reduced norm). The S179 helper's `n | N_red(γ)` precondition is
+    // reduced norm). The helper's `n | N_red(γ)` precondition is
     // therefore satisfied — its debug_assert will not fire.
     let ideal_norm = Option::<Uint<LIMBS>>::from(lideal_commit_norm.checked_mul(&degree_odd_resp))
         .ok_or(Error::Internal(
@@ -401,7 +401,7 @@ pub fn compute_random_aux_norm_and_helpers<const LIMBS: usize>(
 
     // Step 8: remain_initial = 2^pow_dim2_deg_resp.
     //
-    // Precondition (Forge S184 MINOR 5): `shl_vartime` panics when its
+    // Precondition (Forge audit MINOR 5): `shl_vartime` panics when its
     // shift amount is >= the type's bit width. The orchestrator's call
     // pattern keeps `pow_dim2_deg_resp + hd_extra_torsion` well below
     // `64·LIMBS` at L1/L3/L5 production sizes, but the docstring's
@@ -418,7 +418,7 @@ pub fn compute_random_aux_norm_and_helpers<const LIMBS: usize>(
 
     // Step 9: random_aux_norm = remain_initial − degree_odd_resp.
     //
-    // **C-ref retry semantics (Forge S184 M1)**: `pow_dim2_deg_resp == 0`
+    // **C-ref retry semantics (Forge audit M1)**: `pow_dim2_deg_resp == 0`
     // is the C reference's "restart the signing loop with fresh
     // resp_quat" signal (the caller checks the gate before consuming
     // any other field). At `pow_dim2_deg_resp == 0` we have
@@ -467,16 +467,16 @@ pub fn compute_random_aux_norm_and_helpers<const LIMBS: usize>(
 /// in place. In the Rust port we collect them into this struct so the
 /// caller assigns into its own state via the returned value.
 ///
-/// Currently a placeholder mirroring
-/// [`crate::isogeny::clapotis::IdealToIsogenyResult`]: the real fields
+/// A placeholder mirroring
+/// [`crate::isogeny::clapotis::IdealToIsogenyResult`]. The real fields
 /// (a [`crate::ec::montgomery::MontgomeryCurve`] for `E_aux` and an
-/// [`crate::ec::couple::EcBasis`] for `B_aux`) land alongside the
-/// Clapotis evaluator body in a future session.
+/// [`crate::ec::couple::EcBasis`] for `B_aux`) are produced directly by
+/// the Clapotis evaluator; this struct is not used on the live signing path.
 #[derive(Debug, Clone)]
 pub struct AuxIsogenyOutputs<P: Params> {
-    /// Phantom for the security level. Future fields will include the
-    /// auxiliary codomain Montgomery curve (`E_aux`) and the image
-    /// basis (`B_aux = φ(B_0)`).
+    /// Phantom for the security level. The auxiliary codomain Montgomery
+    /// curve (`E_aux`) and the image basis (`B_aux = φ(B_0)`) are carried
+    /// by the Clapotis evaluator's own result type rather than this struct.
     pub _marker: PhantomData<P>,
 }
 
@@ -509,7 +509,7 @@ impl<P: Params> AuxIsogenyOutputs<P> {
 /// 1. **Sample** a random left `O_0`-ideal `lideal_aux` of reduced norm
 ///    `random_aux_norm` via
 ///    [`super::represent_integer::sampling_random_ideal_o0_given_norm_wide`]
-///    (the S179/S180 sampler). The C ref's flag argument `0` corresponds
+///    (the random ideal sampler). The C ref's flag argument `0` corresponds
 ///    to `is_prime=false` + `prime_cofactor=Some(QUAT_prime_cofactor)`
 ///    — the general-path branch. Failure surfaces as
 ///    `Err(Internal)` matching the C reference's `found == 0` retry
@@ -517,7 +517,7 @@ impl<P: Params> AuxIsogenyOutputs<P> {
 /// 2. **Intersect** with the response-commitment ideal:
 ///    `lideal_aux_resp_com = lideal_com_resp ∩ lideal_aux` via
 ///    `quat_lideal_inter` (C ref). **No Rust equivalent exists yet** —
-///    the S187 body session must add a private/`pub(crate)`
+///    a future body session must add a private/`pub(crate)`
 ///    `lideal_intersect<LIMBS>(I, J, p) -> LeftIdeal<8>` helper. The
 ///    intersection is computed as an HNF of the 8×4 augmented matrix
 ///    `[I.basis · I.denom, J.basis · J.denom]` after cross-scaling by
@@ -557,7 +557,7 @@ impl<P: Params> AuxIsogenyOutputs<P> {
 /// - `Ok(AuxIsogenyOutputs<P>)`: populated with `E_aux` and `B_aux`.
 /// - `Err(Error::Internal)`: sampler or evaluator failure (caller
 ///   restarts the signing loop).
-/// - `Err(Error::Unimplemented)`: stub; body deferred to S187.
+/// - `Err(Error::Unimplemented)`: stub; body deferred.
 ///
 /// # Precision contract
 ///
@@ -616,19 +616,19 @@ pub fn evaluate_random_aux_isogeny_signature<P: Params, const LIMBS: usize, R: C
     let _ = lideal_aux_resp_com; // consumed by Step 3 below.
 
     // Step 3: materialize the composite ideal as an isogeny via the
-    // Clapotis evaluator. Currently stubbed at
-    // `src/isogeny/clapotis.rs:107`; returns `Err(Unimplemented)`
-    // which propagates here. Once the Clapotis arc lands (~25-30
-    // sessions), this dispatch will produce the auxiliary curve
-    // `E_aux` and basis `B_aux` that the caller's `AuxIsogenyOutputs<P>`
-    // captures.
+    // Clapotis evaluator (`src/isogeny/clapotis.rs`), which produces the
+    // auxiliary curve `E_aux` and basis `B_aux`. This orchestration wrapper
+    // is a legacy scaffold and is not on the live signing path: it invokes
+    // the evaluator with a placeholder `q` and discards the result, returning
+    // an empty `AuxIsogenyOutputs<P>`. The live path drives the evaluator
+    // directly with the real `q`.
     //
     // Wrap `lideal_aux_resp_com: LeftIdeal<8>` as a `LeftIdealWideNorm<LIMBS>`
     // since `ideal_to_isogeny` consumes that type. Use `from_narrow` to
     // widen the cached_norm via resize.
     let wide_norm_ideal =
         crate::quaternion::ideal_mul::LeftIdealWideNorm::<LIMBS>::from_narrow(lideal_aux_resp_com);
-    let q_placeholder = Uint::<8>::from_u64(1); // S190 stub; real `q` lands when the Clapotis arc closes.
+    let q_placeholder = Uint::<8>::from_u64(1); // placeholder `q` for this legacy scaffold; the live path passes the real `q`.
     let _ = crate::isogeny::clapotis::ideal_to_isogeny::<P, LIMBS, R>(
         &wide_norm_ideal,
         q_placeholder,
@@ -843,7 +843,7 @@ mod tests {
         );
     }
 
-    /// Forge S184 MINOR 8 closure: exercise the orchestrator with a
+    /// Forge audit MINOR 8 closure: exercise the orchestrator with a
     /// `degree_odd_resp` ≥ 3 so the Step 11 `degree_resp_inv` is non-
     /// trivial. Previous orchestrator tests all landed `degree_odd_resp
     /// = 1` → `inv = 1` (trivially); this test pins the full integration
@@ -898,11 +898,11 @@ mod tests {
         assert_eq!(result.two_resp_length, 0);
     }
 
-    /// Forge S184 M1 regression: `pow_dim2_deg_resp == 0` is the C ref's
+    /// Forge audit M1 regression: `pow_dim2_deg_resp == 0` is the C ref's
     /// retry signal and MUST surface as `Ok` (not `Err`), even when the
     /// `remain_initial − degree_odd_resp` step would underflow. The
     /// caller checks the gate value to decide whether to consume the
-    /// other fields or restart the signing loop. Earlier S184 code
+    /// other fields or restart the signing loop. Earlier code
     /// converted this expected retry into a hard error; this test pins
     /// the corrected C-faithful semantics.
     ///
@@ -982,7 +982,7 @@ mod tests {
         assert_eq!(r5.lideal_com_resp.cached_norm, Uint::<16>::from_u64(5));
     }
 
-    // ── evaluate_random_aux_isogeny_signature body tests (S190) ────────
+    // ── evaluate_random_aux_isogeny_signature body tests ─────────────────
 
     fn small_witnesses_l1_for_evaluator() -> [Uint<8>; 5] {
         [
@@ -994,7 +994,7 @@ mod tests {
         ]
     }
 
-    /// S190 body wiring at L1 (fake prime). Inputs sized so Steps 1+2
+    /// Body wiring at L1 (fake prime). Inputs sized so Steps 1+2
     /// succeed and Step 3 (Clapotis evaluator dispatch) surfaces
     /// `Err(Unimplemented)` propagated from the stubbed `ideal_to_isogeny`.
     /// Verifies the composition path is wired correctly.

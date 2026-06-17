@@ -7,8 +7,8 @@
 //!   x-only Velu formulas (Costello-Hisil), forming the bulk of the signing
 //!   pipeline — implemented in [`two`].
 //! - Higher-dimensional theta isogenies (SQIsign 2.0.1 introduces these for
-//!   the *response*-side computation in the Clapotis evaluator) — pending
-//!   future sessions.
+//!   the *response*-side computation in the Clapotis evaluator) — implemented
+//!   across the theta modules and driven by [`clapotis_spine`].
 //!
 //! See spec §5 (Geometric Algorithms) for formula references.
 

@@ -16,24 +16,17 @@
 //! returns `1` on success, `0` on malformed kernel (order check); we
 //! use [`Result`] instead.
 //!
-//! # Scope of this module (S136 scaffold)
+//! # Scope of this module
 //!
-//! This module currently ships only a **vertical slice** of the
-//! gluing pipeline: the kernel-halving step (`8`-torsion → `4`-torsion
-//! via [`CoupleJacobianPoint::double`]) and the Jacobian→XZ projection
-//! (via [`CoupleJacobianPoint::to_couple_xz`]). The mathematically
-//! deep step — `gluing_change_of_basis` deriving the `4×4` isomorphism
-//! `M` and the codomain theta-null — has since been implemented via
+//! The pipeline includes the kernel-halving step (`8`-torsion →
+//! `4`-torsion via [`CoupleJacobianPoint::double`]), the Jacobian→XZ
+//! projection (via [`CoupleJacobianPoint::to_couple_xz`]), and the
+//! mathematically deep step — `gluing_change_of_basis` deriving the
+//! `4×4` isomorphism `M` and the codomain theta-null — implemented via
 //! [`gluing_codomain`] (returning [`GluingError::InvalidKernel`] on
-//! malformed inputs). The original vertical slice existed to
-//! validate that the type plumbing between Layer 2 (`couple.rs`) and
-//! the eventual gluing output threads end-to-end at compile time,
-//! per S136 advisor's vertical-slice recommendation.
+//! malformed inputs).
 //!
-//! # Intended full surface (design comment per S136 advisor)
-//!
-//! Once the change-of-basis math lands (planned S137+), the full
-//! surface will include:
+//! # Surface
 //!
 //! - [`GluingCodomain`] carrying: the codomain `A`'s theta-null
 //!   `theta_null_a: ThetaPoint2D<F>`; the dual-isogeneous null
@@ -48,12 +41,8 @@
 //! - `gluing_eval_point`: evaluates the isogeny on a couple-Jacobian
 //!   point. Uses
 //!   [`crate::ec::couple::CoupleJacobianPoint::add_components_pair`]
-//!   (already shipped at S128) to extract cross-addition components,
-//!   then applies the matrix `M`, squares pointwise, and applies the
-//!   Hadamard transform.
-//!
-//! S136 ships only the kernel-halving slice; everything above is
-//! deferred.
+//!   to extract cross-addition components, then applies the matrix `M`,
+//!   squares pointwise, and applies the Hadamard transform.
 
 use subtle::{Choice, ConstantTimeEq, CtOption};
 
@@ -64,10 +53,6 @@ use crate::gf::fp2::Fp2;
 use crate::isogeny::theta::ThetaPoint2D;
 
 /// Errors that arise during gluing-isogeny construction.
-///
-/// The variant set is intentionally small in S136; richer error
-/// information lands as the mathematically-deeper steps are
-/// implemented in S137+.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum GluingError {
     /// The input kernel is malformed: either [`verify_two_torsion`]
@@ -1261,13 +1246,13 @@ mod tests {
     use crate::ec::montgomery::MontgomeryCurve;
     use crate::gf::fp::Fp1Element;
 
-    /// S136 vertical-slice smoke test: invoke [`gluing_codomain`] on
+    /// Vertical-slice smoke test: invoke [`gluing_codomain`] on
     /// a synthetic input that does not satisfy the eventual
     /// 8-torsion preconditions, confirm the function THREADS the
     /// type plumbing (kernel halving + XZ projection executed)
     /// AND returns the expected `Err(GluingError::InvalidKernel)`
     /// because the identity couple cannot pass verify_two_torsion
-    /// inside action_by_translation (S137f: full pipeline now wired;
+    /// inside action_by_translation (full pipeline now wired;
     /// failure path: identity → verify_two_torsion FALSE →
     /// action_by_translation CtOption FALSE → InvalidKernel).
     ///
@@ -1285,11 +1270,11 @@ mod tests {
         assert_eq!(
             result,
             Err(GluingError::InvalidKernel),
-            "S137f: identity-couple kernel must fail verify_two_torsion → InvalidKernel",
+            "identity-couple kernel must fail verify_two_torsion → InvalidKernel",
         );
     }
 
-    // S137a: verify_two_torsion. On `E_0 : y² = x³ + x`, the full
+    // verify_two_torsion. On `E_0 : y² = x³ + x`, the full
     // 2-torsion subgroup is `E_0[2] = {O, (0,0), (i,0), (-i,0)}` where
     // `i` is the Fp2 imaginary unit (`Fp2::new(F::zero(), F::one())`).
     // We construct three concrete couple-2-torsion points by pairing
@@ -1317,7 +1302,7 @@ mod tests {
         let verdict = verify_two_torsion(&k1, &k2, &curves);
         assert!(
             bool::from(verdict),
-            "S137a: verify_two_torsion must ACCEPT distinct non-identity 2-torsion couples",
+            "verify_two_torsion must ACCEPT distinct non-identity 2-torsion couples",
         );
     }
 
@@ -1352,11 +1337,11 @@ mod tests {
         let verdict_k2_is_id = verify_two_torsion(&k2, &identity, &curves);
         assert!(
             !bool::from(verdict_k1_is_id),
-            "S137a: verify_two_torsion must REJECT when K1 is the identity couple",
+            "verify_two_torsion must REJECT when K1 is the identity couple",
         );
         assert!(
             !bool::from(verdict_k2_is_id),
-            "S137a: verify_two_torsion must REJECT when K2 is the identity couple",
+            "verify_two_torsion must REJECT when K2 is the identity couple",
         );
     }
 
@@ -1385,7 +1370,7 @@ mod tests {
         let verdict = verify_two_torsion(&k, &k, &curves);
         assert!(
             !bool::from(verdict),
-            "S137a: verify_two_torsion must REJECT when K1 ≡ K2 projectively (degenerate kernel pair)",
+            "verify_two_torsion must REJECT when K1 ≡ K2 projectively (degenerate kernel pair)",
         );
     }
 
@@ -1406,7 +1391,7 @@ mod tests {
         check_verify_two_torsion_rejects_equal_couples::<Fp5Element>();
     }
 
-    // S137b — batch_invert tests. Falsifiable: invert ∘ multiply
+    // batch_invert tests. Falsifiable: invert ∘ multiply
     // recovers the original value at every index.
     fn check_batch_invert_round_trips<F: BaseField>() {
         // Construct 8 small non-zero Fp2 values (the action_by_translation
@@ -1422,7 +1407,7 @@ mod tests {
         let verdict = batch_invert(&mut vals);
         assert!(
             bool::from(verdict.is_some()),
-            "S137b: batch_invert on 8 non-zero inputs must succeed",
+            "batch_invert on 8 non-zero inputs must succeed",
         );
 
         // Verify each output is the inverse of its original.
@@ -1431,7 +1416,7 @@ mod tests {
             assert_eq!(
                 product,
                 Fp2::<F>::one(),
-                "S137b: batch_invert output at index {i} must satisfy original · output == 1",
+                "batch_invert output at index {i} must satisfy original · output == 1",
             );
         }
     }
@@ -1476,12 +1461,12 @@ mod tests {
         let verdict = batch_invert(&mut vals);
         assert!(
             !bool::from(verdict.is_some()),
-            "S137b: batch_invert must FAIL when any input is zero (Montgomery trick has no recovery for zero element)",
+            "batch_invert must FAIL when any input is zero (Montgomery trick has no recovery for zero element)",
         );
     }
 
-    // S137b — action helpers. The full action_by_translation will
-    // compose these in S137c; we test only the per-pair derivation here.
+    // action helpers. The full action_by_translation will
+    // compose these; we test only the per-pair derivation here.
     #[test]
     fn action_by_translation_z_and_det_extracts_correctly_at_lvl1() {
         // Construct synthetic projective Montgomery points with known
@@ -1495,9 +1480,9 @@ mod tests {
         let p2 = MontgomeryPoint::new(p2_x, p2_z);
 
         let (z, det) = action_by_translation_z_and_det(&p4, &p2);
-        assert_eq!(z, p4_z, "S137b: z output must equal P4.z");
+        assert_eq!(z, p4_z, "z output must equal P4.z");
         let expected_det = p4_x.mul(&p2_z).sub(&p4_z.mul(&p2_x));
-        assert_eq!(det, expected_det, "S137b: det must equal x₄·z₂ − z₄·x₂",);
+        assert_eq!(det, expected_det, "det must equal x₄·z₂ − z₄·x₂",);
     }
 
     #[test]
@@ -1535,9 +1520,9 @@ mod tests {
         assert_eq!(g.g01, expected_g01, "g01 = −(P2.z·P4.z·det⁻¹)");
     }
 
-    // S137c — action_by_translation tests.
+    // action_by_translation tests.
 
-    /// S137c smoke test: action_by_translation REJECTS a synthetic
+    /// Smoke test: action_by_translation REJECTS a synthetic
     /// kernel pair that fails [`verify_two_torsion`]. The identity
     /// couple is "2-torsion" in the doubles-to-(∞,∞) sense but IS
     /// the identity, so the composition early-returns
@@ -1554,11 +1539,11 @@ mod tests {
         let result = action_by_translation(&identity, &identity, &curves);
         assert!(
             !bool::from(result.is_some()),
-            "S137c: action_by_translation must reject the identity kernel via verify_two_torsion early-exit",
+            "action_by_translation must reject the identity kernel via verify_two_torsion early-exit",
         );
     }
 
-    /// S137c invariant test: action_by_translation's batched output
+    /// Invariant test: action_by_translation's batched output
     /// matches manual per-pair `compute_matrix` with independent
     /// `Fp2::invert` on each (z, det) pair.
     ///
@@ -1570,8 +1555,7 @@ mod tests {
     ///
     /// **Falsification axis NOT covered**: a shared bug across the
     /// batched and per-pair paths (e.g., wrong slot mapping in BOTH).
-    /// One C-reference KAT anchor would close this; deferred to
-    /// S138+ when end-to-end pipeline allows generating a vector.
+    /// One C-reference KAT anchor would close this.
     ///
     /// To enable the test, we use a synthetic 4-torsion kernel pair
     /// constructed by halving a pair of 8-torsion points… but the
@@ -1580,9 +1564,9 @@ mod tests {
     /// inputs directly as "4-torsion" — this makes `verify_two_torsion`
     /// REJECT (the doubled 2-torsion is the identity, not 2-torsion),
     /// so `action_by_translation` returns `CtOption(_, FALSE)` and the
-    /// invariant cannot be tested on real values. Documented as a
-    /// known gap; integration test arrives once the kernel-generation
-    /// path lands.
+    /// invariant cannot be tested on real values here. Documented as a
+    /// known test-coverage gap; a full integration test needs the
+    /// kernel-generation path to supply valid 4-torsion.
     #[test]
     fn action_by_translation_invariant_test_documented_gap_at_lvl1() {
         // Placeholder smoke test that the function compiles + the
@@ -1603,9 +1587,9 @@ mod tests {
         let _ = bool::from(result.is_some());
     }
 
-    // S137d — gluing_change_of_basis 16-entry composition tests.
+    // gluing_change_of_basis 16-entry composition tests.
 
-    /// S137d structural test: when all four `Gi` are the ZERO matrix
+    /// Structural test: when all four `Gi` are the ZERO matrix
     /// (g00 = g01 = g10 = g11 = 0), the intermediates t001, t101,
     /// t002, t102 all vanish, and M[0][0] = 1 + 0 + 0 + 0 = 1; every
     /// other M[i][j] = 0. This catches gross transcription errors
@@ -1627,7 +1611,7 @@ mod tests {
         assert_eq!(
             m.m[0][0],
             Fp2::one(),
-            "S137d: M[0][0] must be 1 when all Gi are zero"
+            "M[0][0] must be 1 when all Gi are zero"
         );
         for (i, row) in m.m.iter().enumerate() {
             for (j, entry) in row.iter().enumerate() {
@@ -1635,14 +1619,14 @@ mod tests {
                     assert_eq!(
                         *entry,
                         Fp2::zero(),
-                        "S137d: M[{i}][{j}] must be 0 when all Gi are zero",
+                        "M[{i}][{j}] must be 0 when all Gi are zero",
                     );
                 }
             }
         }
     }
 
-    /// S137d structural test: when all four `Gi` are the IDENTITY-LIKE
+    /// Structural test: when all four `Gi` are the IDENTITY-LIKE
     /// matrix (g00 = g11 = 1, g01 = g10 = 0), the intermediates become
     /// t001 = 1·1 + 0·0 = 1; t101 = 0·1 + 1·0 = 0; t002 = 1; t102 = 0.
     /// Then M[0][0] = 1 + 1·1 + 1·1 + 1·1 = 4; M[0][1] = 1·0 + 1·0 + 1·0 = 0;
@@ -1684,13 +1668,13 @@ mod tests {
             for (j, (got, exp)) in got_row.iter().zip(expected_row.iter()).enumerate() {
                 assert_eq!(
                     got, exp,
-                    "S137d: M[{i}][{j}] mismatch under identity-like Gi inputs",
+                    "M[{i}][{j}] mismatch under identity-like Gi inputs",
                 );
             }
         }
     }
 
-    // S137e — apply_isomorphism + base_change + isotropy_check tests.
+    // apply_isomorphism + base_change + isotropy_check tests.
 
     /// Helper: identity 4×4 matrix.
     fn identity_matrix<F: BaseField>() -> BasisChangeMatrix<F> {
@@ -1706,7 +1690,7 @@ mod tests {
         }
     }
 
-    /// S137e: apply_isomorphism with the identity matrix leaves the
+    /// apply_isomorphism with the identity matrix leaves the
     /// input unchanged. NECESSARY but not sufficient (identity is
     /// symmetric — can't distinguish M[i][j] vs M[j][i]); paired
     /// below with a permutation-matrix test that DOES catch
@@ -1721,13 +1705,13 @@ mod tests {
             small_fp2::<Fp1Element>(11),
         );
         let r = apply_isomorphism(&m, &p);
-        assert_eq!(r.x, p.x, "S137e identity-M apply: x unchanged");
-        assert_eq!(r.y, p.y, "S137e identity-M apply: y unchanged");
-        assert_eq!(r.z, p.z, "S137e identity-M apply: z unchanged");
-        assert_eq!(r.w, p.w, "S137e identity-M apply: w unchanged");
+        assert_eq!(r.x, p.x, "identity-M apply: x unchanged");
+        assert_eq!(r.y, p.y, "identity-M apply: y unchanged");
+        assert_eq!(r.z, p.z, "identity-M apply: z unchanged");
+        assert_eq!(r.w, p.w, "identity-M apply: w unchanged");
     }
 
-    /// S137e ADVISOR-MANDATORY test: a permutation matrix that swaps
+    /// A permutation matrix that swaps
     /// x↔y (M[0][1] = M[1][0] = 1, M[2][2] = M[3][3] = 1; rest 0)
     /// MUST produce the swapped point. Catches transposition bugs
     /// (M[i][j] vs M[j][i]) that the identity test cannot.
@@ -1752,16 +1736,16 @@ mod tests {
         );
         let r = apply_isomorphism(&m, &p);
         // x ↔ y swap by the permutation row layout.
-        assert_eq!(r.x, p.y, "S137e permutation: x must be input y");
-        assert_eq!(r.y, p.x, "S137e permutation: y must be input x");
-        assert_eq!(r.z, p.z, "S137e permutation: z unchanged");
-        assert_eq!(r.w, p.w, "S137e permutation: w unchanged");
+        assert_eq!(r.x, p.y, "permutation: x must be input y");
+        assert_eq!(r.y, p.x, "permutation: y must be input x");
+        assert_eq!(r.z, p.z, "permutation: z unchanged");
+        assert_eq!(r.w, p.w, "permutation: w unchanged");
     }
 
-    /// S137e: base_change with identity matrix produces the
+    /// base_change with identity matrix produces the
     /// null_point built from (P1, P2) per `theta_isogenies.c:base_change`.
     /// The "expected" is computed via the independent oracle of the
-    /// FORMULA (not the function body) per S137d advisor doctrine.
+    /// FORMULA (not the function body).
     #[test]
     fn base_change_with_identity_matrix_constructs_null_point_at_lvl1() {
         let m = identity_matrix::<Fp1Element>();
@@ -1782,26 +1766,26 @@ mod tests {
         assert_eq!(
             r.x,
             small_fp2::<Fp1Element>(21),
-            "S137e base_change identity-M: x = P1.x·P2.x"
+            "base_change identity-M: x = P1.x·P2.x"
         );
         assert_eq!(
             r.y,
             small_fp2::<Fp1Element>(33),
-            "S137e base_change identity-M: y = P1.x·P2.z"
+            "base_change identity-M: y = P1.x·P2.z"
         );
         assert_eq!(
             r.z,
             small_fp2::<Fp1Element>(35),
-            "S137e base_change identity-M: z = P2.x·P1.z"
+            "base_change identity-M: z = P2.x·P1.z"
         );
         assert_eq!(
             r.w,
             small_fp2::<Fp1Element>(55),
-            "S137e base_change identity-M: w = P1.z·P2.z"
+            "base_change identity-M: w = P1.z·P2.z"
         );
     }
 
-    /// S137e helper: a valid (passing) isotropy input — w=0 on both,
+    /// A valid (passing) isotropy input — w=0 on both,
     /// all 5 ASYMMETRIC factors non-zero, TT2.y free (per the C
     /// reference's asymmetric set, TT2.y is NOT required non-zero).
     fn valid_isotropy_pair<F: BaseField>() -> (ThetaPoint2D<F>, ThetaPoint2D<F>) {
@@ -1818,7 +1802,7 @@ mod tests {
         let (tt1, tt2) = valid_isotropy_pair::<Fp1Element>();
         assert!(
             bool::from(isotropy_check(&tt1, &tt2)),
-            "S137e: valid isotropy input must pass",
+            "valid isotropy input must pass",
         );
     }
 
@@ -1828,7 +1812,7 @@ mod tests {
         tt1.w = Fp2::<Fp1Element>::one(); // primary check failure
         assert!(
             !bool::from(isotropy_check(&tt1, &tt2)),
-            "S137e: TT1.w != 0 must fail the isotropy check",
+            "TT1.w != 0 must fail the isotropy check",
         );
     }
 
@@ -1838,11 +1822,11 @@ mod tests {
         tt2.w = Fp2::<Fp1Element>::one();
         assert!(
             !bool::from(isotropy_check(&tt1, &tt2)),
-            "S137e: TT2.w != 0 must fail the isotropy check",
+            "TT2.w != 0 must fail the isotropy check",
         );
     }
 
-    /// S137e: per-factor negative-case coverage. For EACH element of
+    /// Per-factor negative-case coverage. For EACH element of
     /// the asymmetric secondary set {TT1.x, TT2.x, TT1.y, TT2.z,
     /// TT1.z}, setting it to zero must fail the check.
     #[test]
@@ -1852,7 +1836,7 @@ mod tests {
         tt1.x = Fp2::zero();
         assert!(
             !bool::from(isotropy_check(&tt1, &tt2)),
-            "S137e: TT1.x=0 must fail"
+            "TT1.x=0 must fail"
         );
 
         // TT2.x = 0
@@ -1860,7 +1844,7 @@ mod tests {
         tt2.x = Fp2::zero();
         assert!(
             !bool::from(isotropy_check(&tt1, &tt2)),
-            "S137e: TT2.x=0 must fail"
+            "TT2.x=0 must fail"
         );
 
         // TT1.y = 0
@@ -1868,7 +1852,7 @@ mod tests {
         tt1.y = Fp2::zero();
         assert!(
             !bool::from(isotropy_check(&tt1, &tt2)),
-            "S137e: TT1.y=0 must fail"
+            "TT1.y=0 must fail"
         );
 
         // TT2.z = 0
@@ -1876,7 +1860,7 @@ mod tests {
         tt2.z = Fp2::zero();
         assert!(
             !bool::from(isotropy_check(&tt1, &tt2)),
-            "S137e: TT2.z=0 must fail"
+            "TT2.z=0 must fail"
         );
 
         // TT1.z = 0
@@ -1884,11 +1868,11 @@ mod tests {
         tt1.z = Fp2::zero();
         assert!(
             !bool::from(isotropy_check(&tt1, &tt2)),
-            "S137e: TT1.z=0 must fail"
+            "TT1.z=0 must fail"
         );
     }
 
-    /// S137e: critical asymmetry-preservation test. TT2.y is NOT in
+    /// Critical asymmetry-preservation test. TT2.y is NOT in
     /// the C reference's secondary non-zero set; setting it to zero
     /// must NOT fail the isotropy check (other conditions met). This
     /// pins the asymmetric behavior so future "cleanup" refactors
@@ -1899,21 +1883,18 @@ mod tests {
         tt2.y = Fp2::zero();
         assert!(
             bool::from(isotropy_check(&tt1, &tt2)),
-            "S137e: TT2.y=0 must NOT fail (asymmetric check by C-ref design)",
+            "TT2.y=0 must NOT fail (asymmetric check by C-ref design)",
         );
     }
 
-    /// S137e advisor-recommended integration test: end-to-end
+    /// Integration test: end-to-end
     /// base_change → componentwise_square → hadamard (the
     /// C reference's `to_squared_theta`) → isotropy_check, on
     /// an arbitrary input. We do NOT assert pass/fail of the
     /// isotropy result on this synthetic input (the synthetic input
     /// will almost certainly fail the strict geometry condition);
     /// the test only confirms the pipeline THREADS the types and
-    /// produces SOME Choice without panicking. Per S136 vertical-
-    /// slice doctrine: validate compilation and call composition;
-    /// validate algebraic correctness when a valid 8-torsion kernel
-    /// is constructible in S138+.
+    /// produces SOME Choice without panicking.
     #[test]
     fn gluing_pipeline_threads_base_change_to_squared_theta_to_isotropy_at_lvl1() {
         let m = identity_matrix::<Fp1Element>();
@@ -1939,10 +1920,10 @@ mod tests {
         let _result = bool::from(isotropy_check(&tt_a, &tt_b));
     }
 
-    // S137f — build_codomain_from_squared_theta tests via independent
+    // build_codomain_from_squared_theta tests via independent
     // oracle (expected values computed from the C-reference formula).
 
-    /// S137f: synthetic TT1 = (3, 5, 7, 0) and TT2 = (11, 13, 17, 0)
+    /// Synthetic TT1 = (3, 5, 7, 0) and TT2 = (11, 13, 17, 0)
     /// (w-coordinates already zero per the isotropy precondition).
     /// Per the formulas:
     ///   codomain_pre.x = TT1.x · TT2.x  = 3·11 = 33
@@ -1980,7 +1961,7 @@ mod tests {
         let expected_codomain = codomain_pre.hadamard();
         assert_eq!(
             codomain, expected_codomain,
-            "S137f: codomain must equal hadamard(pre-hadamard formula)",
+            "codomain must equal hadamard(pre-hadamard formula)",
         );
 
         // Independent oracle: precomputation factors with the
@@ -1993,7 +1974,7 @@ mod tests {
         );
         assert_eq!(
             precomp, expected_precomp,
-            "S137f: precomputation must apply y↔z copy mapping verbatim from C ref",
+            "precomputation must apply y↔z copy mapping verbatim from C ref",
         );
 
         // Independent oracle: imageK1_8 in (x : x : y : y) form,
@@ -2006,11 +1987,11 @@ mod tests {
         );
         assert_eq!(
             image, expected_image,
-            "S137f: imageK1_8 must have x=TT1.x·precomp.x, y=TT1.z·precomp.z, z=w=0",
+            "imageK1_8 must have x=TT1.x·precomp.x, y=TT1.z·precomp.z, z=w=0",
         );
     }
 
-    /// S137f: dedicated test that the precomputation y↔z copy mapping
+    /// Dedicated test that the precomputation y↔z copy mapping
     /// is NOT swapped (a likely transcription error). Constructed
     /// asymmetric TT1, TT2 where codomain.y and codomain.z differ;
     /// then precomp.y MUST equal codomain.z (not codomain.y), and
@@ -2035,16 +2016,16 @@ mod tests {
         assert_eq!(
             precomp.y,
             small_fp2(51),
-            "S137f: precomp.y must equal codomain.z (51), NOT codomain.y (55)",
+            "precomp.y must equal codomain.z (51), NOT codomain.y (55)",
         );
         assert_eq!(
             precomp.z,
             small_fp2(55),
-            "S137f: precomp.z must equal codomain.y (55), NOT codomain.z (51)",
+            "precomp.z must equal codomain.y (55), NOT codomain.z (51)",
         );
     }
 
-    // S138 — gluing_eval_point tests.
+    // gluing_eval_point tests.
     //
     // Independent oracle on T1/T2 construction is the highest-value
     // test surface: with hand-picked (u, v, w) triples, the cross-
@@ -2053,7 +2034,7 @@ mod tests {
     // since constructing a valid GluingCodomain requires valid
     // 8-torsion kernel data (deferred to integration testing).
 
-    /// S138: independent-oracle test on the T1 and T2 cross-product
+    /// Independent-oracle test on the T1 and T2 cross-product
     /// construction (steps 2-2cont of `gluing_eval_point`). Uses
     /// synthetic add_components triples to verify the cross-product
     /// formulas match the C reference verbatim.
@@ -2113,22 +2094,22 @@ mod tests {
         assert_eq!(
             t1.x,
             small_fp2::<Fp1Element>(98),
-            "S138: T1.x = u1u2 + v1v2"
+            "T1.x = u1u2 + v1v2"
         );
-        assert_eq!(t1.y, small_fp2::<Fp1Element>(51), "S138: T1.y = u1·w2");
-        assert_eq!(t1.z, small_fp2::<Fp1Element>(77), "S138: T1.z = w1·u2");
-        assert_eq!(t1.w, small_fp2::<Fp1Element>(119), "S138: T1.w = w1·w2");
+        assert_eq!(t1.y, small_fp2::<Fp1Element>(51), "T1.y = u1·w2");
+        assert_eq!(t1.z, small_fp2::<Fp1Element>(77), "T1.z = w1·u2");
+        assert_eq!(t1.w, small_fp2::<Fp1Element>(119), "T1.w = w1·w2");
         assert_eq!(
             t2.x,
             small_fp2::<Fp1Element>(94),
-            "S138: T2.x = (u1+v1)(u2+v2) − T1.x = v1·u2 + u1·v2",
+            "T2.x = (u1+v1)(u2+v2) − T1.x = v1·u2 + u1·v2",
         );
-        assert_eq!(t2.y, small_fp2::<Fp1Element>(85), "S138: T2.y = v1·w2");
-        assert_eq!(t2.z, small_fp2::<Fp1Element>(91), "S138: T2.z = w1·v2");
-        assert_eq!(t2.w, Fp2::zero(), "S138: T2.w = 0 by construction");
+        assert_eq!(t2.y, small_fp2::<Fp1Element>(85), "T2.y = v1·w2");
+        assert_eq!(t2.z, small_fp2::<Fp1Element>(91), "T2.z = w1·v2");
+        assert_eq!(t2.w, Fp2::zero(), "T2.w = 0 by construction");
     }
 
-    /// S138: dedicated test that T2.x is computed via the EXPANSION
+    /// Dedicated test that T2.x is computed via the EXPANSION
     /// formula `(u1+v1)(u2+v2) − T1.x`, NOT directly as `v1·u2 + u1·v2`.
     /// Both compute the same value algebraically; the C reference
     /// uses the expansion to save 1 multiplication. The test
@@ -2150,11 +2131,11 @@ mod tests {
         let direct = v1.mul(&u2).add(&u1.mul(&v2));
         assert_eq!(
             t2.x, direct,
-            "S138: T2.x via expansion (u1+v1)(u2+v2) − T1.x must equal direct v1·u2 + u1·v2",
+            "T2.x via expansion (u1+v1)(u2+v2) − T1.x must equal direct v1·u2 + u1·v2",
         );
     }
 
-    // S141 — gluing_eval_point_special_case + gluing_eval_basis smoke
+    // gluing_eval_point_special_case + gluing_eval_basis smoke
     // tests. End-to-end correctness testing requires valid 8-torsion
     // kernel data and a `GluingCodomain` produced by the production
     // path — neither of which is available until IdealToIsogenyClapotis
@@ -2221,32 +2202,32 @@ mod tests {
         let result = gluing_eval_point_special_case(&gluing, &p_xz);
         assert!(
             result.is_ok(),
-            "S141: zero-state special_case must satisfy T.w == 0 invariant and return Ok",
+            "zero-state special_case must satisfy T.w == 0 invariant and return Ok",
         );
         let image = result.expect("checked is_ok above");
         assert_eq!(
             image.x,
             Fp2::<Fp1Element>::zero(),
-            "S141: image.x == 0 from zero state"
+            "image.x == 0 from zero state"
         );
         assert_eq!(
             image.y,
             Fp2::<Fp1Element>::zero(),
-            "S141: image.y == 0 from zero state"
+            "image.y == 0 from zero state"
         );
         assert_eq!(
             image.z,
             Fp2::<Fp1Element>::zero(),
-            "S141: image.z == 0 from zero state"
+            "image.z == 0 from zero state"
         );
         assert_eq!(
             image.w,
             Fp2::<Fp1Element>::zero(),
-            "S141: image.w == 0 from zero state"
+            "image.w == 0 from zero state"
         );
     }
 
-    /// S141: confirm `gluing_eval_basis` is the trivial 2-call
+    /// Confirm `gluing_eval_basis` is the trivial 2-call
     /// wrapper documented in the C reference — both outputs match
     /// `gluing_eval_point` evaluated on each input independently.
     #[test]
@@ -2267,43 +2248,43 @@ mod tests {
 
         assert_eq!(
             img1.x, solo1.x,
-            "S141: basis output 1.x must match solo eval 1.x"
+            "basis output 1.x must match solo eval 1.x"
         );
         assert_eq!(
             img1.y, solo1.y,
-            "S141: basis output 1.y must match solo eval 1.y"
+            "basis output 1.y must match solo eval 1.y"
         );
         assert_eq!(
             img1.z, solo1.z,
-            "S141: basis output 1.z must match solo eval 1.z"
+            "basis output 1.z must match solo eval 1.z"
         );
         assert_eq!(
             img1.w, solo1.w,
-            "S141: basis output 1.w must match solo eval 1.w"
+            "basis output 1.w must match solo eval 1.w"
         );
         assert_eq!(
             img2.x, solo2.x,
-            "S141: basis output 2.x must match solo eval 2.x"
+            "basis output 2.x must match solo eval 2.x"
         );
         assert_eq!(
             img2.y, solo2.y,
-            "S141: basis output 2.y must match solo eval 2.y"
+            "basis output 2.y must match solo eval 2.y"
         );
         assert_eq!(
             img2.z, solo2.z,
-            "S141: basis output 2.z must match solo eval 2.z"
+            "basis output 2.z must match solo eval 2.z"
         );
         assert_eq!(
             img2.w, solo2.w,
-            "S141: basis output 2.w must match solo eval 2.w"
+            "basis output 2.w must match solo eval 2.w"
         );
     }
 
-    // S158 — GluingCodomain method-form alias tests.
+    // GluingCodomain method-form alias tests.
 
     #[test]
     fn gluing_codomain_compute_method_matches_free_function_at_lvl1() {
-        // S136 smoke-test pattern: identity-couple input → both
+        // Smoke-test pattern: identity-couple input → both
         // method and free function return Err(InvalidKernel)
         // identically.
         let curve = CoupleCurve {
@@ -2318,7 +2299,7 @@ mod tests {
         let via_free = gluing_codomain(&curve, &inf, &inf);
         assert_eq!(
             via_method, via_free,
-            "S158: GluingCodomain::compute must match gluing_codomain free function",
+            "GluingCodomain::compute must match gluing_codomain free function",
         );
     }
 
@@ -2333,7 +2314,7 @@ mod tests {
         let via_free = gluing_eval_point(&gluing, &p);
         assert_eq!(
             via_method, via_free,
-            "S158: gluing.eval_point(&p) must match gluing_eval_point(&gluing, &p)",
+            "gluing.eval_point(&p) must match gluing_eval_point(&gluing, &p)",
         );
     }
 
@@ -2354,7 +2335,7 @@ mod tests {
         let via_free = gluing_eval_point_special_case(&gluing, &p_xz);
         assert_eq!(
             via_method, via_free,
-            "S158: gluing.eval_point_special_case(&p_xz) must match free function",
+            "gluing.eval_point_special_case(&p_xz) must match free function",
         );
     }
 
@@ -2373,11 +2354,11 @@ mod tests {
         let via_free = gluing_eval_basis(&gluing, &p1, &p2);
         assert_eq!(
             via_method.0, via_free.0,
-            "S158: gluing.eval_basis output .0 must match free function",
+            "gluing.eval_basis output .0 must match free function",
         );
         assert_eq!(
             via_method.1, via_free.1,
-            "S158: gluing.eval_basis output .1 must match free function",
+            "gluing.eval_basis output .1 must match free function",
         );
     }
 }

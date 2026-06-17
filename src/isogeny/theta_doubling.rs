@@ -19,16 +19,16 @@
 //! - [`double_iter`] iterates `double_point` `exp` times. Equivalent
 //!   to scalar-multiplying by `2^exp`.
 //!
-//! # Coexistence with S98 doubling
+//! # Coexistence with the Riemann-form doubling
 //!
-//! The S98-era [`crate::isogeny::theta::AbelianVariety2D::double`]
+//! The [`crate::isogeny::theta::AbelianVariety2D::double`]
 //! method uses a single-block doubling form (Riemann's duplication
 //! formula with a single `doubling_constants` factor). The two forms
 //! arise from different theta-coord normalization conventions. The
-//! S124-era project docket noted this reconciliation as pending; this
+//! project docket noted this reconciliation as pending; this
 //! session ships the C-ref-aligned TWO-BLOCK form as new
-//! infrastructure for the chain-walker (S148+ `_theta_chain_compute_impl`).
-//! The S98 form coexists and is not touched.
+//! infrastructure for the chain-walker (`_theta_chain_compute_impl`).
+//! The Riemann form coexists and is not touched.
 //!
 //! Per `theta_structure.h:to_squared_theta`, `squared_theta` =
 //! `componentwise_square` then `hadamard`.
@@ -245,7 +245,7 @@ mod tests {
         Fp2::<Fp1Element>::zero().sub(&small_fp2(n))
     }
 
-    /// S147 oracle: with theta_null = (2, 3, 5, 7), verify the
+    /// oracle: with theta_null = (2, 3, 5, 7), verify the
     /// computed dual_block and null_block match hand-computation.
     ///
     /// dual = squared_theta(2, 3, 5, 7):
@@ -277,31 +277,31 @@ mod tests {
         let theta_null = ThetaPoint2D::new(small_fp2(2), small_fp2(3), small_fp2(5), small_fp2(7));
         let precomp = theta_precomputation(&theta_null);
 
-        assert_eq!(precomp.dual_block.x, small_fp2(33611), "S147: YZT0 = 33611");
+        assert_eq!(precomp.dual_block.x, small_fp2(33611), "YZT0 = 33611");
         assert_eq!(
             precomp.dual_block.y,
             neg_fp2(100833),
-            "S147: XZT0 = -100833"
+            "XZT0 = -100833"
         );
-        assert_eq!(precomp.dual_block.z, neg_fp2(47937), "S147: XYT0 = -47937");
+        assert_eq!(precomp.dual_block.z, neg_fp2(47937), "XYT0 = -47937");
         assert_eq!(
             precomp.dual_block.w,
             small_fp2(153903),
-            "S147: XYZ0 = 153903"
+            "XYZ0 = 153903"
         );
 
-        assert_eq!(precomp.null_block.x, small_fp2(105), "S147: yzt0 = 105");
-        assert_eq!(precomp.null_block.y, small_fp2(70), "S147: xzt0 = 70");
-        assert_eq!(precomp.null_block.z, small_fp2(42), "S147: xyt0 = 42");
-        assert_eq!(precomp.null_block.w, small_fp2(30), "S147: xyz0 = 30");
+        assert_eq!(precomp.null_block.x, small_fp2(105), "yzt0 = 105");
+        assert_eq!(precomp.null_block.y, small_fp2(70), "xzt0 = 70");
+        assert_eq!(precomp.null_block.z, small_fp2(42), "xyt0 = 42");
+        assert_eq!(precomp.null_block.w, small_fp2(30), "xyz0 = 30");
 
         assert_eq!(
             precomp.theta_null, theta_null,
-            "S147: theta_null must be preserved on the precomputed struct",
+            "theta_null must be preserved on the precomputed struct",
         );
     }
 
-    /// S147 oracle: double_point on P = (1, 0, 0, 0) with
+    /// oracle: double_point on P = (1, 0, 0, 0) with
     /// theta_null = (2, 3, 5, 7).
     ///
     /// Step 1: squared_theta(P)
@@ -337,13 +337,13 @@ mod tests {
 
         let r = double_point(&precomp, &p);
 
-        assert_eq!(r.x, small_fp2(4068120), "S147: 2P.x = 4068120");
-        assert_eq!(r.y, neg_fp2(4717720), "S147: 2P.y = -4717720");
-        assert_eq!(r.z, neg_fp2(7273896), "S147: 2P.z = -7273896");
-        assert_eq!(r.w, small_fp2(10088520), "S147: 2P.w = 10088520");
+        assert_eq!(r.x, small_fp2(4068120), "2P.x = 4068120");
+        assert_eq!(r.y, neg_fp2(4717720), "2P.y = -4717720");
+        assert_eq!(r.z, neg_fp2(7273896), "2P.z = -7273896");
+        assert_eq!(r.w, small_fp2(10088520), "2P.w = 10088520");
     }
 
-    /// S147: double_iter(0) returns input unchanged.
+    /// double_iter(0) returns input unchanged.
     #[test]
     fn double_iter_exp_zero_is_identity_at_lvl1() {
         let theta_null = ThetaPoint2D::new(small_fp2(2), small_fp2(3), small_fp2(5), small_fp2(7));
@@ -352,10 +352,10 @@ mod tests {
 
         let r = double_iter(&precomp, &p, 0);
 
-        assert_eq!(r, p, "S147: double_iter(0) = identity");
+        assert_eq!(r, p, "double_iter(0) = identity");
     }
 
-    /// S147: double_iter(1) matches single double_point.
+    /// double_iter(1) matches single double_point.
     #[test]
     fn double_iter_exp_one_equals_double_point_at_lvl1() {
         let theta_null = ThetaPoint2D::new(small_fp2(2), small_fp2(3), small_fp2(5), small_fp2(7));
@@ -370,10 +370,10 @@ mod tests {
         let r_iter = double_iter(&precomp, &p, 1);
         let r_solo = double_point(&precomp, &p);
 
-        assert_eq!(r_iter, r_solo, "S147: double_iter(1) = double_point");
+        assert_eq!(r_iter, r_solo, "double_iter(1) = double_point");
     }
 
-    /// S147: double_iter(2) composes — i.e., equals double_point applied
+    /// double_iter(2) composes — i.e., equals double_point applied
     /// twice. This is a definition test, not a semantic test (the
     /// semantic claim "double_iter(2)·P = 4·P" needs an external oracle
     /// like the C ref's KAT to validate).
@@ -388,11 +388,11 @@ mod tests {
 
         assert_eq!(
             r_iter, r_manual,
-            "S147: double_iter(2) = double_point ∘ double_point"
+            "double_iter(2) = double_point ∘ double_point"
         );
     }
 
-    // S153 — method-form ergonomic API tests.
+    // method-form ergonomic API tests.
 
     #[test]
     fn new_method_matches_theta_precomputation_at_lvl1() {
@@ -401,7 +401,7 @@ mod tests {
         let via_free = theta_precomputation(&theta_null);
         assert_eq!(
             via_method, via_free,
-            "S153: AbelianVarietyPrecomputed::new must match theta_precomputation",
+            "AbelianVarietyPrecomputed::new must match theta_precomputation",
         );
     }
 
@@ -420,7 +420,7 @@ mod tests {
         let via_free = double_point(&precomp, &p);
         assert_eq!(
             via_method, via_free,
-            "S153: precomp.double_point(p) must match double_point(&precomp, &p)",
+            "precomp.double_point(p) must match double_point(&precomp, &p)",
         );
     }
 
@@ -435,7 +435,7 @@ mod tests {
             let via_free = double_iter(&precomp, &p, exp);
             assert_eq!(
                 via_method, via_free,
-                "S153: precomp.double_iter({exp}) must match double_iter(&precomp, {exp})",
+                "precomp.double_iter({exp}) must match double_iter(&precomp, {exp})",
             );
         }
     }

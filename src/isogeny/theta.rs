@@ -434,8 +434,8 @@ impl<F: BaseField> ThetaPoint2D<F> {
     ///
     /// The `constants` argument is the abelian variety's "doubling
     /// constants" — a theta-coordinate tuple derived from the variety's
-    /// structure. Its extraction is a separate primitive (future
-    /// session); this method takes it as a parameter so the composition
+    /// structure. Its extraction is a separate primitive; this method
+    /// takes it as a parameter so the composition
     /// itself can be tested independently of the constant-derivation
     /// logic.
     ///
@@ -493,17 +493,16 @@ impl<F: BaseField> ConditionallySelectable for ThetaPoint2D<F> {
 ///
 /// Where [`ThetaPoint2D`] is a generic theta-coordinate point,
 /// `AbelianVariety2D` carries the variety-specific structure that
-/// makes doubling (and future isogeny evaluation) well-defined. The
+/// makes doubling (and isogeny evaluation) well-defined. The
 /// doubling constants are typically derived from the theta-null via
 /// Riemann's duplication formula, but the derivation algorithm
 /// depends on the SQIsign 2.0.1 spec interpretation — for now this
 /// struct accepts both as inputs, so the doubling composition
 /// is testable independently of the constants-extraction logic.
 ///
-/// Future sessions add:
-/// - `from_montgomery_curve(curve: &MontgomeryCurve<F>)` — derive
-///   the theta-null + constants from an elliptic curve.
-/// - `dual_theta_null()` and other Riemann-relation accessors.
+/// Related accessors derive the theta-null + constants from an
+/// elliptic curve and expose Riemann-relation values (e.g.
+/// [`AbelianVariety2D::dual_theta_null`]).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct AbelianVariety2D<F: BaseField> {
     /// Theta-null point `(θ_{00}(0), θ_{10}(0), θ_{01}(0), θ_{11}(0))`
@@ -574,14 +573,13 @@ impl<F: BaseField> AbelianVariety2D<F> {
 
     /// Dual theta-null: `H(theta_null)`. The Hadamard transform of the
     /// theta-null at the origin gives the "dual theta-null" used in
-    /// several Riemann-relation identities and in the eventual
+    /// several Riemann-relation identities and in the
     /// derivation of `doubling_constants` from `theta_null`.
     ///
     /// Per SQIsign 2.0.1 spec §6.2, this dual is one of the
     /// intermediate values in the constants-from-theta-null formula
-    /// (Cosset-Robert / Riemann's duplication style). Shipped as a
-    /// standalone accessor so the derivation formula can be composed
-    /// in a future session without changing this surface.
+    /// (Cosset-Robert / Riemann's duplication style). Exposed as a
+    /// standalone accessor so the derivation formula can compose it.
     pub fn dual_theta_null(&self) -> ThetaPoint2D<F> {
         self.theta_null.hadamard()
     }
@@ -824,7 +822,7 @@ mod tests {
         let z = ThetaPoint2D::<F>::zero();
         assert!(
             bool::from(z.is_zero()),
-            "S95: ThetaPoint2D::zero().is_zero() must be Choice::TRUE",
+            "ThetaPoint2D::zero().is_zero() must be Choice::TRUE",
         );
     }
 
@@ -849,7 +847,7 @@ mod tests {
         let id = ThetaPoint2D::<F>::identity();
         assert!(
             !bool::from(id.is_zero()),
-            "S95: ThetaPoint2D::identity() must not satisfy is_zero",
+            "ThetaPoint2D::identity() must not satisfy is_zero",
         );
         assert_eq!(
             id,
@@ -859,7 +857,7 @@ mod tests {
                 Fp2::<F>::one(),
                 Fp2::<F>::one(),
             ),
-            "S95: identity = (1, 1, 1, 1)",
+            "identity = (1, 1, 1, 1)",
         );
     }
 
@@ -889,7 +887,7 @@ mod tests {
         );
         assert!(
             bool::from(<ThetaPoint2D<F> as ConstantTimeEq>::ct_eq(&p, &p)),
-            "S95: ct_eq must be reflexive",
+            "ct_eq must be reflexive",
         );
     }
 
@@ -915,8 +913,8 @@ mod tests {
         let b = ThetaPoint2D::<F>::identity();
         let pick_a = ThetaPoint2D::<F>::conditional_select(&a, &b, Choice::from(0));
         let pick_b = ThetaPoint2D::<F>::conditional_select(&a, &b, Choice::from(1));
-        assert_eq!(pick_a, a, "S95: conditional_select(_, _, FALSE) returns a");
-        assert_eq!(pick_b, b, "S95: conditional_select(_, _, TRUE) returns b");
+        assert_eq!(pick_a, a, "conditional_select(_, _, FALSE) returns a");
+        assert_eq!(pick_b, b, "conditional_select(_, _, TRUE) returns b");
     }
 
     #[test]
@@ -936,7 +934,7 @@ mod tests {
         check_conditional_select::<Fp5Element>();
     }
 
-    // ── S96 — Hadamard transform on ThetaPoint2D ──
+    // ── Hadamard transform on ThetaPoint2D ──
 
     /// Generic helper: verify the Hadamard transform formula
     /// component-by-component on a specific input `(2, 3, 5, 7)`.
@@ -968,10 +966,10 @@ mod tests {
         let minus_seven = seven.negate();
         let one_f2 = one;
 
-        assert_eq!(h.x, seventeen, "S96: H[x] = x+y+z+w (17)");
-        assert_eq!(h.y, minus_three, "S96: H[y] = x−y+z−w (−3)");
-        assert_eq!(h.z, minus_seven, "S96: H[z] = x+y−z−w (−7)");
-        assert_eq!(h.w, one_f2, "S96: H[w] = x−y−z+w (1)");
+        assert_eq!(h.x, seventeen, "H[x] = x+y+z+w (17)");
+        assert_eq!(h.y, minus_three, "H[y] = x−y+z−w (−3)");
+        assert_eq!(h.z, minus_seven, "H[z] = x+y−z−w (−7)");
+        assert_eq!(h.w, one_f2, "H[w] = x−y−z+w (1)");
     }
 
     #[test]
@@ -1017,10 +1015,10 @@ mod tests {
             let four_y = y.double().double();
             let four_z = z.double().double();
             let four_w = w.double().double();
-            assert_eq!(h_h.x, four_x, "S96: H²[x] = 4x at iteration {i}");
-            assert_eq!(h_h.y, four_y, "S96: H²[y] = 4y at iteration {i}");
-            assert_eq!(h_h.z, four_z, "S96: H²[z] = 4z at iteration {i}");
-            assert_eq!(h_h.w, four_w, "S96: H²[w] = 4w at iteration {i}");
+            assert_eq!(h_h.x, four_x, "H²[x] = 4x at iteration {i}");
+            assert_eq!(h_h.y, four_y, "H²[y] = 4y at iteration {i}");
+            assert_eq!(h_h.z, four_z, "H²[z] = 4z at iteration {i}");
+            assert_eq!(h_h.w, four_w, "H²[w] = 4w at iteration {i}");
         }
     }
 
@@ -1049,17 +1047,17 @@ mod tests {
         // Zero input → zero output.
         let zero = ThetaPoint2D::<F>::zero();
         let h_zero = zero.hadamard();
-        assert_eq!(h_zero, ThetaPoint2D::<F>::zero(), "S96: H(0) = 0");
+        assert_eq!(h_zero, ThetaPoint2D::<F>::zero(), "H(0) = 0");
 
         // Identity (1, 1, 1, 1) → (4, 0, 0, 0).
         let id = ThetaPoint2D::<F>::identity();
         let h_id = id.hadamard();
         let four = Fp2::<F>::one().double().double();
         let zero_f2 = Fp2::<F>::zero();
-        assert_eq!(h_id.x, four, "S96: H(1,1,1,1)[x] = 4");
-        assert_eq!(h_id.y, zero_f2, "S96: H(1,1,1,1)[y] = 0");
-        assert_eq!(h_id.z, zero_f2, "S96: H(1,1,1,1)[z] = 0");
-        assert_eq!(h_id.w, zero_f2, "S96: H(1,1,1,1)[w] = 0");
+        assert_eq!(h_id.x, four, "H(1,1,1,1)[x] = 4");
+        assert_eq!(h_id.y, zero_f2, "H(1,1,1,1)[y] = 0");
+        assert_eq!(h_id.z, zero_f2, "H(1,1,1,1)[z] = 0");
+        assert_eq!(h_id.w, zero_f2, "H(1,1,1,1)[w] = 0");
     }
 
     #[test]
@@ -1079,7 +1077,7 @@ mod tests {
         check_hadamard_special_inputs::<Fp5Element>();
     }
 
-    // ── S97 — componentwise square + multiply on ThetaPoint2D ──
+    // ── componentwise square + multiply on ThetaPoint2D ──
 
     /// Generic helper: componentwise_square on `(2, 3, 5, 7)`
     /// yields `(4, 9, 25, 49)`.
@@ -1098,10 +1096,10 @@ mod tests {
         let twenty_five = five.square();
         let forty_nine = seven.square();
 
-        assert_eq!(p_sq.x, four, "S97: square[x] = 4");
-        assert_eq!(p_sq.y, nine, "S97: square[y] = 9");
-        assert_eq!(p_sq.z, twenty_five, "S97: square[z] = 25");
-        assert_eq!(p_sq.w, forty_nine, "S97: square[w] = 49");
+        assert_eq!(p_sq.x, four, "square[x] = 4");
+        assert_eq!(p_sq.y, nine, "square[y] = 9");
+        assert_eq!(p_sq.z, twenty_five, "square[z] = 25");
+        assert_eq!(p_sq.w, forty_nine, "square[w] = 49");
     }
 
     #[test]
@@ -1143,7 +1141,7 @@ mod tests {
             assert_eq!(
                 p.componentwise_square(),
                 p.componentwise_mul(&p),
-                "S97: square(p) must equal mul(p, p) at iteration {i}",
+                "square(p) must equal mul(p, p) at iteration {i}",
             );
         }
     }
@@ -1180,7 +1178,7 @@ mod tests {
             assert_eq!(
                 p.componentwise_mul(&q),
                 q.componentwise_mul(&p),
-                "S97: componentwise_mul must be commutative at iteration {i}",
+                "componentwise_mul must be commutative at iteration {i}",
             );
         }
     }
@@ -1223,7 +1221,7 @@ mod tests {
         let result = p.componentwise_mul(&ThetaPoint2D::<F>::identity());
         assert_eq!(
             result, p,
-            "S97: componentwise_mul(p, (1,1,1,1)) must equal p",
+            "componentwise_mul(p, (1,1,1,1)) must equal p",
         );
     }
 
@@ -1244,7 +1242,7 @@ mod tests {
         check_componentwise_mul_identity::<Fp5Element>();
     }
 
-    // ── S98 — double() composes H → square → H → mul ──
+    // ── double() composes H → square → H → mul ──
 
     /// Generic helper: `double` matches the explicit chained
     /// composition for pseudo-random p and constants. Locks the
@@ -1270,7 +1268,7 @@ mod tests {
 
             assert_eq!(
                 chained, doubled,
-                "S98: double(p, c) must equal H(square(H(p))) ⊙ c at iteration {i}",
+                "double(p, c) must equal H(square(H(p))) ⊙ c at iteration {i}",
             );
         }
     }
@@ -1309,7 +1307,7 @@ mod tests {
         assert_eq!(
             doubled,
             ThetaPoint2D::<F>::zero(),
-            "S98: double(zero, _) must be zero (linearity end-to-end)",
+            "double(zero, _) must be zero (linearity end-to-end)",
         );
     }
 
@@ -1353,7 +1351,7 @@ mod tests {
         let actual = p.double(&ThetaPoint2D::<F>::identity());
         assert_eq!(
             actual, expected,
-            "S98: double(p, identity) must equal H(square(H(p)))",
+            "double(p, identity) must equal H(square(H(p)))",
         );
     }
 
@@ -1374,7 +1372,7 @@ mod tests {
         check_double_with_identity_constants::<Fp5Element>();
     }
 
-    // ── S99 — AbelianVariety2D wrapper for theta-null + doubling constants ──
+    // ── AbelianVariety2D wrapper for theta-null + doubling constants ──
 
     /// Generic helper: `AbelianVariety2D::double(p)` matches
     /// `p.double(&variety.doubling_constants)` for pseudo-random
@@ -1398,7 +1396,7 @@ mod tests {
             let via_direct = p.double(&constants);
             assert_eq!(
                 via_variety, via_direct,
-                "S99: variety.double(p) must equal p.double(&variety.doubling_constants) at iteration {i}",
+                "variety.double(p) must equal p.double(&variety.doubling_constants) at iteration {i}",
             );
         }
     }
@@ -1440,11 +1438,11 @@ mod tests {
         let variety = AbelianVariety2D::<F>::new(theta_null, constants);
         assert_eq!(
             variety.theta_null, theta_null,
-            "S99: variety.theta_null must round-trip from constructor",
+            "variety.theta_null must round-trip from constructor",
         );
         assert_eq!(
             variety.doubling_constants, constants,
-            "S99: variety.doubling_constants must round-trip from constructor",
+            "variety.doubling_constants must round-trip from constructor",
         );
     }
 
@@ -1465,7 +1463,7 @@ mod tests {
         check_variety_round_trip::<Fp5Element>();
     }
 
-    // ── S100 — dual_theta_null and theta_null_squared accessors ──
+    // ── dual_theta_null and theta_null_squared accessors ──
 
     /// Generic helper: `variety.dual_theta_null() == variety.theta_null.hadamard()`.
     /// Locks the accessor contract: the dual is computed via the
@@ -1490,7 +1488,7 @@ mod tests {
             assert_eq!(
                 variety.dual_theta_null(),
                 theta_null.hadamard(),
-                "S100: dual_theta_null must equal theta_null.hadamard() at iteration {i}",
+                "dual_theta_null must equal theta_null.hadamard() at iteration {i}",
             );
         }
     }
@@ -1533,7 +1531,7 @@ mod tests {
             assert_eq!(
                 variety.theta_null_squared(),
                 theta_null.componentwise_square(),
-                "S100: theta_null_squared must equal componentwise_square at iteration {i}",
+                "theta_null_squared must equal componentwise_square at iteration {i}",
             );
         }
     }
@@ -1555,7 +1553,7 @@ mod tests {
         check_theta_null_squared_matches_componentwise::<Fp5Element>();
     }
 
-    // ── S101 — componentwise_inverse + from_theta_null ──
+    // ── componentwise_inverse + from_theta_null ──
 
     /// Generic helper: `p ⊙ p.componentwise_inverse() == identity`
     /// for non-degenerate pseudo-random p (no zero components).
@@ -1584,7 +1582,7 @@ mod tests {
             assert_eq!(
                 prod,
                 ThetaPoint2D::<F>::identity(),
-                "S101: p ⊙ p⁻¹ must equal identity at iteration {i}",
+                "p ⊙ p⁻¹ must equal identity at iteration {i}",
             );
         }
     }
@@ -1619,7 +1617,7 @@ mod tests {
         assert_eq!(
             p.componentwise_inverse(),
             None,
-            "S101: componentwise_inverse must return None for a point with a zero component",
+            "componentwise_inverse must return None for a point with a zero component",
         );
     }
 
@@ -1662,7 +1660,7 @@ mod tests {
             assert_eq!(
                 identity_check,
                 ThetaPoint2D::<F>::identity(),
-                "S101: H(theta_null²) ⊙ doubling_constants must equal identity at iteration {i}",
+                "H(theta_null²) ⊙ doubling_constants must equal identity at iteration {i}",
             );
         }
     }
@@ -1694,7 +1692,7 @@ mod tests {
         let result = AbelianVariety2D::<F>::from_theta_null(degenerate);
         assert_eq!(
             result, None,
-            "S101: from_theta_null((1,1,1,1)) must return None — H(1,1,1,1) = (4,0,0,0) has zero components",
+            "from_theta_null((1,1,1,1)) must return None — H(1,1,1,1) = (4,0,0,0) has zero components",
         );
     }
 
@@ -1730,10 +1728,10 @@ mod tests {
             mk(b"di-tn-w"),
         );
         let variety = AbelianVariety2D::<F>::from_theta_null(theta_null)
-            .expect("S102: theta-null must be non-degenerate for test");
+            .expect("theta-null must be non-degenerate for test");
         let p = ThetaPoint2D::<F>::new(mk(b"di-p-x"), mk(b"di-p-y"), mk(b"di-p-z"), mk(b"di-p-w"));
         let q = variety.double_iterated(&p, 0);
-        assert_eq!(q, p, "S102: double_iterated(p, 0) must return p unchanged");
+        assert_eq!(q, p, "double_iterated(p, 0) must return p unchanged");
     }
 
     #[test]
@@ -1782,7 +1780,7 @@ mod tests {
             let direct = variety.double(&p);
             assert_eq!(
                 one_step, direct,
-                "S102: double_iterated(p, 1) must equal variety.double(&p) at iteration {i}",
+                "double_iterated(p, 1) must equal variety.double(&p) at iteration {i}",
             );
         }
     }
@@ -1836,7 +1834,7 @@ mod tests {
                 let rhs = variety.double_iterated(&p, m + n);
                 assert_eq!(
                     lhs, rhs,
-                    "S102: double_iterated(_, m+n) must equal composition at (m, n) = ({m}, {n}), iteration {i}",
+                    "double_iterated(_, m+n) must equal composition at (m, n) = ({m}, {n}), iteration {i}",
                 );
             }
         }
@@ -1882,23 +1880,23 @@ mod tests {
             mk(b"vb-tn-w", 0),
         );
         let v_a = AbelianVariety2D::<F>::from_theta_null(theta_null_a)
-            .expect("S103: theta-null A must be non-degenerate");
+            .expect("theta-null A must be non-degenerate");
         let v_b = AbelianVariety2D::<F>::from_theta_null(theta_null_b)
-            .expect("S103: theta-null B must be non-degenerate");
+            .expect("theta-null B must be non-degenerate");
         assert!(
             bool::from(v_a.ct_eq(&v_a)),
-            "S103: ct_eq must be reflexive on AbelianVariety2D",
+            "ct_eq must be reflexive on AbelianVariety2D",
         );
         assert!(
             !bool::from(v_a.ct_eq(&v_b)),
-            "S103: ct_eq must distinguish distinct varieties",
+            "ct_eq must distinguish distinct varieties",
         );
         // A clone with one component differing in only the doubling_constants
         // must also be distinguished.
         let v_a_perturbed = AbelianVariety2D::<F>::new(v_a.theta_null, v_b.doubling_constants);
         assert!(
             !bool::from(v_a.ct_eq(&v_a_perturbed)),
-            "S103: ct_eq must distinguish varieties with same theta_null but different doubling_constants",
+            "ct_eq must distinguish varieties with same theta_null but different doubling_constants",
         );
     }
 
@@ -1941,18 +1939,18 @@ mod tests {
             mk(b"cs-b-w", 0),
         );
         let v_a = AbelianVariety2D::<F>::from_theta_null(theta_null_a)
-            .expect("S103: theta-null A must be non-degenerate");
+            .expect("theta-null A must be non-degenerate");
         let v_b = AbelianVariety2D::<F>::from_theta_null(theta_null_b)
-            .expect("S103: theta-null B must be non-degenerate");
+            .expect("theta-null B must be non-degenerate");
         let pick_a = AbelianVariety2D::<F>::conditional_select(&v_a, &v_b, Choice::from(0));
         let pick_b = AbelianVariety2D::<F>::conditional_select(&v_a, &v_b, Choice::from(1));
         assert_eq!(
             pick_a, v_a,
-            "S103: conditional_select(a, b, FALSE) must return a",
+            "conditional_select(a, b, FALSE) must return a",
         );
         assert_eq!(
             pick_b, v_b,
-            "S103: conditional_select(a, b, TRUE) must return b",
+            "conditional_select(a, b, TRUE) must return b",
         );
     }
 
@@ -1997,9 +1995,9 @@ mod tests {
             mk(b"cd-b-w", 0),
         );
         let v_a = AbelianVariety2D::<F>::from_theta_null(theta_null_a)
-            .expect("S103: theta-null A must be non-degenerate");
+            .expect("theta-null A must be non-degenerate");
         let v_b = AbelianVariety2D::<F>::from_theta_null(theta_null_b)
-            .expect("S103: theta-null B must be non-degenerate");
+            .expect("theta-null B must be non-degenerate");
         let p = ThetaPoint2D::<F>::new(
             mk(b"cd-p-x", 0),
             mk(b"cd-p-y", 0),
@@ -2010,13 +2008,13 @@ mod tests {
         assert_eq!(
             picked.double(&p),
             v_b.double(&p),
-            "S103: doubling on a CT-selected variety must match the chosen variety",
+            "doubling on a CT-selected variety must match the chosen variety",
         );
         let picked0 = AbelianVariety2D::<F>::conditional_select(&v_a, &v_b, Choice::from(0));
         assert_eq!(
             picked0.double(&p),
             v_a.double(&p),
-            "S103: doubling on a CT-selected variety must match the chosen variety (other branch)",
+            "doubling on a CT-selected variety must match the chosen variety (other branch)",
         );
     }
 
@@ -2052,28 +2050,28 @@ mod tests {
             if bool::from(p.x.is_zero()) {
                 continue;
             }
-            let normed = p.normalize_by_x().expect("S104: non-zero x must normalise");
+            let normed = p.normalize_by_x().expect("non-zero x must normalise");
             assert_eq!(
                 normed.x,
                 Fp2::<F>::one(),
-                "S104: normalised x must equal one at iteration {i}",
+                "normalised x must equal one at iteration {i}",
             );
             // y/x, z/x, w/x must equal p.{y,z,w} * x_inv.
             let x_inv = p.x.invert().into_option().expect("non-zero inverts");
             assert_eq!(
                 normed.y,
                 p.y.mul(&x_inv),
-                "S104: normalised y must equal original.y * x_inv at iteration {i}",
+                "normalised y must equal original.y * x_inv at iteration {i}",
             );
             assert_eq!(
                 normed.z,
                 p.z.mul(&x_inv),
-                "S104: normalised z must equal original.z * x_inv at iteration {i}",
+                "normalised z must equal original.z * x_inv at iteration {i}",
             );
             assert_eq!(
                 normed.w,
                 p.w.mul(&x_inv),
-                "S104: normalised w must equal original.w * x_inv at iteration {i}",
+                "normalised w must equal original.w * x_inv at iteration {i}",
             );
         }
     }
@@ -2117,13 +2115,13 @@ mod tests {
                 continue;
             }
             let scaled = ThetaPoint2D::<F>::new(p.x.mul(&c), p.y.mul(&c), p.z.mul(&c), p.w.mul(&c));
-            let normed_p = p.normalize_by_x().expect("S104: non-zero x must normalise");
+            let normed_p = p.normalize_by_x().expect("non-zero x must normalise");
             let normed_scaled = scaled
                 .normalize_by_x()
-                .expect("S104: scaled non-zero x must normalise");
+                .expect("scaled non-zero x must normalise");
             assert_eq!(
                 normed_p, normed_scaled,
-                "S104: normalize_by_x must absorb global scaling at iteration {i}",
+                "normalize_by_x must absorb global scaling at iteration {i}",
             );
         }
     }
@@ -2157,7 +2155,7 @@ mod tests {
         assert_eq!(
             p.normalize_by_x(),
             None,
-            "S104: normalize_by_x must return None when x is zero",
+            "normalize_by_x must return None when x is zero",
         );
     }
 
@@ -2194,7 +2192,7 @@ mod tests {
             // Reflexivity: p ~ p.
             assert!(
                 bool::from(p.project_equals(&p)),
-                "S105: project_equals must be reflexive at iteration {i}",
+                "project_equals must be reflexive at iteration {i}",
             );
             // Projective scaling: c · p ~ p for non-zero c.
             let c = mk(b"pe-c");
@@ -2204,7 +2202,7 @@ mod tests {
             let scaled = ThetaPoint2D::<F>::new(p.x.mul(&c), p.y.mul(&c), p.z.mul(&c), p.w.mul(&c));
             assert!(
                 bool::from(p.project_equals(&scaled)),
-                "S105: project_equals must absorb non-zero scaling at iteration {i}",
+                "project_equals must absorb non-zero scaling at iteration {i}",
             );
             // Independent point: q derived from a fresh hash; expected non-equal
             // (vanishing chance of accidental projective collision on a random
@@ -2215,7 +2213,7 @@ mod tests {
             if !bool::from(q.is_zero()) {
                 assert!(
                     !bool::from(p.project_equals(&q)),
-                    "S105: project_equals must distinguish independent random samples at iteration {i}",
+                    "project_equals must distinguish independent random samples at iteration {i}",
                 );
             }
         }
@@ -2253,10 +2251,10 @@ mod tests {
             if bool::from(p.x.is_zero()) {
                 continue;
             }
-            let normed = p.normalize_by_x().expect("S105: non-zero x must normalise");
+            let normed = p.normalize_by_x().expect("non-zero x must normalise");
             assert!(
                 bool::from(p.project_equals(&normed)),
-                "S105: project_equals(p, normalize_by_x(p)) must hold at iteration {i}",
+                "project_equals(p, normalize_by_x(p)) must hold at iteration {i}",
             );
         }
     }
@@ -2293,12 +2291,12 @@ mod tests {
             let mut buf = [0u8; 512]; // big enough for L5's 512-byte encoding
             let n = ThetaPoint2D::<F>::ENCODED_BYTES;
             p.to_bytes_le(&mut buf[..n])
-                .expect("S106: encode must succeed");
+                .expect("encode must succeed");
             let p2 = ThetaPoint2D::<F>::from_bytes_le(&buf[..n])
-                .expect("S106: decode must succeed on encoder output");
+                .expect("decode must succeed on encoder output");
             assert_eq!(
                 p, p2,
-                "S106: ThetaPoint2D round-trip must preserve at iteration {i}",
+                "ThetaPoint2D round-trip must preserve at iteration {i}",
             );
         }
     }
@@ -2332,7 +2330,7 @@ mod tests {
                 required: ThetaPoint2D::<F>::ENCODED_BYTES,
                 provided: 1,
             }),
-            "S106: encode must reject undersized buffer",
+            "encode must reject undersized buffer",
         );
         let r2 = ThetaPoint2D::<F>::from_bytes_le(&tiny);
         assert_eq!(
@@ -2341,7 +2339,7 @@ mod tests {
                 required: ThetaPoint2D::<F>::ENCODED_BYTES,
                 provided: 1,
             }),
-            "S106: decode must reject undersized buffer",
+            "decode must reject undersized buffer",
         );
     }
 
@@ -2373,7 +2371,7 @@ mod tests {
         let mut buf = [0u8; 512];
         let n = ThetaPoint2D::<F>::ENCODED_BYTES;
         p.to_bytes_le(&mut buf[..n])
-            .expect("S106: encode must succeed");
+            .expect("encode must succeed");
         // Force the high byte of the x.re component to 0xFF.
         // At the canonical encoding, only the highest byte of the
         // last Fp1 element is bounded by the prime; setting it to
@@ -2384,7 +2382,7 @@ mod tests {
         assert_eq!(
             r,
             Err(Error::NonCanonicalEncoding),
-            "S106: decode must reject non-canonical Fp2 component",
+            "decode must reject non-canonical Fp2 component",
         );
     }
 
@@ -2412,12 +2410,12 @@ mod tests {
         assert_eq!(
             ThetaPoint2D::<F>::ENCODED_BYTES,
             expected,
-            "S106: ENCODED_BYTES must equal 8 · F::ENCODED_BYTES",
+            "ENCODED_BYTES must equal 8 · F::ENCODED_BYTES",
         );
         assert_eq!(
             ThetaPoint2D::<F>::ENCODED_BYTES,
             8 * F::ENCODED_BYTES,
-            "S106: ENCODED_BYTES must equal 8 · F::ENCODED_BYTES (algebraic check)",
+            "ENCODED_BYTES must equal 8 · F::ENCODED_BYTES (algebraic check)",
         );
     }
 
@@ -2459,12 +2457,12 @@ mod tests {
             let n = AbelianVariety2D::<F>::ENCODED_BYTES;
             variety
                 .to_bytes_le(&mut buf[..n])
-                .expect("S107: encode must succeed");
+                .expect("encode must succeed");
             let variety2 = AbelianVariety2D::<F>::from_bytes_le(&buf[..n])
-                .expect("S107: decode must succeed on encoder output");
+                .expect("decode must succeed on encoder output");
             assert_eq!(
                 variety, variety2,
-                "S107: AbelianVariety2D round-trip via from_theta_null must preserve at iteration {i}",
+                "AbelianVariety2D round-trip via from_theta_null must preserve at iteration {i}",
             );
         }
     }
@@ -2488,19 +2486,19 @@ mod tests {
 
     /// Generic helper: encoding the identity `(1, 1, 1, 1)` theta-null
     /// then decoding must return `Error::InvalidThetaNull` (the
-    /// identity is degenerate per S101's `from_theta_null` contract).
+    /// identity is degenerate per the `from_theta_null` contract).
     fn check_variety_bytes_decode_rejects_degenerate<F: BaseField>() {
         let theta_null = ThetaPoint2D::<F>::identity();
         let mut buf = [0u8; 512];
         let n = ThetaPoint2D::<F>::ENCODED_BYTES;
         theta_null
             .to_bytes_le(&mut buf[..n])
-            .expect("S107: encode the identity must succeed");
+            .expect("encode the identity must succeed");
         let r = AbelianVariety2D::<F>::from_bytes_le(&buf[..n]);
         assert_eq!(
             r,
             Err(Error::InvalidThetaNull),
-            "S107: decode must reject the degenerate identity theta-null",
+            "decode must reject the degenerate identity theta-null",
         );
     }
 
@@ -2534,7 +2532,7 @@ mod tests {
         let theta_null =
             ThetaPoint2D::<F>::new(mk(b"vub-x"), mk(b"vub-y"), mk(b"vub-z"), mk(b"vub-w"));
         let variety = AbelianVariety2D::<F>::from_theta_null(theta_null)
-            .expect("S107: theta-null must be non-degenerate for test");
+            .expect("theta-null must be non-degenerate for test");
         let mut tiny = [0u8; 1];
         let r = variety.to_bytes_le(&mut tiny);
         assert_eq!(
@@ -2543,7 +2541,7 @@ mod tests {
                 required: AbelianVariety2D::<F>::ENCODED_BYTES,
                 provided: 1,
             }),
-            "S107: encode must reject undersized buffer",
+            "encode must reject undersized buffer",
         );
         let r2 = AbelianVariety2D::<F>::from_bytes_le(&tiny);
         assert_eq!(
@@ -2552,7 +2550,7 @@ mod tests {
                 required: AbelianVariety2D::<F>::ENCODED_BYTES,
                 provided: 1,
             }),
-            "S107: decode must reject undersized buffer",
+            "decode must reject undersized buffer",
         );
     }
 
@@ -2591,7 +2589,7 @@ mod tests {
             };
             assert!(
                 bool::from(variety.is_consistent_with_theta_null()),
-                "S108: from_theta_null must produce a Riemann-consistent variety at iteration {i}",
+                "from_theta_null must produce a Riemann-consistent variety at iteration {i}",
             );
         }
     }
@@ -2630,7 +2628,7 @@ mod tests {
         let bogus = AbelianVariety2D::<F>::new(theta_null, theta_null);
         assert!(
             !bool::from(bogus.is_consistent_with_theta_null()),
-            "S108: variety with theta_null as doubling_constants must be inconsistent",
+            "variety with theta_null as doubling_constants must be inconsistent",
         );
     }
 
@@ -2673,12 +2671,12 @@ mod tests {
             let n = AbelianVariety2D::<F>::ENCODED_BYTES;
             variety
                 .to_bytes_le(&mut buf[..n])
-                .expect("S108: encode must succeed");
+                .expect("encode must succeed");
             let decoded =
-                AbelianVariety2D::<F>::from_bytes_le(&buf[..n]).expect("S108: decode must succeed");
+                AbelianVariety2D::<F>::from_bytes_le(&buf[..n]).expect("decode must succeed");
             assert!(
                 bool::from(decoded.is_consistent_with_theta_null()),
-                "S108: decoded variety must be Riemann-consistent at iteration {i}",
+                "decoded variety must be Riemann-consistent at iteration {i}",
             );
         }
     }
@@ -2701,7 +2699,7 @@ mod tests {
     }
 
     /// Generic helper: `normalize_by_pivot(p, 0)` matches `normalize_by_x(p)`
-    /// — backwards-compatibility with S104's single-pivot variant.
+    /// — backwards-compatibility with the single-pivot variant.
     fn check_normalize_by_pivot_zero_matches_by_x<F: BaseField>() {
         use crate::hash::hash_to_fp2;
         for i in 0u8..6 {
@@ -2716,13 +2714,13 @@ mod tests {
             }
             let by_x = p
                 .normalize_by_x()
-                .expect("S109: non-zero x must normalise via normalize_by_x");
+                .expect("non-zero x must normalise via normalize_by_x");
             let by_pivot_0 = p
                 .normalize_by_pivot(0)
-                .expect("S109: non-zero x must normalise via normalize_by_pivot(0)");
+                .expect("non-zero x must normalise via normalize_by_pivot(0)");
             assert_eq!(
                 by_x, by_pivot_0,
-                "S109: normalize_by_pivot(0) must match normalize_by_x at iteration {i}",
+                "normalize_by_pivot(0) must match normalize_by_x at iteration {i}",
             );
         }
     }
@@ -2746,7 +2744,7 @@ mod tests {
 
     /// Generic helper: for each pivot in `{0,1,2,3}`, the chosen
     /// component equals one after normalisation, and the result is
-    /// projectively-equal to the original (via S105's `project_equals`).
+    /// projectively-equal to the original (via `project_equals`).
     fn check_normalize_by_pivot_each_index<F: BaseField>() {
         use crate::hash::hash_to_fp2;
         for i in 0u8..4 {
@@ -2769,7 +2767,7 @@ mod tests {
                 }
                 let normed = p
                     .normalize_by_pivot(pivot)
-                    .expect("S109: non-zero pivot must normalise");
+                    .expect("non-zero pivot must normalise");
                 let chosen = match pivot {
                     0 => normed.x,
                     1 => normed.y,
@@ -2780,11 +2778,11 @@ mod tests {
                 assert_eq!(
                     chosen,
                     Fp2::<F>::one(),
-                    "S109: normalize_by_pivot({pivot}) must make the pivot component one at iteration {i}",
+                    "normalize_by_pivot({pivot}) must make the pivot component one at iteration {i}",
                 );
                 assert!(
                     bool::from(p.project_equals(&normed)),
-                    "S109: normalize_by_pivot({pivot}) must preserve projective equivalence at iteration {i}",
+                    "normalize_by_pivot({pivot}) must preserve projective equivalence at iteration {i}",
                 );
             }
         }
@@ -2816,7 +2814,7 @@ mod tests {
             assert_eq!(
                 p.normalize_by_pivot(pivot),
                 None,
-                "S109: normalize_by_pivot must return None for out-of-range pivot {pivot}",
+                "normalize_by_pivot must return None for out-of-range pivot {pivot}",
             );
         }
     }
@@ -2855,7 +2853,7 @@ mod tests {
             assert_eq!(
                 p.normalize_by_pivot(pivot),
                 None,
-                "S109: normalize_by_pivot must return None when component {pivot} is zero",
+                "normalize_by_pivot must return None when component {pivot} is zero",
             );
         }
     }
@@ -2884,12 +2882,12 @@ mod tests {
         // Identity has x = 1 → TRUE.
         assert!(
             bool::from(ThetaPoint2D::<F>::identity().is_normalised_by_x()),
-            "S110: identity must be normalised by x",
+            "identity must be normalised by x",
         );
         // Zero point has x = 0 → FALSE.
         assert!(
             !bool::from(ThetaPoint2D::<F>::zero().is_normalised_by_x()),
-            "S110: zero point must NOT be normalised by x",
+            "zero point must NOT be normalised by x",
         );
         // Postcondition: normalize_by_x output is normalised by x.
         use crate::hash::hash_to_fp2;
@@ -2903,10 +2901,10 @@ mod tests {
             if bool::from(p.x.is_zero()) {
                 continue;
             }
-            let normed = p.normalize_by_x().expect("S110: non-zero x must normalise");
+            let normed = p.normalize_by_x().expect("non-zero x must normalise");
             assert!(
                 bool::from(normed.is_normalised_by_x()),
-                "S110: normalize_by_x output must be normalised by x at iteration {i}",
+                "normalize_by_x output must be normalised by x at iteration {i}",
             );
         }
     }
@@ -2938,14 +2936,14 @@ mod tests {
         for pivot in 0u8..4 {
             assert!(
                 bool::from(id.is_normalised_by_pivot(pivot)),
-                "S110: identity must be normalised by every pivot 0..4 (pivot={pivot})",
+                "identity must be normalised by every pivot 0..4 (pivot={pivot})",
             );
         }
         // Out-of-range pivots must return FALSE even on the identity.
         for pivot in 4u8..=10 {
             assert!(
                 !bool::from(id.is_normalised_by_pivot(pivot)),
-                "S110: out-of-range pivot must return FALSE (pivot={pivot})",
+                "out-of-range pivot must return FALSE (pivot={pivot})",
             );
         }
         // Composition contract: normalize_by_pivot(p, k).is_normalised_by_pivot(k) == TRUE
@@ -2970,10 +2968,10 @@ mod tests {
                 }
                 let normed = p
                     .normalize_by_pivot(pivot)
-                    .expect("S110: non-zero pivot component must normalise");
+                    .expect("non-zero pivot component must normalise");
                 assert!(
                     bool::from(normed.is_normalised_by_pivot(pivot)),
-                    "S110: normalize_by_pivot output must be normalised by that pivot (pivot={pivot}, iter={i})",
+                    "normalize_by_pivot output must be normalised by that pivot (pivot={pivot}, iter={i})",
                 );
             }
         }
@@ -3011,7 +3009,7 @@ mod tests {
             assert_eq!(
                 bool::from(p.is_normalised_by_x()),
                 bool::from(p.is_normalised_by_pivot(0)),
-                "S110: is_normalised_by_pivot(0) must agree with is_normalised_by_x at iteration {i}",
+                "is_normalised_by_pivot(0) must agree with is_normalised_by_x at iteration {i}",
             );
         }
     }
@@ -3056,14 +3054,14 @@ mod tests {
             if bool::from(v.theta_null.x.is_zero()) {
                 continue;
             }
-            let canon = v.canonicalise().expect("S111: canonicalise must succeed");
+            let canon = v.canonicalise().expect("canonicalise must succeed");
             assert!(
                 bool::from(canon.theta_null.is_normalised_by_x()),
-                "S111: canonicalised theta_null.x must equal one at iteration {i}",
+                "canonicalised theta_null.x must equal one at iteration {i}",
             );
             assert!(
                 bool::from(canon.is_consistent_with_theta_null()),
-                "S111: canonicalised variety must be Riemann-consistent at iteration {i}",
+                "canonicalised variety must be Riemann-consistent at iteration {i}",
             );
         }
     }
@@ -3106,10 +3104,10 @@ mod tests {
             };
             let canon2 = canon
                 .canonicalise()
-                .expect("S111: canonicalising a canonical variety must succeed");
+                .expect("canonicalising a canonical variety must succeed");
             assert_eq!(
                 canon, canon2,
-                "S111: canonicalise must be idempotent at iteration {i}",
+                "canonicalise must be idempotent at iteration {i}",
             );
         }
     }
@@ -3134,7 +3132,7 @@ mod tests {
     /// Generic helper: two algebraically-equivalent varieties (built
     /// from theta_null and a non-zero scalar multiple of theta_null)
     /// canonicalise to identical varieties AND identical byte
-    /// encodings via S107's `to_bytes_le`. Locks the canonical-bytes
+    /// encodings via `to_bytes_le`. Locks the canonical-bytes
     /// contract used by deterministic wire-format consumers.
     fn check_variety_canonicalise_yields_canonical_bytes<F: BaseField>() {
         use crate::hash::hash_to_fp2;
@@ -3171,13 +3169,13 @@ mod tests {
             // Canonicalise both.
             let canon_a = v_a
                 .canonicalise()
-                .expect("S111: canonicalise A must succeed");
+                .expect("canonicalise A must succeed");
             let canon_b = v_b
                 .canonicalise()
-                .expect("S111: canonicalise B must succeed");
+                .expect("canonicalise B must succeed");
             assert_eq!(
                 canon_a, canon_b,
-                "S111: algebraically-equivalent varieties must canonicalise to equal at iteration {i}",
+                "algebraically-equivalent varieties must canonicalise to equal at iteration {i}",
             );
             // Encode both — bytes must match.
             let mut buf_a = [0u8; 512];
@@ -3185,14 +3183,14 @@ mod tests {
             let n = AbelianVariety2D::<F>::ENCODED_BYTES;
             canon_a
                 .to_bytes_le(&mut buf_a[..n])
-                .expect("S111: encode A must succeed");
+                .expect("encode A must succeed");
             canon_b
                 .to_bytes_le(&mut buf_b[..n])
-                .expect("S111: encode B must succeed");
+                .expect("encode B must succeed");
             assert_eq!(
                 &buf_a[..n],
                 &buf_b[..n],
-                "S111: canonicalised algebraically-equivalent varieties must encode to identical bytes at iteration {i}",
+                "canonicalised algebraically-equivalent varieties must encode to identical bytes at iteration {i}",
             );
         }
     }
@@ -3228,7 +3226,7 @@ mod tests {
         assert_eq!(
             v.canonicalise(),
             None,
-            "S111: canonicalise must return None when theta_null.x is zero",
+            "canonicalise must return None when theta_null.x is zero",
         );
     }
 
@@ -3267,7 +3265,7 @@ mod tests {
             };
             assert!(
                 bool::from(v.project_equals(&v)),
-                "S112: AbelianVariety2D::project_equals must be reflexive at iteration {i}",
+                "AbelianVariety2D::project_equals must be reflexive at iteration {i}",
             );
         }
     }
@@ -3322,7 +3320,7 @@ mod tests {
             };
             assert!(
                 bool::from(v_a.project_equals(&v_b)),
-                "S112: project_equals must absorb non-zero theta-null scaling at iteration {i}",
+                "project_equals must absorb non-zero theta-null scaling at iteration {i}",
             );
         }
     }
@@ -3366,7 +3364,7 @@ mod tests {
             };
             assert!(
                 !bool::from(v_a.project_equals(&v_b)),
-                "S112: project_equals must distinguish independent random varieties at iteration {i}",
+                "project_equals must distinguish independent random varieties at iteration {i}",
             );
         }
     }
@@ -3410,7 +3408,7 @@ mod tests {
             };
             assert!(
                 bool::from(v.project_equals(&canon)),
-                "S112: project_equals(v, canonicalise(v)) must be TRUE at iteration {i}",
+                "project_equals(v, canonicalise(v)) must be TRUE at iteration {i}",
             );
         }
     }
@@ -3471,13 +3469,13 @@ mod tests {
             let mut buf_b = [0u8; 512];
             let n = AbelianVariety2D::<F>::ENCODED_BYTES;
             v_a.canonicalise_to_bytes(&mut buf_a[..n])
-                .expect("S113: A canonicalise_to_bytes must succeed");
+                .expect("A canonicalise_to_bytes must succeed");
             v_b.canonicalise_to_bytes(&mut buf_b[..n])
-                .expect("S113: B canonicalise_to_bytes must succeed");
+                .expect("B canonicalise_to_bytes must succeed");
             assert_eq!(
                 &buf_a[..n],
                 &buf_b[..n],
-                "S113: canonicalise_to_bytes must yield identical bytes for algebraically-equivalent varieties at iteration {i}",
+                "canonicalise_to_bytes must yield identical bytes for algebraically-equivalent varieties at iteration {i}",
             );
         }
     }
@@ -3516,7 +3514,7 @@ mod tests {
         assert_eq!(
             r,
             Err(Error::InvalidThetaNull),
-            "S113: canonicalise_to_bytes must return InvalidThetaNull when theta_null.x is zero",
+            "canonicalise_to_bytes must return InvalidThetaNull when theta_null.x is zero",
         );
     }
 
@@ -3548,7 +3546,7 @@ mod tests {
         };
         let theta_null = ThetaPoint2D::<F>::new(mk(b"cu-x"), mk(b"cu-y"), mk(b"cu-z"), mk(b"cu-w"));
         let v = AbelianVariety2D::<F>::from_theta_null(theta_null)
-            .expect("S113: theta-null must be non-degenerate for test");
+            .expect("theta-null must be non-degenerate for test");
         let mut tiny = [0u8; 1];
         let r = v.canonicalise_to_bytes(&mut tiny);
         assert_eq!(
@@ -3557,7 +3555,7 @@ mod tests {
                 required: AbelianVariety2D::<F>::ENCODED_BYTES,
                 provided: 1,
             }),
-            "S113: canonicalise_to_bytes must reject undersized buffer",
+            "canonicalise_to_bytes must reject undersized buffer",
         );
     }
 
@@ -3578,7 +3576,7 @@ mod tests {
         check_canonicalise_to_bytes_rejects_undersized_buffer::<Fp5Element>();
     }
 
-    // S152 — ThetaPoint2D::is_product method tests.
+    // ThetaPoint2D::is_product method tests.
 
     #[test]
     fn is_product_accepts_product_theta_point_at_lvl1() {
@@ -3599,7 +3597,7 @@ mod tests {
         let p = ThetaPoint2D::new(small(2), small(3), small(6), small(9));
         assert!(
             bool::from(p.is_product()),
-            "S152: (2, 3, 6, 9) satisfies x·w=y·z; method must return TRUE",
+            "(2, 3, 6, 9) satisfies x·w=y·z; method must return TRUE",
         );
     }
 
@@ -3620,11 +3618,11 @@ mod tests {
         let p = ThetaPoint2D::new(small(2), small(3), small(5), small(7));
         assert!(
             !bool::from(p.is_product()),
-            "S152: (2, 3, 5, 7) violates product identity; method must return FALSE",
+            "(2, 3, 5, 7) violates product identity; method must return FALSE",
         );
     }
 
-    /// S152: confirm the method delegates identically to the free
+    /// Confirm the method delegates identically to the free
     /// function in splitting.rs (same algebraic identity, same result).
     #[test]
     fn is_product_method_matches_free_function_at_lvl1() {
@@ -3645,7 +3643,7 @@ mod tests {
             assert_eq!(
                 bool::from(p.is_product()),
                 bool::from(is_product_theta_point(&p)),
-                "S152: method and free function must agree on ({x}, {y}, {z}, {w})",
+                "method and free function must agree on ({x}, {y}, {z}, {w})",
             );
         }
     }

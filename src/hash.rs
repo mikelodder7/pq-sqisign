@@ -422,7 +422,7 @@ mod tests {
         assert_ne!(q.re, q.im);
     }
 
-    // ── S85 — Shake256Rng deterministic CryptoRng tests ──
+    // ── Shake256Rng deterministic CryptoRng tests ──
 
     #[test]
     fn shake256_rng_from_seed_is_deterministic() {

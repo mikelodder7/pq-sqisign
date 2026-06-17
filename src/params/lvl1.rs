@@ -21,7 +21,7 @@ const_monty_params!(
 pub type Fp1Element = crypto_bigint::modular::ConstMontyForm<Lvl1Modulus, { Lvl1Modulus::LIMBS }>;
 
 /// Marker type implementing [`Params`] at NIST Level 1.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Level1;
 
 impl Params for Level1 {

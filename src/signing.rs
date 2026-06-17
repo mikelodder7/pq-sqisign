@@ -64,10 +64,8 @@ pub fn protocols_sign<R: CryptoRng>(
     for _attempt in 0..8 {
         // 1. Commitment.
         let Some((e_com, b_com, lideal_commit)) = commit(&wit_ql, 64, 1 << 14, rng) else {
-            std::eprintln!("DIAG sign: commit failed");
             continue;
         };
-        std::eprintln!("DIAG sign: commit ok");
         // 2. Challenge coefficient.
         let chall_coeff = hash_to_challenge(&sk.curve_a, &e_com.a, msg);
         // 3. Challenge ideal (pulled back through the secret key matrix).
@@ -80,7 +78,7 @@ pub fn protocols_sign<R: CryptoRng>(
         // sampler can't satisfy. W=96 (6144 bits) holds the dual-of-dual.
         const W: usize = 96;
         let p_w = crate::params::lvl1::prime().resize::<W>();
-        let Some((resp_w, resp_d_w, lc_w)) = compute_response_quat_element::<W, R>(
+        let Some((resp_w, _resp_d_w, lc_w)) = compute_response_quat_element::<W, R>(
             &widen_ideal_16::<W>(&sk.secret_ideal),
             &widen_ideal_16::<W>(&lideal_chall_two),
             &widen_ideal_16::<W>(&lideal_commit),
@@ -89,32 +87,16 @@ pub fn protocols_sign<R: CryptoRng>(
             1 << 14,
             rng,
         ) else {
-            std::eprintln!("DIAG sign: response_quat failed");
             continue;
         };
         // The integral response is resp_w / resp_d_w; divide out the (reduced)
         // denom, then narrow to L16 for the downstream quaternion steps.
         use crate::quaternion::lattice::narrow_int_lattice;
-        let resp_d = resp_d_w.resize::<16>();
         let mut resp = [crypto_bigint::Int::<16>::from_i64(0); 4];
         for (r16, rw) in resp.iter_mut().zip(resp_w.iter()) {
             *r16 = narrow_int_lattice::<W, 16>(rw);
         }
         let lattice_content = lc_w.resize::<16>();
-        {
-            use crate::quaternion::o0_mul::reduced_norm_o0_basis;
-            let nr = reduced_norm_o0_basis::<16>(&resp, &p16).abs();
-            let lc_nz = crypto_bigint::NonZero::new(lattice_content).unwrap();
-            let (_q, r) = nr.div_rem_vartime(&lc_nz);
-            std::eprintln!(
-                "DIAG sign: resp_d bits={} lc bits={} Nred(resp) bits={} divides={}",
-                resp_d.bits_vartime(),
-                lattice_content.bits_vartime(),
-                nr.bits_vartime(),
-                r == crypto_bigint::Uint::<16>::ZERO,
-            );
-        }
-        std::eprintln!("DIAG sign: response ok");
         // 5. Backtracking. C ref (sign.c:107-117): backtracking = v2(content of
         //    make_primitive(resp)); lattice_content /= 2^backtracking. The aux
         //    (sign.c:144) then uses the FULL resp_quat with the REDUCED
@@ -135,17 +117,14 @@ pub fn protocols_sign<R: CryptoRng>(
             HD,
         ) {
             Ok(h) => h,
-            Err(e) => {
-                std::eprintln!("DIAG sign: aux_norm_helpers failed: {e:?}");
+            Err(_) => {
                 continue;
             }
         };
         let pow = helpers.pow_dim2_deg_resp;
         let two_resp = helpers.two_resp_length;
         // Common path only: skip degenerate / length-1 / short-chain cases.
-        std::eprintln!("DIAG sign: pow={pow} two_resp={two_resp}");
         if pow == 0 || pow == 1 {
-            std::eprintln!("DIAG sign: pow gate skip");
             continue;
         }
         // 7. Auxiliary isogeny.
@@ -158,10 +137,8 @@ pub fn protocols_sign<R: CryptoRng>(
             1 << 14,
             rng,
         ) else {
-            std::eprintln!("DIAG sign: aux_isogeny failed");
             continue;
         };
-        std::eprintln!("DIAG sign: aux_isogeny ok");
         // 8. Reduce the bases to order 2^(pow + HD + two_resp), then dim-2.
         let reduced_order = (pow + HD + two_resp) as usize;
         let e_diff = u32::try_from(TEP - reduced_order).ok()?;
@@ -171,54 +148,32 @@ pub fn protocols_sign<R: CryptoRng>(
         let Some((codomain, pushed)) = compute_dim2_isogeny_challenge(
             &e_com, &b_com_red, &e_aux, &b_aux_red, &deg_inv, pow, two_resp, rng,
         ) else {
-            std::eprintln!("DIAG sign: dim2_challenge failed");
             continue;
         };
-        std::eprintln!("DIAG sign: dim2 ok");
         // C compute_dim2_isogeny_challenge (sign.c:280) SWAPS the theta factors:
         // E_aux = codomain.E2, E_chall = codomain.E1; B_aux = pushed.P2,
         // B_chall = pushed.P1 ("it should always be the first curve").
         let e_aux2 = codomain.e2;
-        let e_chall2_postdim = codomain.e1; // S351: e_chall2 BEFORE small_chain
         let mut e_chall2 = codomain.e1;
         let b_aux2 = EcBasis::new(pushed[0].p2, pushed[1].p2, pushed[2].p2);
         let mut b_chall2 = EcBasis::new(pushed[0].p1, pushed[1].p1, pushed[2].p1);
-        {
-            let fo = u32::try_from(reduced_order).ok()?;
-            let oa = e_aux2.to_a24();
-            let oc = e_chall2.to_a24();
-            std::eprintln!(
-                "DIAG sign: post-dim2 order f={reduced_order} aux2.P[2^f]=O?{:?} chall2.P[2^f]=O?{:?} chall2.P[2^(f-1)]=O?{:?}",
-                bool::from(oa.x_double_n(&b_aux2.p, fo).is_infinity()),
-                bool::from(oc.x_double_n(&b_chall2.p, fo).is_infinity()),
-                bool::from(oc.x_double_n(&b_chall2.p, fo - 1).is_infinity()),
-            );
-        }
         // 8b. Optional short 2^r response isogeny (two_resp_length > 0).
         if two_resp > 0 {
-            // NOTE (S351): C (sign.c:325) builds the 2^two_resp response ideal
-            // from the FULL resp_quat; using `prim` here is wrong, BUT switching
-            // to `&resp` breaks our kernel (id2iso_ideal_to_kernel_dlogs_even
-            // computes conj(resp)'s action DIRECTLY and full resp has even coords
-            // → non-primitive kernel column → codomain order >2^f). Real fix:
-            // build the ideal O_0·resp + 2^two_resp·O_0 like C. The j(E_chall)
-            // mismatch is UPSTREAM of here (false with both prim and resp), so
-            // keep prim until the dim2/E_chall j-mismatch is resolved.
+            // Divergence from C (sign.c:325): C builds the 2^two_resp response
+            // ideal from the FULL resp_quat, whereas we pass `prim`. Using
+            // `&resp` here breaks our kernel — id2iso_ideal_to_kernel_dlogs_even
+            // computes conj(resp)'s action DIRECTLY, and full resp has even
+            // coords → a non-primitive kernel column → codomain order >2^f. With
+            // `prim` the sign↔verify roundtrip is correct; reproducing C's exact
+            // KAT signature bytes would instead require building the ideal
+            // O_0·resp + 2^two_resp·O_0 as C does.
             let Some((e2, b2)) = crate::verification::compute_small_chain_isogeny_signature(
                 &e_chall2, &b_chall2, &prim, pow, two_resp,
             ) else {
-                std::eprintln!("DIAG sign: small_chain failed");
                 continue;
             };
             e_chall2 = e2;
             b_chall2 = b2;
-            let fo = u32::try_from(reduced_order).ok()?;
-            let oc = e_chall2.to_a24();
-            std::eprintln!(
-                "DIAG sign: post-small_chain chall2.P[2^f]=O?{:?} [2^(f-1)]=O?{:?}",
-                bool::from(oc.x_double_n(&b_chall2.p, fo).is_infinity()),
-                bool::from(oc.x_double_n(&b_chall2.p, fo - 1).is_infinity()),
-            );
         }
         // 9. Recompute E_chall + map the challenge basis onto it.
         let Some((e_chall, b_chall_mapped)) = compute_challenge_codomain_signature(
@@ -229,16 +184,8 @@ pub fn protocols_sign<R: CryptoRng>(
             &e_chall2.a,
             &b_chall2,
         ) else {
-            std::eprintln!("DIAG sign: challenge_codomain failed");
             continue;
         };
-        std::eprintln!(
-            "DIAG sign: codomain ok j(E_chall)==j(e_chall2)?{:?} ==j(e_aux2)?{:?} ==j(e_chall2_postdim,pre-smallchain)?{:?} | j(e_chall2_postdim)==j(e_aux2)?{:?}",
-            e_chall.j_invariant() == e_chall2.j_invariant(),
-            e_chall.j_invariant() == e_aux2.j_invariant(),
-            e_chall.j_invariant() == e_chall2_postdim.j_invariant(),
-            e_chall2_postdim.j_invariant() == e_aux2.j_invariant(),
-        );
         // 10. Assemble + encode the signature.
         let mut sig = SignatureData {
             e_aux_a: e_aux2.a,
@@ -257,10 +204,8 @@ pub fn protocols_sign<R: CryptoRng>(
             &e_chall,
             reduced_order,
         ) {
-            std::eprintln!("DIAG sign: basis_change_matrix failed");
             continue;
         }
-        std::eprintln!("DIAG sign: assemble ok");
         let mut out = [0u8; 148];
         sig.to_bytes_lvl1(&mut out).ok()?;
         return Some(out);

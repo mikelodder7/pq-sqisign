@@ -390,7 +390,7 @@ pub fn prime_norm_box_search<const N: usize, R: rand_core::CryptoRng + ?Sized>(
 /// `J`'s `(basis, denom)` is the unique reduced representation of the
 /// rational lattice `I·ᾱ/c` — so the construction is byte-exact given the
 /// (non-canonical, dpe-faithful) reduced basis the search consumed; true
-/// byte-exactness is finally certified by the end-to-end keygen KAT (S328).
+/// byte-exactness is finally certified by the end-to-end keygen KAT.
 ///
 /// `kat`-gated because the box search consumes the byte-exact interval RNG.
 #[cfg(feature = "kat")]
@@ -419,7 +419,7 @@ pub fn quat_lideal_prime_norm_reduced_equivalent<
 
     let denom_u = denom.abs();
     let (reduced, gram) = lideal_reduce_basis::<N>(basis, &denom_u, norm, p)?;
-    // KEYGEN BYTE-EXACT (S349 C-oracle bisect): for the KAT[0] secret ideal,
+    // KEYGEN BYTE-EXACT (C-oracle bisect): for the KAT[0] secret ideal,
     // our `reduced` shares the real- and j-coordinate entries with C's `red`
     // (e.g. red[0][0]=0x1d8003b4f6a19d62…, red[2][0]=0x1347be71…) but DIFFERS in
     // the i- and k-coordinates (a signed permutation). C `quat_lideal_reduce_basis`
@@ -486,7 +486,7 @@ pub fn quat_lideal_prime_norm_reduced_equivalent<
 /// codomain E_A, so the dim2id2iso spine may consume the small prime-norm `J`
 /// instead of the norm-`N` secret ideal. Returns `(spine_ideal, q)`; the spine
 /// then maps `spine_ideal` to `E_A` = the public key. This composes the
-/// validated byte-exact pieces (S326 create, S327 reduced-equivalent, S328
+/// validated byte-exact pieces (C-oracle create, reduced-equivalent,
 /// bridge) into the full quaternion-side keygen front; the remaining wiring is
 /// the byte-exact sampling of γ at SEC_DEGREE feeding this and the spine's
 /// `sample_random_index`-driven index selection (later sessions).
@@ -699,7 +699,7 @@ mod tests {
     /// Rust `Dpe` reimplementation (f64 mantissa + i32 exponent) reproduces the
     /// C `dpe_t` rounding — and that gcc-double vs LLVM-f64 do NOT diverge on
     /// the size-reduction / Lovász-swap decisions at scale. (dpe EXPONENT-path
-    /// coverage, Gram > 2^1023, is the remaining S332 full-SEC_DEGREE oracle.)
+    /// coverage, Gram > 2^1023, is the remaining full-SEC_DEGREE oracle.)
     #[test]
     fn quat_lll_core_matches_c_oracle_at_scale_mantissa_rounding() {
         const N: usize = 8;
@@ -1070,7 +1070,7 @@ mod tests {
     }
 
     /// Full byte-exact `quat_lideal_prime_norm_reduced_equivalent`: build an
-    /// ideal `I` via `quat_lideal_create` (S326), reduce → box-search →
+    /// ideal `I` via `quat_lideal_create`, reduce → box-search →
     /// conjugate → right-multiply → `J`. INDEPENDENT invariants (mathematical
     /// facts, not the implementation formula): `N(J) = q` is prime, and the
     /// lattice index `[O_0 : J] = 4·|det(J)| / denom_J⁴ = q²` (covolume = N²,
@@ -1244,7 +1244,7 @@ mod tests {
     /// path ≈ N⁴ ≈ 2^2052 and the reduce/box-search Gram ≈ 2^1278 both fit) and
     /// produces a prime-norm spine-ready ideal. INDEPENDENT invariants: q prime
     /// + `[O_0 : I] = |det(basis)|/denom⁴ = q²`. This is the prerequisite for
-    /// the end-to-end keygen → KAT pk run (S335). Heavy (real-scale dpe-LLL +
+    /// the end-to-end keygen → KAT pk run. Heavy (real-scale dpe-LLL +
     /// Miller-Rabin at 3072-bit), hence ignored in the default run.
     #[cfg(feature = "kat")]
     #[ignore = "SEC_DEGREE-scale keygen front (heavy: WIDE=48 sampler + reduce)"]
@@ -1281,7 +1281,7 @@ mod tests {
         );
     }
 
-    /// S350 BYTE-EXACT ORACLE (link 3): feed the C-byte-exact KAT[0] secret
+    /// BYTE-EXACT ORACLE (link 3): feed the C-byte-exact KAT[0] secret
     /// ideal basis (from `quat_lideal_create_matches_c_oracle_kat0`, denom 2,
     /// norm SEC_DEGREE) through our `lideal_reduce_basis` and assert the reduced
     /// basis `red` AND the reduce Gram match the C reference `quat_lideal_reduce_basis`
@@ -1451,7 +1451,7 @@ mod tests {
         assert_eq!(red, c_red, "reduced basis must match C byte-for-byte");
     }
 
-    /// S350 BYTE-EXACT ORACLE (link 4 — the assembly): with the C-byte-exact
+    /// BYTE-EXACT ORACLE (link 4 — the assembly): with the C-byte-exact
     /// reduced basis `red` and the C-selected box-search coord α=[51,32,48,-23]
     /// (q=0x1879c1cc…419, ctr=116), replicate the `quat_lideal_prime_norm_reduced_equivalent`
     /// tail — α=red·coord, conjugate, right-multiply the original ideal, HNF,

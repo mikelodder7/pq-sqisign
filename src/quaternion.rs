@@ -41,8 +41,8 @@
 //!
 //! Coefficients live in `Int<LIMBS>` (`crypto-bigint`'s signed bigint).
 //! The default `LIMBS = 8` (512 bits) is comfortable for Level-1's
-//! 251-bit prime plus typical KLPT lift magnitudes. Higher levels will
-//! parametrise on `LIMBS` once KLPT lands.
+//! 251-bit prime plus typical KLPT lift magnitudes. Higher levels widen
+//! `LIMBS` accordingly.
 
 pub mod algebra;
 pub mod connecting_ideals;

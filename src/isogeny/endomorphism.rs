@@ -592,7 +592,7 @@ fn mat_int8_to_mod_2f(t: &[[crypto_bigint::Int<8>; 2]; 2], f: usize) -> [[U256; 
 /// mod `2^f` from `CURVES_WITH_ENDOMORPHISMS[index].action_gen2/3/4`, and
 /// applies it via [`matrix_application_even_basis`].
 ///
-/// Index mapping (Rust tables are offset-by-one from the C arrays, per S343):
+/// Index mapping (Rust tables are offset-by-one from the C arrays):
 /// `index_alternate_curve == 0` is the standard order `O_0` — delegated to the
 /// validated [`endomorphism_application_even_basis`] (which assumes an integer
 /// `theta`, i.e. `theta_denom == 1`); `index_alternate_curve == k ≥ 1` uses the

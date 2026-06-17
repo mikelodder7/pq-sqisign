@@ -14,8 +14,7 @@
 //!
 //! - [`ThetaSplitting`] — the splitting state (basis-change matrix +
 //!   codomain theta-null).
-//! - [`SplittingError`] — failure modes (currently `NotImplemented`
-//!   until S146+ tables port).
+//! - [`SplittingError`] — failure modes.
 //! - [`base_change_matrix_multiplication`] — 4×4 matrix product over
 //!   `Fp2<F>`. Real testable infrastructure (S145 advisor's
 //!   α-with-real-infrastructure scope).
@@ -23,25 +22,11 @@
 //!   between two basis-change matrices. CT-relevant in the splitting
 //!   base path because `U_cst == 0` is secret-derived for chains
 //!   produced on the signing side.
-//! - [`splitting_compute`] — main entry. Currently
-//!   `Err(SplittingError::NotImplemented)` pending the four constant
-//!   tables (`EVEN_INDEX`, `CHI_EVAL`, `SPLITTING_TRANSFORMS`,
-//!   `NORMALIZATION_TRANSFORMS`) to be ported from the C reference
-//!   in a follow-up session.
-//!
-//! # S145 advisor scope decision
-//!
-//! The full `splitting_compute` body requires four constant tables
-//! that aren't accessible in /tmp/. Per S145 advisor, the β path
-//! (mathematically derive the tables now) is a trap: derived
-//! orderings are unvalidatable against the C reference's arbitrary
-//! convention, and S146's `SPLITTING_TRANSFORMS[i]` indexes by the
-//! SAME `i` — a mismatch silently misaligns and surfaces only at
-//! chain-integration KAT stage. Instead, ship the α-real path: real
-//! testable helpers (`base_change_matrix_multiplication`,
-//! `select_base_change_matrix`) as new infrastructure, with
-//! `splitting_compute` returning `Err(NotImplemented)` until S146
-//! ports tables from the C reference's accessible source.
+//! - [`splitting_compute`] — main entry. Enumerates the 10 even
+//!   characteristics over four constant tables (`EVEN_INDEX`,
+//!   `CHI_EVAL`, `SPLITTING_TRANSFORMS`, `NORMALIZATION_TRANSFORMS`,
+//!   ported from the C reference) to build the splitting base-change
+//!   matrix and codomain theta-null.
 
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 
@@ -77,8 +62,7 @@ impl<F: BaseField> ThetaSplitting<F> {
     /// variety back to an elliptic product.
     ///
     /// Method-form alias of [`splitting_compute`]. Constructor for
-    /// the splitting state; currently returns
-    /// `Err(SplittingError::NotImplemented)` pending S148+ tables port.
+    /// the splitting state; delegates to [`splitting_compute`].
     #[allow(dead_code)]
     pub(crate) fn compute(
         domain: &AbelianVariety2D<F>,
@@ -92,9 +76,9 @@ impl<F: BaseField> ThetaSplitting<F> {
 /// Failure modes for [`splitting_compute`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum SplittingError {
-    /// The full body of `splitting_compute` is not yet implemented.
-    /// (Retained for API stability; the body landed in S246 — current
-    /// failure modes are the more specific variants below.)
+    /// Vestigial variant retained for API stability. `splitting_compute`
+    /// is implemented and never returns this; live failures use the more
+    /// specific variants below.
     NotImplemented,
     /// No even characteristic had a vanishing `U_cst` (or more than one
     /// did): `count != 1`. The input variety is not splittable into an
@@ -368,30 +352,7 @@ pub(crate) fn select_base_change_matrix<F: BaseField>(
 /// Compute the splitting isogeny from a `(2, 2)`-theta-coord variety
 /// back to an elliptic product.
 ///
-/// # Current scope (S145)
-///
-/// Currently returns `Err(SplittingError::NotImplemented)`. The full
-/// body requires four constant tables (`EVEN_INDEX[10][2]`,
-/// `CHI_EVAL[6][4]`, `SPLITTING_TRANSFORMS[10]`,
-/// `NORMALIZATION_TRANSFORMS[6]`) to be ported from the C
-/// reference's compiled-constants header, which isn't accessible
-/// from /tmp/ in this session. Per S145 advisor: deriving the
-/// tables mathematically is a trap because the ORDERING must match
-/// the C reference's arbitrary convention to align with the
-/// SPLITTING_TRANSFORMS index lookup.
-///
-/// # Future scope (S146+)
-///
-/// 1. Port `EVEN_INDEX[10][2]` and `CHI_EVAL[6][4]` from C ref.
-/// 2. Port `SPLITTING_TRANSFORMS[10]` (each a `BasisChangeMatrix<F>`).
-/// 3. Port `NORMALIZATION_TRANSFORMS[6]` (signing-path randomization,
-///    feature-gated under `sign`).
-/// 4. Wire body: enumerate `i in 0..10`; compute `U_cst`; CT-select
-///    `SPLITTING_TRANSFORMS[i]` into `M` when `U_cst == 0`; final
-///    `apply_isomorphism(b_null, M, domain.null)`; return
-///    `Ok(ThetaSplitting { m, b_null })`.
-///
-/// Reference: `theta_isogenies.c:splitting_compute` (S246 wires the body).
+/// Reference: `theta_isogenies.c:splitting_compute`.
 ///
 /// Algorithm (mirrors the C ref verbatim): for each of the 10 even
 /// characteristics `i`, accumulate `U_cst = Σ_t ±(θ[t]·θ[t ^ EVEN_INDEX[i][1]])`
@@ -409,11 +370,10 @@ pub(crate) fn select_base_change_matrix<F: BaseField>(
 /// failure immediately (the C ref's `zero_index != -1` branch).
 ///
 /// `randomize`: signing-path randomization (C ref's `ENABLE_SIGN`
-/// block). NOT yet supported here — it needs an RNG and the
-/// `sample_random_index` plumbing that this signature lacks; requesting
-/// it returns `Err(RandomizeUnsupported)` (the verifiable non-random
-/// path — verification + the response side — is complete). [S247 docket:
-/// thread an RNG + wire the NORMALIZATION_TRANSFORMS randomize block.]
+/// block). This no-RNG entry does not support it — requesting it
+/// returns `Err(RandomizeUnsupported)`; the randomized split lives in
+/// [`splitting_compute_randomized`], which threads an RNG and wires the
+/// `NORMALIZATION_TRANSFORMS` block.
 // `t` indexes CHI_EVAL's row AND (XOR-paired) the theta coordinates —
 // enumerate() over one would obscure the C-ref-faithful indexed access.
 #[allow(dead_code)]
@@ -618,12 +578,11 @@ fn sample_random_index<R: CryptoRng>(rng: &mut R) -> usize {
 }
 
 // ---------------------------------------------------------------------
-// S244: splitting constant tables (ported verbatim from the C reference
+// Splitting constant tables (ported verbatim from the C reference
 // `src/precomp/ref/lvl1/hd_splitting_transforms.c`, which is byte-
 // identical across lvl1/3/5 — these are LEVEL-INDEPENDENT small-integer
 // index tables, NOT field constants). Fetched via research agent from
-// github.com/SQISign/the-sqisign (the S147-era "/tmp/ inaccessible"
-// blocker was moot — see S243/S244 Decisions).
+// github.com/SQISign/the-sqisign.
 //
 // The matrix entries are INDEX CODES into the 5-element fp2 constant
 // table `{0, 1, i, -1, -i}` (see `FP2_CONST_CODE_*` below); the C ref's
@@ -856,13 +815,13 @@ mod tests {
         }
     } // mod randomized
 
-    /// S245: both transform tables are valid code-tables — every entry
+    /// both transform tables are valid code-tables — every entry
     /// is a code in 0..=4, the dimensions match the C ref (10 splitting,
     /// 6 normalization), and the documented identities hold
     /// (`SPLITTING_TRANSFORMS[9]` and `NORMALIZATION_TRANSFORMS[0]` are
     /// the identity in code form: 1 on the diagonal, 0 off).
     #[test]
-    fn s245_transform_tables_well_formed() {
+    fn transform_tables_well_formed() {
         assert_eq!(SPLITTING_TRANSFORMS.len(), 10);
         assert_eq!(NORMALIZATION_TRANSFORMS.len(), 6);
         let id_codes = [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]];
@@ -886,13 +845,13 @@ mod tests {
         }
     }
 
-    /// S245: `base_change_from_codes` decodes a code-table to an
+    /// `base_change_from_codes` decodes a code-table to an
     /// `Fp2` `BasisChangeMatrix` correctly — the identity code-table
     /// yields the Fp2 identity matrix (1 on the diagonal, 0 off), and a
     /// mixed entry (`SPLITTING_TRANSFORMS[0][0]` = codes [1,2,1,2] =
     /// [1, i, 1, i]) decodes to the matching Fp2 values.
     #[test]
-    fn s245_base_change_from_codes_decodes_correctly() {
+    fn base_change_from_codes_decodes_correctly() {
         // Identity table → Fp2 identity.
         let id = base_change_from_codes::<Fp1Element>(&SPLITTING_TRANSFORMS[9]);
         for r in 0..4 {
@@ -921,10 +880,10 @@ mod tests {
         assert!(bool::from(m1.m[3][1].is_neg_one()), "[3][1] code 3 → -1");
     }
 
-    /// S244: `EVEN_INDEX` has the C-ref shape + values — 10 even theta
+    /// `EVEN_INDEX` has the C-ref shape + values — 10 even theta
     /// characteristics, each `[chi_row ∈ 0..4, xor_index ∈ 0..4]`.
     #[test]
-    fn s244_even_index_matches_c_ref() {
+    fn even_index_matches_c_ref() {
         assert_eq!(EVEN_INDEX.len(), 10, "10 even characteristics");
         for [chi_row, xor_idx] in EVEN_INDEX {
             assert!(chi_row < 4, "chi_row indexes CHI_EVAL's 4 rows");
@@ -935,10 +894,10 @@ mod tests {
         assert_eq!(EVEN_INDEX[9], [3, 3]);
     }
 
-    /// S244: `CHI_EVAL` is the 4×4 Hadamard character matrix (entries
+    /// `CHI_EVAL` is the 4×4 Hadamard character matrix (entries
     /// ±1; rows mutually orthogonal; row 0 all +1).
     #[test]
-    fn s244_chi_eval_is_hadamard() {
+    fn chi_eval_is_hadamard() {
         for row in CHI_EVAL {
             for v in row {
                 assert!(v == 1 || v == -1, "entries are ±1");
@@ -958,10 +917,10 @@ mod tests {
         }
     }
 
-    /// S244: the `FP2_CODE_*` → `Fp2` mapping yields exactly
+    /// the `FP2_CODE_*` → `Fp2` mapping yields exactly
     /// `{0, 1, i, -1, -i}`, and the negation/identity relations hold.
     #[test]
-    fn s244_fp2_from_code_yields_unit_constants() {
+    fn fp2_from_code_yields_unit_constants() {
         let zero = fp2_from_code::<Fp1Element>(FP2_CODE_ZERO);
         let one = fp2_from_code::<Fp1Element>(FP2_CODE_ONE);
         let im = fp2_from_code::<Fp1Element>(FP2_CODE_I);
@@ -1017,7 +976,7 @@ mod tests {
             [41, 43, 47, 53],
         ]);
         let result = base_change_matrix_multiplication(&i, &a);
-        assert_eq!(result, a, "S145: I · A = A");
+        assert_eq!(result, a, "I · A = A");
     }
 
     #[test]
@@ -1030,7 +989,7 @@ mod tests {
             [41, 43, 47, 53],
         ]);
         let result = base_change_matrix_multiplication(&a, &i);
-        assert_eq!(result, a, "S145: A · I = A");
+        assert_eq!(result, a, "A · I = A");
     }
 
     /// Independent oracle: hand-computed `A · B` for two small-int
@@ -1059,7 +1018,7 @@ mod tests {
         let result = base_change_matrix_multiplication(&a, &b);
         assert_eq!(
             result, expected,
-            "S145: A · B with B as column-shift matrix must shift A's columns",
+            "A · B with B as column-shift matrix must shift A's columns",
         );
     }
 
@@ -1068,7 +1027,7 @@ mod tests {
         let a = from_u32_grid([[2, 0, 0, 0], [0, 3, 0, 0], [0, 0, 5, 0], [0, 0, 0, 7]]);
         let b = identity_4x4();
         let result = select_base_change_matrix(&a, &b, Choice::from(0));
-        assert_eq!(result, a, "S145: Choice::FALSE selects first argument");
+        assert_eq!(result, a, "Choice::FALSE selects first argument");
     }
 
     #[test]
@@ -1076,7 +1035,7 @@ mod tests {
         let a = from_u32_grid([[2, 0, 0, 0], [0, 3, 0, 0], [0, 0, 5, 0], [0, 0, 0, 7]]);
         let b = identity_4x4();
         let result = select_base_change_matrix(&a, &b, Choice::from(1));
-        assert_eq!(result, b, "S145: Choice::TRUE selects second argument");
+        assert_eq!(result, b, "Choice::TRUE selects second argument");
     }
 
     /// CT property check: selecting between A and B with Choice::TRUE
@@ -1095,16 +1054,15 @@ mod tests {
         let recovered = select_base_change_matrix(&intermediate, &a, Choice::from(1));
         assert_eq!(
             recovered, a,
-            "S145: TRUE-select B then TRUE-select A round-trips to A",
+            "TRUE-select B then TRUE-select A round-trips to A",
         );
     }
 
-    /// S246: the all-zero theta-null is degenerate — every `U_cst`
+    /// The all-zero theta-null is degenerate — every `U_cst`
     /// vanishes (all coordinate products are 0), so `count == 10 != 1`
-    /// and `splitting_compute` reports `NotSplittable` (not the old
-    /// `NotImplemented` stub, now that the body is wired).
+    /// and `splitting_compute` reports `NotSplittable`.
     #[test]
-    fn s246_splitting_all_zero_null_is_not_splittable() {
+    fn splitting_all_zero_null_is_not_splittable() {
         let null = ThetaPoint2D::new(
             Fp2::<Fp1Element>::zero(),
             Fp2::<Fp1Element>::zero(),
@@ -1119,11 +1077,11 @@ mod tests {
         );
     }
 
-    /// S246: the signing-path `randomize` flag is not yet supported (it
+    /// the signing-path `randomize` flag is not yet supported (it
     /// needs an RNG this signature doesn't thread); requesting it yields
     /// `RandomizeUnsupported`, NOT a silent wrong split.
     #[test]
-    fn s246_splitting_randomize_unsupported() {
+    fn splitting_randomize_unsupported() {
         let null = ThetaPoint2D::new(
             Fp2::<Fp1Element>::one(),
             Fp2::<Fp1Element>::one(),
@@ -1138,7 +1096,7 @@ mod tests {
         );
     }
 
-    /// S246: a known-splittable theta-null splits with exactly one
+    /// a known-splittable theta-null splits with exactly one
     /// vanishing characteristic (count==1 → Ok), and the resulting
     /// codomain null is a valid product theta point (`x·w == y·z`).
     ///
@@ -1153,7 +1111,7 @@ mod tests {
     /// null (it does NOT hard-code which `i`, to avoid over-constraining
     /// the port; the contract is count==1 + product output).
     #[test]
-    fn s246_splitting_all_ones_null_produces_product() {
+    fn splitting_all_ones_null_produces_product() {
         let one = Fp2::<Fp1Element>::one();
         let null = ThetaPoint2D::new(one, one, one, one);
         let domain = AbelianVariety2D::new(null, null);
@@ -1175,7 +1133,7 @@ mod tests {
         }
     }
 
-    // S146 — post-splitting extraction tests.
+    // Post-splitting extraction tests.
     // is_product_theta_point + theta_product_structure_to_elliptic_product
     // + theta_point_to_montgomery_point.
 
@@ -1195,7 +1153,7 @@ mod tests {
         let p = ThetaPoint2D::new(small_fp2(2), small_fp2(3), small_fp2(6), small_fp2(9));
         assert!(
             bool::from(is_product_theta_point(&p)),
-            "S146: (2, 3, 6, 9) satisfies x·w=18=y·z; must be product",
+            "(2, 3, 6, 9) satisfies x·w=18=y·z; must be product",
         );
     }
 
@@ -1206,7 +1164,7 @@ mod tests {
         let p = ThetaPoint2D::new(small_fp2(2), small_fp2(3), small_fp2(5), small_fp2(7));
         assert!(
             !bool::from(is_product_theta_point(&p)),
-            "S146: (2, 3, 5, 7) violates product identity (14 ≠ 15); must be non-product",
+            "(2, 3, 5, 7) violates product identity (14 ≠ 15); must be non-product",
         );
     }
 
@@ -1218,7 +1176,7 @@ mod tests {
         assert_eq!(
             result,
             Err(ExtractionError::NotProductTheta),
-            "S146: non-product null must be rejected as NotProductTheta",
+            "non-product null must be rejected as NotProductTheta",
         );
     }
 
@@ -1233,7 +1191,7 @@ mod tests {
         assert_eq!(
             result,
             Err(ExtractionError::ZeroNullCoordinate),
-            "S146: all-zero null must be rejected as ZeroNullCoordinate",
+            "all-zero null must be rejected as ZeroNullCoordinate",
         );
     }
 
@@ -1246,7 +1204,7 @@ mod tests {
         let null = ThetaPoint2D::new(small_fp2(1), small_fp2(2), small_fp2(3), small_fp2(6));
         let domain = AbelianVariety2D::new(null, null);
         let result = theta_product_structure_to_elliptic_product(&domain);
-        let cc = result.expect("S146: valid product null must extract Ok");
+        let cc = result.expect("valid product null must extract Ok");
         // Sanity: both curves have a non-zero (well, possibly any) a.
         // The exact a value isn't easily hand-computed but we can verify
         // it's been computed (i.e., not infinity/garbage). Confirm the
@@ -1268,7 +1226,7 @@ mod tests {
         let null = ThetaPoint2D::new(small_fp2(1), small_fp2(2), small_fp2(3), small_fp2(6));
         let domain = AbelianVariety2D::new(null, null);
         let cc = theta_product_structure_to_elliptic_product(&domain)
-            .expect("S146: extraction must succeed");
+            .expect("extraction must succeed");
 
         // For E_2: a_2 · C_2 = A_2 where C_2 = x^4 - y^4, A_2 = -2(x^4 + y^4).
         let x_4 = small_fp2(1);
@@ -1279,7 +1237,7 @@ mod tests {
         assert_eq!(
             cc.e2.a.mul(&c_2),
             a_2_expected,
-            "S146: a_2 · C_2 must equal A_2 (round-trip via projective form)",
+            "a_2 · C_2 must equal A_2 (round-trip via projective form)",
         );
 
         let c_1 = x_4.sub(&z_4);
@@ -1287,7 +1245,7 @@ mod tests {
         assert_eq!(
             cc.e1.a.mul(&c_1),
             a_1_expected,
-            "S146: a_1 · C_1 must equal A_1 (round-trip via projective form)",
+            "a_1 · C_1 must equal A_1 (round-trip via projective form)",
         );
     }
 
@@ -1300,7 +1258,7 @@ mod tests {
         assert_eq!(
             result,
             Err(ExtractionError::NotProductTheta),
-            "S146: non-product P must be rejected",
+            "non-product P must be rejected",
         );
     }
 
@@ -1315,11 +1273,11 @@ mod tests {
         assert_eq!(
             result,
             Err(ExtractionError::AllZeroPoint),
-            "S146: all-zero P with all-zero fallback must be AllZeroPoint",
+            "all-zero P with all-zero fallback must be AllZeroPoint",
         );
     }
 
-    // S168 — BasisChangeMatrix::identity + is_identity.
+    // BasisChangeMatrix::identity + is_identity.
 
     #[test]
     fn basis_change_matrix_identity_constructor_matches_identity_grid_at_lvl1() {
@@ -1327,7 +1285,7 @@ mod tests {
         let via_grid = identity_4x4();
         assert_eq!(
             via_method, via_grid,
-            "S168: identity() must equal hand-built identity grid",
+            "identity() must equal hand-built identity grid",
         );
     }
 
@@ -1340,8 +1298,8 @@ mod tests {
             [23, 29, 31, 37],
             [41, 43, 47, 53],
         ]);
-        assert_eq!(i.mul(&a), a, "S168: I · A = A");
-        assert_eq!(a.mul(&i), a, "S168: A · I = A");
+        assert_eq!(i.mul(&a), a, "I · A = A");
+        assert_eq!(a.mul(&i), a, "A · I = A");
     }
 
     #[test]
@@ -1349,7 +1307,7 @@ mod tests {
         let i = BasisChangeMatrix::<Fp1Element>::identity();
         assert!(
             bool::from(i.is_identity()),
-            "S168: identity().is_identity() must be TRUE",
+            "identity().is_identity() must be TRUE",
         );
     }
 
@@ -1359,17 +1317,17 @@ mod tests {
         let m = from_u32_grid([[2, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]);
         assert!(
             !bool::from(m.is_identity()),
-            "S168: diag-(2,1,1,1) is NOT identity",
+            "diag-(2,1,1,1) is NOT identity",
         );
         // Identity-shape with one off-diagonal non-zero
         let m2 = from_u32_grid([[1, 1, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]);
         assert!(
             !bool::from(m2.is_identity()),
-            "S168: identity with one off-diagonal 1 is NOT identity",
+            "identity with one off-diagonal 1 is NOT identity",
         );
     }
 
-    // S154 — BasisChangeMatrix method-form alias tests.
+    // BasisChangeMatrix method-form alias tests.
 
     #[test]
     fn basis_change_matrix_mul_method_matches_free_function_at_lvl1() {
@@ -1384,13 +1342,13 @@ mod tests {
         let via_free = base_change_matrix_multiplication(&a, &b);
         assert_eq!(
             via_method, via_free,
-            "S154: a.mul(&b) must match base_change_matrix_multiplication(&a, &b)",
+            "a.mul(&b) must match base_change_matrix_multiplication(&a, &b)",
         );
     }
 
-    // S155 — extraction method-form alias tests.
+    // Extraction method-form alias tests.
 
-    // S159 — ThetaSplitting::compute method-form alias test.
+    // ThetaSplitting::compute method-form alias test.
 
     #[test]
     fn theta_splitting_compute_method_matches_free_function_at_lvl1() {
@@ -1406,7 +1364,7 @@ mod tests {
         let via_free = splitting_compute(&domain, None, false);
         assert_eq!(
             via_method, via_free,
-            "S159: ThetaSplitting::compute must match splitting_compute free function (both return NotImplemented currently)",
+            "ThetaSplitting::compute must match the splitting_compute free function",
         );
     }
 
@@ -1419,7 +1377,7 @@ mod tests {
         let via_free = theta_product_structure_to_elliptic_product(&domain);
         assert_eq!(
             via_method, via_free,
-            "S155: domain.to_elliptic_product() must match free function",
+            "domain.to_elliptic_product() must match free function",
         );
     }
 
@@ -1433,7 +1391,7 @@ mod tests {
         let via_free = theta_point_to_montgomery_point(&p, &domain);
         assert_eq!(
             via_method, via_free,
-            "S155: p.to_montgomery_point_on(&domain) must match free function",
+            "p.to_montgomery_point_on(&domain) must match free function",
         );
     }
 
@@ -1447,7 +1405,7 @@ mod tests {
         assert_eq!(
             domain.to_elliptic_product(),
             Err(ExtractionError::NotProductTheta),
-            "S155: method propagates NotProductTheta",
+            "method propagates NotProductTheta",
         );
 
         let bad_p = ThetaPoint2D::new(small_fp2(2), small_fp2(3), small_fp2(5), small_fp2(7));
@@ -1458,7 +1416,7 @@ mod tests {
         assert_eq!(
             bad_p.to_montgomery_point_on(&good_domain),
             Err(ExtractionError::NotProductTheta),
-            "S155: method propagates NotProductTheta on the point side",
+            "method propagates NotProductTheta on the point side",
         );
     }
 
@@ -1472,7 +1430,7 @@ mod tests {
             let via_free = select_base_change_matrix(&a, &b, choice);
             assert_eq!(
                 via_method, via_free,
-                "S154: a.select(&b, Choice::{label}) must match select_base_change_matrix",
+                "a.select(&b, Choice::{label}) must match select_base_change_matrix",
             );
         }
     }
@@ -1485,26 +1443,26 @@ mod tests {
         let null = ThetaPoint2D::new(small_fp2(1), small_fp2(2), small_fp2(3), small_fp2(6));
         let domain = AbelianVariety2D::new(null, null);
         let result = theta_point_to_montgomery_point(&p, &domain);
-        let cmp = result.expect("S146: valid product P + valid null must extract Ok");
+        let cmp = result.expect("valid product P + valid null must extract Ok");
         // Per formula:
         //   P_2.X = null.y · P.x + null.x · P.y = 2·1 + 1·2 = 4
         //   P_2.Z = null.x · P.y - null.y · P.x = 1·2 - 2·1 = 0
         //   P_1.X = null.z · P.x + null.x · P.z = 3·1 + 1·3 = 6
         //   P_1.Z = null.x · P.z - null.z · P.x = 1·3 - 3·1 = 0
-        assert_eq!(cmp.p2.x, small_fp2(4), "S146: P_2.X = 4");
-        assert_eq!(cmp.p2.z, Fp2::<Fp1Element>::zero(), "S146: P_2.Z = 0");
-        assert_eq!(cmp.p1.x, small_fp2(6), "S146: P_1.X = 6");
-        assert_eq!(cmp.p1.z, Fp2::<Fp1Element>::zero(), "S146: P_1.Z = 0");
+        assert_eq!(cmp.p2.x, small_fp2(4), "P_2.X = 4");
+        assert_eq!(cmp.p2.z, Fp2::<Fp1Element>::zero(), "P_2.Z = 0");
+        assert_eq!(cmp.p1.x, small_fp2(6), "P_1.X = 6");
+        assert_eq!(cmp.p1.z, Fp2::<Fp1Element>::zero(), "P_1.Z = 0");
     }
 
-    /// S350: are the split theta-null points (C reference vs ours) the SAME
+    /// are the split theta-null points (C reference vs ours) the SAME
     /// projective point? Captured raw 4-coords at the randomized split entry for
     /// KAT[0] (C `splitting_compute` A->null_point {x,y,z,t} CDUMP6; ours
     /// `domain.theta_null` {x,y,z,w} OURS_TNR). Proportional ⟺ Cy·Ox==Oy·Cx etc.
     /// (X≠0 in both). Match ⟹ bug is in the split matrix M / tables; differ ⟹
     /// the (2,2)-chain walk produced a different theta structure (kernel/gluing).
     #[test]
-    fn s350_theta_null_proportionality() {
+    fn theta_null_proportionality() {
         use subtle::ConstantTimeEq;
         fn hx(s: &str) -> Fp2<Fp1Element> {
             let bytes: Vec<u8> = (0..s.len() / 2)
@@ -1512,7 +1470,7 @@ mod tests {
                 .collect();
             Option::<Fp2<Fp1Element>>::from(Fp2::<Fp1Element>::from_bytes_le(&bytes)).unwrap()
         }
-        // S351: compute_4 INPUT domain-null (KAT[0], first (0,0) combine step).
+        // compute_4 INPUT domain-null (KAT[0], first (0,0) combine step).
         let cx = hx(
             "a988f13a4cc111eed5baa2257093e5cf1e89fb1e91e973c23c3d00f714ab6301b14e31c7f8489e8368386804ff4f47f6a6f51c139946319528d04483491d7901",
         );
@@ -1549,9 +1507,9 @@ mod tests {
         // Swap hypothesis: our z ↔ C t, our w ↔ C z
         let sz = eq(&ct, &oz, &cx, &ox); // C.T/X == our Z/X
         let sw = eq(&cz, &ow, &cx, &ox); // C.Z/X == our W/X
-        std::eprintln!("S350 DIRECT: Y={dy} Z={dz} T/W={dt}  |  SWAP(z<->w): zT={sz} wZ={sw}");
+        std::eprintln!("DIRECT: Y={dy} Z={dz} T/W={dt}  |  SWAP(z<->w): zT={sz} wZ={sw}");
 
-        // S351 cont.9: is the φ_u eval output bas_u PROPORTIONAL to C (same
+        // Is the φ_u eval output bas_u PROPORTIONAL to C (same
         // point, scale-only) for P and Q? eq(Cx,Ox,Cz,Oz) = Cx/Cz==Ox/Oz (affine).
         let cpx = hx(
             "d51fd75b39666260d2d24f75fcd0d6e9d8fae9e921df637528dbc8895e228601a8756c7e76a390f4f07af73fd929693ad8c1a246b03d54760e99a60ac816d403",
@@ -1579,33 +1537,33 @@ mod tests {
         );
         let p_prop = eq(&cpx, &opx, &cpz, &opz);
         let q_prop = eq(&cqx, &oqx, &cqz, &oqz);
-        std::eprintln!("S351 phi_u bas_u proportional to C: P={p_prop} Q={q_prop}");
+        std::eprintln!("phi_u bas_u proportional to C: P={p_prop} Q={q_prop}");
         // Is the scale ρ GLOBAL (same for P and Q)? ρ_P==ρ_Q ⟺ our_P/C_P == our_Q/C_Q.
         let global_x = eq(&opx, &oqx, &cpx, &cqx); // opx/cpx == oqx/cqx
         let global_z = eq(&opz, &oqz, &cpz, &cqz);
         // Cross-check ρ from x equals ρ from z (a true scalar ρ scales both): opx/cpx==opz/cpz
         let p_rho_xz = eq(&opx, &opz, &cpx, &cpz);
         std::eprintln!(
-            "S351 phi_u scale: global(P~Q) x={global_x} z={global_z}; P ρ_x==ρ_z = {p_rho_xz}"
+            "phi_u scale: global(P~Q) x={global_x} z={global_z}; P ρ_x==ρ_z = {p_rho_xz}"
         );
         // Measure ρ = our_P.x / C_P.x  (and from z) — is it a recognizable constant?
         let rho_x = opx.mul(&cpx.invert().unwrap());
         let rho_z = opz.mul(&cpz.invert().unwrap());
         let mut rb = [0u8; 64];
         rho_x.to_bytes_le(&mut rb);
-        std::eprint!("S351 rho_x=");
+        std::eprint!("rho_x=");
         for b in rb {
             std::eprint!("{b:02x}");
         }
         std::eprintln!();
         rho_z.to_bytes_le(&mut rb);
-        std::eprint!("S351 rho_z=");
+        std::eprint!("rho_z=");
         for b in rb {
             std::eprint!("{b:02x}");
         }
         std::eprintln!();
         std::eprintln!(
-            "S351 rho_x==rho_z (true scalar): {}",
+            "rho_x==rho_z (true scalar): {}",
             bool::from(rho_x.ct_eq(&rho_z))
         );
         // φ_u codomain CURVE model: does C's A/C == our Fu.E1.a (affine A/C)?
@@ -1620,7 +1578,7 @@ mod tests {
         );
         let c_fu_affine = c_fua.mul(&c_fuc.invert().unwrap());
         std::eprintln!(
-            "S351 phi_u CURVE A/C matches C: {}",
+            "phi_u CURVE A/C matches C: {}",
             bool::from(c_fu_affine.ct_eq(&ours_fua))
         );
         // Innermost: B0 (E0 basis, control) + Bth (θ-applied) — proportional to C? (same point)
@@ -1650,24 +1608,24 @@ mod tests {
         );
         let b0_prop = eq(&c_b0px, &o_b0px, &c_b0pz, &o_b0pz);
         let bth_prop = eq(&c_bthpx, &o_bthpx, &c_bthpz, &o_bthpz);
-        std::eprintln!("S351 innermost: B0.P proportional={b0_prop} Bth.P proportional={bth_prop}");
+        std::eprintln!("innermost: B0.P proportional={b0_prop} Bth.P proportional={bth_prop}");
         // BOTTOM: our un-doubled E0 basis vs C's basis_even (C is at z=1).
         let (bp0, bq0, _bpmq0) = crate::isogeny::endomorphism::basis_e0_lvl1();
         let mut bb = [0u8; 64];
         bp0.x.to_bytes_le(&mut bb);
-        std::eprint!("S351 OUR_PRE_PX=");
+        std::eprint!("OUR_PRE_PX=");
         for x in bb {
             std::eprint!("{x:02x}");
         }
         std::eprintln!();
         bp0.z.to_bytes_le(&mut bb);
-        std::eprint!("S351 OUR_PRE_PZ=");
+        std::eprint!("OUR_PRE_PZ=");
         for x in bb {
             std::eprint!("{x:02x}");
         }
         std::eprintln!();
         bq0.x.to_bytes_le(&mut bb);
-        std::eprint!("S351 OUR_PRE_QX=");
+        std::eprint!("OUR_PRE_QX=");
         for x in bb {
             std::eprint!("{x:02x}");
         }
@@ -1677,7 +1635,7 @@ mod tests {
             "7800b4ae5ed919218ba7bf591a99be44c41662a6c304cc8324b182ca7f879b0175d2f9c33d13048e74924251aeddcfb22fe96798aa0a155242e0ea49db2a4404",
         );
         std::eprintln!(
-            "S351 OUR bp0.x==C PRE_PX: {}",
+            "OUR bp0.x==C PRE_PX: {}",
             bool::from(bp0.x.ct_eq(&c_pre_px))
         );
         // Just report — don't fail the loop on the diagnostic.

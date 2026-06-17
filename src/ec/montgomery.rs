@@ -499,7 +499,7 @@ mod tests {
         assert_eq!(lhs, rhs);
     }
 
-    // ── S89 — EC operations at production NIST levels ──
+    // ── EC operations at production NIST levels ──
 
     /// Generic helper: at any BaseField level, E_0's j-invariant equals
     /// 1728 = 2^10 + 2^9 + 2^7 + 2^6, the well-known j-invariant of the
@@ -515,7 +515,7 @@ mod tests {
             }
             acc = acc.add(&p2);
         }
-        assert_eq!(j, acc, "S89: E_0 j-invariant must equal 1728");
+        assert_eq!(j, acc, "E_0 j-invariant must equal 1728");
     }
 
     #[test]
@@ -538,7 +538,7 @@ mod tests {
         assert_eq!(
             a_back,
             Fp2::<F>::zero(),
-            "S89: CurveA24::e0() must round-trip to affine A = 0",
+            "CurveA24::e0() must round-trip to affine A = 0",
         );
     }
 
@@ -568,7 +568,7 @@ mod tests {
         let rhs = q_proj.x.mul(&q_affine.z);
         assert_eq!(
             lhs, rhs,
-            "S89: CurveA24::x_double must match affine x_double on E_0",
+            "CurveA24::x_double must match affine x_double on E_0",
         );
     }
 
@@ -584,7 +584,7 @@ mod tests {
         check_curve_a24_double_matches_affine::<Fp5Element>();
     }
 
-    // ── S91 — ladder / ladder3pt at production NIST levels ──
+    // ── ladder / ladder3pt at production NIST levels ──
 
     /// Generic helper: `ladder3pt(p, q, p−q, [0]·k, a24)` returns `p`
     /// unchanged (projectively). The L1 version exists as
@@ -609,7 +609,7 @@ mod tests {
         let rhs = p.x.mul(&r.z);
         assert_eq!(
             lhs, rhs,
-            "S91: ladder3pt with scalar [0] must return p (projectively) at this level",
+            "ladder3pt with scalar [0] must return p (projectively) at this level",
         );
     }
 
@@ -635,7 +635,7 @@ mod tests {
         let r = p.ladder(&zero_k, &a24);
         assert!(
             bool::from(r.is_infinity()),
-            "S91: ladder([0]) must return point at infinity at this level",
+            "ladder([0]) must return point at infinity at this level",
         );
     }
 
@@ -670,7 +670,7 @@ mod tests {
         let rhs = p.x.mul(&r.z);
         assert_eq!(
             lhs, rhs,
-            "S91: ladder([1]) must return self (projectively) at this level",
+            "ladder([1]) must return self (projectively) at this level",
         );
     }
 
@@ -691,7 +691,7 @@ mod tests {
         check_ladder_at_one_returns_self::<Fp5Element>();
     }
 
-    // S176 — MontgomeryPoint::to_affine tests.
+    // MontgomeryPoint::to_affine tests.
 
     fn check_to_affine_normalizes<F: BaseField>() {
         let one = Fp2::<F>::one();
@@ -702,8 +702,8 @@ mod tests {
         let six = two.add(&two).add(&two);
         let p = MontgomeryPoint::<F>::new(six, two);
         let affine = p.to_affine();
-        assert_eq!(affine.x, three, "S176: (6, 2).to_affine().x = 3");
-        assert_eq!(affine.z, one, "S176: to_affine().z = 1 for non-infinity");
+        assert_eq!(affine.x, three, "(6, 2).to_affine().x = 3");
+        assert_eq!(affine.z, one, "to_affine().z = 1 for non-infinity");
     }
 
     fn check_to_affine_preserves_infinity<F: BaseField>() {
@@ -711,7 +711,7 @@ mod tests {
         let affine_inf = inf.to_affine();
         assert!(
             bool::from(affine_inf.is_infinity()),
-            "S176: to_affine of infinity must remain infinity",
+            "to_affine of infinity must remain infinity",
         );
     }
 
@@ -721,7 +721,7 @@ mod tests {
         let p = MontgomeryPoint::<F>::new(two.add(&two).add(&two), two);
         let once = p.to_affine();
         let twice = once.to_affine();
-        assert_eq!(once, twice, "S176: to_affine is idempotent");
+        assert_eq!(once, twice, "to_affine is idempotent");
     }
 
     #[test]
@@ -751,7 +751,7 @@ mod tests {
         check_to_affine_idempotent::<Fp1Element>();
     }
 
-    // S173 — MontgomeryPoint::is_two_torsion (x-only form) tests.
+    // MontgomeryPoint::is_two_torsion (x-only form) tests.
 
     fn check_is_two_torsion_xz_predicate<F: BaseField>() {
         let a_zero = Fp2::<F>::zero(); // E_0
@@ -763,28 +763,28 @@ mod tests {
         let origin = MontgomeryPoint::<F>::new(zero, one);
         assert!(
             bool::from(origin.is_two_torsion(&a_zero)),
-            "S173: x-only (0:1) on E_0 must be 2-torsion",
+            "x-only (0:1) on E_0 must be 2-torsion",
         );
 
         // (i : 1) on E_0 — root of X² + Z² = 0 since A=0: 1·(-1) + 1 = 0.
         let pos_i = MontgomeryPoint::<F>::new(imag, one);
         assert!(
             bool::from(pos_i.is_two_torsion(&a_zero)),
-            "S173: x-only (i:1) on E_0 must be 2-torsion",
+            "x-only (i:1) on E_0 must be 2-torsion",
         );
 
         // (-i : 1) on E_0 — same as (i:1) under squaring.
         let neg_i = MontgomeryPoint::<F>::new(imag.negate(), one);
         assert!(
             bool::from(neg_i.is_two_torsion(&a_zero)),
-            "S173: x-only (-i:1) on E_0 must be 2-torsion",
+            "x-only (-i:1) on E_0 must be 2-torsion",
         );
 
         // Infinity (1 : 0) — Z=0 excludes per predicate.
         let inf = MontgomeryPoint::<F>::infinity();
         assert!(
             !bool::from(inf.is_two_torsion(&a_zero)),
-            "S173: x-only infinity is NOT 2-torsion (Z=0 excludes)",
+            "x-only infinity is NOT 2-torsion (Z=0 excludes)",
         );
 
         // (1 : 1) — affine x=1, not a 2-torsion x-coord on E_0
@@ -792,7 +792,7 @@ mod tests {
         let nontors = MontgomeryPoint::<F>::new(one, one);
         assert!(
             !bool::from(nontors.is_two_torsion(&a_zero)),
-            "S173: x-only (1:1) on E_0 must NOT be 2-torsion",
+            "x-only (1:1) on E_0 must NOT be 2-torsion",
         );
     }
 

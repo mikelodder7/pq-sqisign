@@ -4,7 +4,7 @@
 //! The Jacobian equivalence is `(X : Y : Z) ~ (λ²X : λ³Y : λZ)` for any
 //! `λ ∈ F_q*`. See SQIsign 2.0.1 spec §8.2 for the conversion between
 //! Montgomery x-only coordinates and Jacobian coordinates, and Alg 8.11
-//! (DBL). ADD (8.12) and ADDComponents (8.13) are deferred to S127.
+//! (DBL). ADD (8.12) and ADDComponents (8.13) are deferred.
 //!
 //! ## Infinity sentinel
 //!
@@ -213,7 +213,7 @@ impl<F: BaseField> JacobianPoint<F> {
         // `Z(P + Q) = dx · Z_P · Z_Q`. The denominator must be `Z(P ± Q)^2 =
         // dx^2 · (Z_P · Z_Q)^2 = t7 · t0`.
         //
-        // S130 cross-check against C reference (file
+        // Cross-check against C reference (file
         // `src/ec/ref/lvlx/ec_jac.c`, function `jac_to_xz_add_components`,
         // lines 305-334): the C implementation computes the correct
         // algebraic formula by REUSING its `t6` variable across distinct
@@ -234,7 +234,7 @@ impl<F: BaseField> JacobianPoint<F> {
         // `dx^2 · (z1z2)^2`. KAT consistency is preserved: the C reference
         // (which generates KAT vectors) matches our fix.
         //
-        // S130 differential-test verification (2026-05-22): temporarily
+        // Differential-test verification (2026-05-22): temporarily
         // reverting this line to `t6 · t0` and re-running
         // `add_components_x_consistency_at_lvl1` produces a clean
         // assertion failure (algebraic mismatch on Fp2 elements, not a
@@ -326,8 +326,8 @@ impl<F: BaseField> JacobianPoint<F> {
     /// For finite input `(X_M : Z_M)`, this computes `x = X_M / Z_M`,
     /// evaluates `y² = x³ + A x² + x`, and uses the principal branch returned
     /// by [`Fp2::sqrt`] to choose the sign of `Y`. This branch choice may
-    /// differ from the C reference's `lift_basis` convention and should be
-    /// audited when the higher-level basis code lands.
+    /// differ from the C reference's `lift_basis` convention; callers that
+    /// depend on a specific `Y` sign must account for it.
     ///
     /// If `Z_M == 0`, this succeeds and returns the Jacobian infinity
     /// sentinel `(1, 1, 0)`. If the affine curve equation is a non-square,
@@ -401,14 +401,14 @@ impl<F: BaseField> JacobianPoint<F> {
     ///
     /// # Why this exists
     ///
-    /// S131's dudect harness surfaced a cluster topology in
+    /// A dudect harness surfaced a cluster topology in
     /// `JacobianPoint::add` timing: degenerate inputs (`P = Q`,
     /// `P = -Q`, `Q = O`) execute measurably faster than non-degenerate
     /// inputs at the hardware level (cache locality and ALU
-    /// zero-multiplication fast-paths). S132's source + assembly
+    /// zero-multiplication fast-paths). A source + assembly
     /// audit confirmed `add()` is structurally constant-time at both
     /// levels (7428 instructions, 0 jcc, 270 cmov) — the leak is
-    /// microarchitectural, not software. Per S132 advisor:
+    /// microarchitectural, not software. The advisor recommendation:
     /// blinding inputs with projective randomization destroys the
     /// zero-correlation that produces the cluster, regardless of
     /// the underlying microarchitectural cause AND regardless of
@@ -550,7 +550,7 @@ fn ec_recover_y<F: BaseField>(x_aff: &Fp2<F>, curve_a: &Fp2<F>) -> (Fp2<F>, Choi
 /// when constructing it from full points, recover it via the `ADDComponents`
 /// differential triple `(u, v, w)` as `x(P−Q) = (u + v) / w` — NOT by
 /// treating the triple as a Jacobian point.
-// Consumed by the theta-chain orchestration (S250+); only tests exercise it
+// Consumed by the theta-chain orchestration; only tests exercise it
 // until then, so the lib target sees it as unused.
 #[allow(dead_code, clippy::many_single_char_names)]
 pub(crate) fn lift_basis<F: BaseField>(
@@ -666,7 +666,7 @@ mod tests {
 
         assert!(
             found.is_some(),
-            "S126: failed to find a deterministic liftable point on E_0",
+            "failed to find a deterministic liftable point on E_0",
         );
         found.unwrap_or((MontgomeryPoint::infinity(), JacobianPoint::infinity()))
     }
@@ -708,14 +708,14 @@ mod tests {
 
         assert!(
             found.is_some(),
-            "S140: failed to find a second deterministic distinct liftable point on E_0",
+            "failed to find a second deterministic distinct liftable point on E_0",
         );
         found.unwrap_or((MontgomeryPoint::infinity(), JacobianPoint::infinity()))
     }
 
-    // S140: independent differential-oracle for add_components.
+    // Independent differential-oracle for add_components.
     //
-    // Replaces the S127-era `add_components_x_consistency` test that
+    // Replaces the earlier `add_components_x_consistency` test that
     // used the now-deleted `JacobianPoint::add` as its oracle. The new
     // oracle is the Montgomery curve's **multiplicative differential
     // identity** (Costello-Smith 2017, "Montgomery curves and their
@@ -735,7 +735,7 @@ mod tests {
     //     (u² − v²) · (x_P − x_Q)²  ==  (x_P · x_Q − 1)² · w²
     //
     // This depends ONLY on x-coordinates + w; it does not use `add()`
-    // (which no longer exists per S139) and is genuinely independent
+    // (which no longer exists) and is genuinely independent
     // of `add_components`'s function body — the LHS / RHS construction
     // comes from the algorithm's *contract* (spec promise) composed
     // with curve algebra (Montgomery diff_add identity), not from the
@@ -746,12 +746,12 @@ mod tests {
         let (_, q) = second_liftable_point_on_e0::<F>();
         assert!(
             !bool::from(p.is_equivalent(&q)),
-            "S140: differential-oracle test must use distinct points",
+            "differential-oracle test must use distinct points",
         );
         let p_neg = p.negate();
         assert!(
             !bool::from(p_neg.is_equivalent(&q)),
-            "S140: differential-oracle test must use non-inverse points (Q != -P)",
+            "differential-oracle test must use non-inverse points (Q != -P)",
         );
 
         let (u, v, w) = p.add_components(&q, &curve.a);
@@ -773,7 +773,7 @@ mod tests {
 
         assert_eq!(
             lhs, rhs,
-            "S140: Montgomery diff_add identity (u² − v²)(x_P − x_Q)² = (x_P x_Q − 1)² w² must hold for add_components output",
+            "Montgomery diff_add identity (u² − v²)(x_P − x_Q)² = (x_P x_Q − 1)² w² must hold for add_components output",
         );
     }
 
@@ -798,34 +798,34 @@ mod tests {
         let inf = JacobianPoint::<F>::infinity();
         assert!(
             bool::from(inf.is_infinity()),
-            "S126: infinity().is_infinity() must be Choice::TRUE",
+            "infinity().is_infinity() must be Choice::TRUE",
         );
         assert_eq!(
             inf.x,
             Fp2::<F>::one(),
-            "S126: infinity x sentinel must be 1"
+            "infinity x sentinel must be 1"
         );
         assert_eq!(
             inf.y,
             Fp2::<F>::one(),
-            "S126: infinity y sentinel must be 1"
+            "infinity y sentinel must be 1"
         );
         assert_eq!(
             inf.z,
             Fp2::<F>::zero(),
-            "S126: infinity z sentinel must be 0"
+            "infinity z sentinel must be 0"
         );
 
         let mont_inf = MontgomeryPoint::<F>::infinity();
         let lift = JacobianPoint::from_montgomery_xz(&mont_inf, &MontgomeryCurve::<F>::e0().a);
         assert!(
             bool::from(lift.is_some()),
-            "S126: lifting Montgomery infinity must succeed",
+            "lifting Montgomery infinity must succeed",
         );
         let lifted = lift.unwrap_or(JacobianPoint::new(Fp2::zero(), Fp2::zero(), Fp2::zero()));
         assert!(
             bool::from(lifted.is_infinity()),
-            "S126: lifting Montgomery infinity must return Jacobian infinity",
+            "lifting Montgomery infinity must return Jacobian infinity",
         );
     }
 
@@ -851,7 +851,7 @@ mod tests {
         assert_eq!(
             p.negate().negate(),
             p,
-            "S126: negate(negate(P)) must equal P pointwise",
+            "negate(negate(P)) must equal P pointwise",
         );
 
         let q = JacobianPoint::<F>::new(small_fp2::<F>(7), small_fp2::<F>(11), small_fp2::<F>(13));
@@ -859,11 +859,11 @@ mod tests {
         let pick_q = JacobianPoint::<F>::conditional_select(&p, &q, Choice::from(1));
         assert_eq!(
             pick_p, p,
-            "S126: conditional_select(_, _, FALSE) must return the first point componentwise",
+            "conditional_select(_, _, FALSE) must return the first point componentwise",
         );
         assert_eq!(
             pick_q, q,
-            "S126: conditional_select(_, _, TRUE) must return the second point componentwise",
+            "conditional_select(_, _, TRUE) must return the second point componentwise",
         );
     }
 
@@ -931,12 +931,12 @@ mod tests {
         let doubled = inf.double(&small_fp2::<F>(7));
         assert!(
             bool::from(doubled.is_infinity()),
-            "S126: doubling infinity must keep Z = 0",
+            "doubling infinity must keep Z = 0",
         );
         assert_eq!(
             doubled,
             JacobianPoint::<F>::infinity(),
-            "S126: doubling the canonical infinity sentinel must round-trip exactly",
+            "doubling the canonical infinity sentinel must round-trip exactly",
         );
     }
 
@@ -957,8 +957,7 @@ mod tests {
         check_double_of_infinity_is_infinity::<Fp5Element>();
     }
 
-    // S129 advisor-prioritized correctness test (the only correctness-risk
-    // item among the three S127-deferred items): Jacobian doubling at a
+    // Advisor-prioritized correctness test: Jacobian doubling at a
     // 2-torsion point must produce infinity. On E_0 the affine equation
     // `y² = x³ + x = x · (x² + 1)` puts the full 2-torsion subgroup
     // E_0[2] = {O, (0, 0), (i, 0), (-i, 0)} in F_{p²} where i² = -1. The
@@ -976,7 +975,7 @@ mod tests {
         let doubled_origin = origin.double(&a);
         assert!(
             bool::from(doubled_origin.is_infinity()),
-            "S129: double of (0, 0, 1) on E_0 must produce infinity",
+            "double of (0, 0, 1) on E_0 must produce infinity",
         );
 
         // (i, 0, 1) is 2-torsion on E_0: x² + 1 = i² + 1 = 0.
@@ -984,7 +983,7 @@ mod tests {
         let doubled_pos_i = pos_i.double(&a);
         assert!(
             bool::from(doubled_pos_i.is_infinity()),
-            "S129: double of (i, 0, 1) on E_0 must produce infinity",
+            "double of (i, 0, 1) on E_0 must produce infinity",
         );
 
         // (-i, 0, 1) is 2-torsion on E_0 (symmetric case).
@@ -992,7 +991,7 @@ mod tests {
         let doubled_neg_i = neg_i.double(&a);
         assert!(
             bool::from(doubled_neg_i.is_infinity()),
-            "S129: double of (-i, 0, 1) on E_0 must produce infinity",
+            "double of (-i, 0, 1) on E_0 must produce infinity",
         );
     }
 
@@ -1013,7 +1012,7 @@ mod tests {
         check_double_of_2_torsion_is_infinity::<Fp5Element>();
     }
 
-    // S170 — is_two_torsion predicate tests.
+    // is_two_torsion predicate tests.
 
     fn check_is_two_torsion_predicate<F: BaseField>() {
         let one = Fp2::<F>::one();
@@ -1028,7 +1027,7 @@ mod tests {
         for (label, p) in [("origin", p_origin), ("+i", p_pos_i), ("-i", p_neg_i)] {
             assert!(
                 bool::from(p.is_two_torsion_unchecked()),
-                "S170: known 2-torsion {label} must return TRUE",
+                "known 2-torsion {label} must return TRUE",
             );
         }
 
@@ -1036,7 +1035,7 @@ mod tests {
         let inf = JacobianPoint::<F>::infinity();
         assert!(
             !bool::from(inf.is_two_torsion_unchecked()),
-            "S170: infinity must NOT be classified as 2-torsion (Z=0)",
+            "infinity must NOT be classified as 2-torsion (Z=0)",
         );
 
         // A non-2-torsion finite point: (1, y, 1) where y ≠ 0 on E_0.
@@ -1046,7 +1045,7 @@ mod tests {
         let nontors = JacobianPoint::<F>::new(one, one, one);
         assert!(
             !bool::from(nontors.is_two_torsion_unchecked()),
-            "S170: finite point with Y≠0 must NOT be 2-torsion",
+            "finite point with Y≠0 must NOT be 2-torsion",
         );
     }
 
@@ -1078,7 +1077,7 @@ mod tests {
         let doubled_mont = p_mont.x_double(&a24);
         assert!(
             bool::from(doubled_jac.ct_eq(&doubled_mont)),
-            "S126: Jacobian double must agree projectively with Montgomery xDBL after x-only conversion",
+            "Jacobian double must agree projectively with Montgomery xDBL after x-only conversion",
         );
     }
 
@@ -1106,7 +1105,7 @@ mod tests {
         assert_eq!(
             point.z,
             Fp2::<Fp1Element>::one(),
-            "S126: lifted Jacobian point must be affine-normalised with Z = 1",
+            "lifted Jacobian point must be affine-normalised with Z = 1",
         );
 
         let x_sq = point.x.square();
@@ -1114,11 +1113,11 @@ mod tests {
         let rhs = x_sq.mul(&point.x).add(&curve.a.mul(&x_sq)).add(&point.x);
         assert_eq!(
             lhs, rhs,
-            "S126: lifted point must satisfy Y^2 = X^3 + A X^2 + X when Z = 1",
+            "lifted point must satisfy Y^2 = X^3 + A X^2 + X when Z = 1",
         );
     }
 
-    // S126 advisor recommendation (b): the from_montgomery_xz sign convention
+    // Advisor recommendation: the from_montgomery_xz sign convention
     // is the principal branch returned by Fp2::sqrt. Pin the convention with
     // a round-trip test: lifting a fresh point and re-projecting must yield
     // a Montgomery point whose x equals the input, and lifting twice must
@@ -1134,14 +1133,14 @@ mod tests {
             .unwrap_or(JacobianPoint::<Fp1Element>::infinity());
         assert!(
             bool::from(jac_first.ct_eq_repr(&jac_again)),
-            "S126: from_montgomery_xz must return the same sign on repeated calls",
+            "from_montgomery_xz must return the same sign on repeated calls",
         );
         // Round-trip: lift, then to_montgomery_xz — must equal the input
         // projectively (the x-only side is sign-invariant).
         let mont_back = jac_first.to_montgomery_xz();
         assert!(
             bool::from(mont_back.ct_eq(&mont_in)),
-            "S126: lift then to_montgomery_xz must round-trip to the input x-coord",
+            "lift then to_montgomery_xz must round-trip to the input x-coord",
         );
     }
 
@@ -1149,7 +1148,7 @@ mod tests {
         let p = JacobianPoint::<F>::new(small_fp2::<F>(2), small_fp2::<F>(3), small_fp2::<F>(5));
         let once = p.to_affine();
         let twice = once.to_affine();
-        assert_eq!(twice, once, "S126: to_affine must be idempotent");
+        assert_eq!(twice, once, "to_affine must be idempotent");
 
         let lambda = small_fp2::<F>(2);
         let lambda_sq = lambda.square();
@@ -1160,17 +1159,17 @@ mod tests {
         // representatives of the same affine point must compare equal.
         assert!(
             bool::from(<JacobianPoint<F> as ConstantTimeEq>::ct_eq(&p, &scaled)),
-            "S126: ct_eq must be projective and accept differently-scaled representatives",
+            "ct_eq must be projective and accept differently-scaled representatives",
         );
         assert!(
             bool::from(p.is_equivalent(&scaled)),
-            "S126: is_equivalent must accept projectively-scaled representatives",
+            "is_equivalent must accept projectively-scaled representatives",
         );
         // ct_eq_repr is REPRESENTATION equality (pointwise): differently-scaled
         // representatives must compare not-equal.
         assert!(
             !bool::from(p.ct_eq_repr(&scaled)),
-            "S126: ct_eq_repr must be pointwise and reject differently-scaled representatives",
+            "ct_eq_repr must be pointwise and reject differently-scaled representatives",
         );
     }
 
@@ -1191,7 +1190,7 @@ mod tests {
         check_to_affine_idempotent::<Fp5Element>();
     }
 
-    // S133 projective coordinate randomization tests. Use a deterministic
+    // Projective coordinate randomization tests. Use a deterministic
     // ChaCha20 RNG so tests are reproducible; production callers will use
     // a CryptoRng backed by /dev/urandom or equivalent.
     use rand_chacha::ChaCha20Rng;
@@ -1207,7 +1206,7 @@ mod tests {
         let randomized = p.randomize_projective(&mut rng);
         assert!(
             bool::from(randomized.is_equivalent(&p)),
-            "S133: randomize_projective must preserve projective equivalence",
+            "randomize_projective must preserve projective equivalence",
         );
     }
 
@@ -1228,7 +1227,7 @@ mod tests {
         check_randomize_preserves_is_equivalent::<Fp5Element>();
     }
 
-    // S133: blinding must DESTROY the canonical bit-pattern — the whole
+    // Blinding must DESTROY the canonical bit-pattern — the whole
     // point is that an attacker cannot predict (X, Y, Z) bits even given
     // the affine point. ct_eq_repr (pointwise) returning FALSE after
     // randomization is the property we want; if it returned TRUE the
@@ -1240,7 +1239,7 @@ mod tests {
         let randomized = p.randomize_projective(&mut rng);
         assert!(
             !bool::from(randomized.ct_eq_repr(&p)),
-            "S133: randomize_projective must produce a different bit pattern \
+            "randomize_projective must produce a different bit pattern \
              (probability of λ = 1 coincidence is ~2^-500 with a CryptoRng)",
         );
     }
@@ -1267,7 +1266,7 @@ mod tests {
         let randomized = JacobianPoint::<F>::infinity().randomize_projective(&mut rng);
         assert!(
             bool::from(randomized.is_infinity()),
-            "S133: blinding infinity must keep Z = 0 (still at infinity)",
+            "blinding infinity must keep Z = 0 (still at infinity)",
         );
     }
 
@@ -1288,7 +1287,7 @@ mod tests {
         check_infinity_randomize_stays_infinity::<Fp5Element>();
     }
 
-    /// S249: `lift_basis` produces a sign-CONSISTENT pair. Build two real
+    /// `lift_basis` produces a sign-CONSISTENT pair. Build two real
     /// on-curve points P, Q on E_0, derive their x-onlies and the genuine
     /// `x(P−Q)` (via the `ADDComponents` differential triple, `(u+v)/w`),
     /// feed the three x-onlies to `lift_basis`, and check:
@@ -1297,9 +1296,9 @@ mod tests {
     ///   (c) the CONSISTENCY claim: `x(lift_P − lift_Q) == x(P−Q)` — the
     ///       Okeya-Sakurai guarantee a naive independent double-lift misses.
     ///
-    /// NOTE the S248→S249 fix: `add_components` returns the DIFFERENTIAL
+    /// NOTE: `add_components` returns the DIFFERENTIAL
     /// TRIPLE `(u, v, w)`, NOT a Jacobian point. `x(P−Q) = (u + v) / w`.
-    /// The S248 fixture wrongly wrapped `(u, v, w)` as a Jacobian point,
+    /// An earlier fixture wrongly wrapped `(u, v, w)` as a Jacobian point,
     /// feeding a garbage `x(P−Q)` — which made the (correct) OS port look
     /// off-curve. The port was faithful all along.
     fn check_lift_basis_consistency<F: BaseField>() {
@@ -1366,12 +1365,12 @@ mod tests {
     }
 
     #[test]
-    fn s249_lift_basis_consistency_at_lvl1() {
+    fn lift_basis_consistency_at_lvl1() {
         check_lift_basis_consistency::<Fp1Element>();
     }
 
     #[test]
-    fn s249_lift_basis_consistency_at_lvl3() {
+    fn lift_basis_consistency_at_lvl3() {
         use crate::params::lvl3::Fp3Element;
         check_lift_basis_consistency::<Fp3Element>();
     }

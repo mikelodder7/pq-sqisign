@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(x, y);
     }
 
-    // ── S88 — Fp2 byte round-trip at production NIST levels ──
+    // ── Fp2 byte round-trip at production NIST levels ──
 
     #[test]
     fn fp2_roundtrip_bytes_at_lvl3() {
@@ -450,7 +450,7 @@ mod tests {
         let mut buf = [0u8; 96];
         x.to_bytes_le(&mut buf[..2 * n]);
         let y = F2L3::from_bytes_le(&buf[..2 * n]).unwrap_or(F2L3::zero());
-        assert_eq!(x, y, "S88: Fp2 round-trip must preserve element at L3");
+        assert_eq!(x, y, "Fp2 round-trip must preserve element at L3");
     }
 
     #[test]
@@ -465,10 +465,10 @@ mod tests {
         let mut buf = [0u8; 128];
         x.to_bytes_le(&mut buf[..2 * n]);
         let y = F2L5::from_bytes_le(&buf[..2 * n]).unwrap_or(F2L5::zero());
-        assert_eq!(x, y, "S88: Fp2 round-trip must preserve element at L5");
+        assert_eq!(x, y, "Fp2 round-trip must preserve element at L5");
     }
 
-    // ── S92 — fuzz-style randomized field-property tests across L1/L3/L5 ──
+    // ── fuzz-style randomized field-property tests across L1/L3/L5 ──
 
     /// Generic helper: pseudo-random Fp2 round-trip through bytes
     /// preserves the element. Uses [`crate::hash::hash_to_fp2`] as a
@@ -486,7 +486,7 @@ mod tests {
             x.to_bytes_le(&mut buf[..2 * n]);
             let y = Fp2::<F>::from_bytes_le(&buf[..2 * n])
                 .unwrap_or_else(|| Fp2::<F>::new(F::one().double(), F::one()));
-            assert_eq!(x, y, "S92: Fp2 random round-trip failed at iteration {i}");
+            assert_eq!(x, y, "Fp2 random round-trip failed at iteration {i}");
         }
     }
 
@@ -523,7 +523,7 @@ mod tests {
             let r_sq = r.square();
             assert_eq!(
                 r_sq, sq,
-                "S92: sqrt(x²)² must equal x² for random x at iteration {i}",
+                "sqrt(x²)² must equal x² for random x at iteration {i}",
             );
         }
     }
@@ -565,7 +565,7 @@ mod tests {
             assert_eq!(
                 prod,
                 Fp2::<F>::one(),
-                "S92: x · x.invert() must equal one for random x at iteration {i}",
+                "x · x.invert() must equal one for random x at iteration {i}",
             );
         }
     }
@@ -634,14 +634,14 @@ mod tests {
         }
     }
 
-    // S169 — Fp2::is_one predicate tests.
+    // Fp2::is_one predicate tests.
 
     #[test]
     fn fp2_is_one_true_for_one_at_lvl1() {
         let one_v = Fp2::<Fp1Element>::one();
         assert!(
             bool::from(one_v.is_one()),
-            "S169: Fp2::one().is_one() must be TRUE",
+            "Fp2::one().is_one() must be TRUE",
         );
     }
 
@@ -650,7 +650,7 @@ mod tests {
         let zero = Fp2::<Fp1Element>::zero();
         assert!(
             !bool::from(zero.is_one()),
-            "S169: Fp2::zero().is_one() must be FALSE",
+            "Fp2::zero().is_one() must be FALSE",
         );
     }
 
@@ -660,7 +660,7 @@ mod tests {
         let img = Fp2::<Fp1Element>::img();
         assert!(
             !bool::from(img.is_one()),
-            "S169: Fp2::img() (= 0+1i) is NOT equal to 1+0i",
+            "Fp2::img() (= 0+1i) is NOT equal to 1+0i",
         );
     }
 
@@ -670,18 +670,18 @@ mod tests {
         let two = one_v.add(&one_v);
         assert!(
             !bool::from(two.is_one()),
-            "S169: 2 ≠ 1; is_one must be FALSE",
+            "2 ≠ 1; is_one must be FALSE",
         );
     }
 
-    // S177 — Fp2::is_neg_one predicate tests.
+    // Fp2::is_neg_one predicate tests.
 
     #[test]
     fn fp2_is_neg_one_true_for_neg_one_at_lvl1() {
         let neg_one = Fp2::<Fp1Element>::one().negate();
         assert!(
             bool::from(neg_one.is_neg_one()),
-            "S177: (-1).is_neg_one() must be TRUE",
+            "(-1).is_neg_one() must be TRUE",
         );
     }
 
@@ -690,7 +690,7 @@ mod tests {
         let one_v = Fp2::<Fp1Element>::one();
         assert!(
             !bool::from(one_v.is_neg_one()),
-            "S177: 1.is_neg_one() must be FALSE",
+            "1.is_neg_one() must be FALSE",
         );
     }
 
@@ -699,7 +699,7 @@ mod tests {
         let zero = Fp2::<Fp1Element>::zero();
         assert!(
             !bool::from(zero.is_neg_one()),
-            "S177: 0.is_neg_one() must be FALSE",
+            "0.is_neg_one() must be FALSE",
         );
     }
 
@@ -712,11 +712,11 @@ mod tests {
         let double_neg = neg_one.negate();
         assert!(
             bool::from(neg_one.is_neg_one()),
-            "S177: negate(1) is_neg_one",
+            "negate(1) is_neg_one",
         );
         assert!(
             bool::from(double_neg.is_one()),
-            "S177: negate(negate(1)) is_one (round-trip)",
+            "negate(negate(1)) is_one (round-trip)",
         );
     }
 }

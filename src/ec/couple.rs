@@ -9,8 +9,8 @@
 //! consumes them.
 //!
 //! This matches the C reference's couple-point layer (the role served there
-//! by `theta_couple_jac_point_t` and its x-only analogue). The S121
-//! architectural finding remains load-bearing here: SQIsign 2.0.1 does not
+//! by `theta_couple_jac_point_t` and its x-only analogue). The
+//! architectural constraint remains load-bearing here: SQIsign 2.0.1 does not
 //! define theta-2D `P + Q`, so addition needed by the chain stays on the
 //! elliptic-product side and is expressed as per-half Jacobian arithmetic.
 
@@ -145,7 +145,7 @@ impl<F: BaseField> CoupleJacobianPoint<F> {
     /// Y/Z³, 1)` form (with infinity returned as the canonical
     /// `(1, 1, 0)` sentinel). Both halves are normalized
     /// independently — no shared inversion across halves (matching
-    /// the S125 doctrine of per-half independent state).
+    /// the per-half independent state doctrine).
     #[inline]
     pub fn to_affine(&self) -> Self {
         Self::new(self.p1.to_affine(), self.p2.to_affine())
@@ -162,7 +162,7 @@ impl<F: BaseField> CoupleJacobianPoint<F> {
         q: &Self,
         curves: &CoupleCurve<F>,
     ) -> [(Fp2<F>, Fp2<F>, Fp2<F>); 2] {
-        // SAFETY: S125 requires the two halves to run independent ADDComponents
+        // SAFETY: The two halves must run independent ADDComponents
         // computations, each with its own Jacobian inputs and affine `A`.
         // Do not share control decisions or algebraic intermediates across
         // halves; that optimization is intentionally out of scope here.
@@ -179,8 +179,8 @@ impl<F: BaseField> CoupleJacobianPoint<F> {
     /// two halves do NOT share a multiplier — a shared `λ` across
     /// halves would preserve the cross-half ratio
     /// `(λ²·X_1) / (λ²·X_2) = X_1/X_2`, leaving some bit-pattern
-    /// correlation an attacker could exploit. S125 advisor doctrine
-    /// (independent per-half discrimination) applies: no shared state,
+    /// correlation an attacker could exploit. The independent per-half
+    /// discrimination doctrine applies: no shared state,
     /// not even a shared randomizer.
     ///
     /// Cost: `2 ·` the cost of [`JacobianPoint::randomize_in_place`]
@@ -234,7 +234,7 @@ impl<F: BaseField> CoupleMontgomeryPoint<F> {
     /// `Choice::TRUE` iff **both** x-only halves are finite
     /// 2-torsion points on their respective Montgomery curves.
     ///
-    /// Wraps [`MontgomeryPoint::is_two_torsion`] (S173) per half
+    /// Wraps [`MontgomeryPoint::is_two_torsion`] per half
     /// with each half's affine A coefficient (`a_1` for E_1, `a_2`
     /// for E_2). Companion to [`CoupleJacobianPoint::is_two_torsion_unchecked`]
     /// for the x-only side of the chain.
@@ -503,12 +503,12 @@ impl<F: BaseField> ThetaKernelCouplePoints<F> {
         ]
     }
 
-    /// Apply S133-era projective coordinate randomization (blinding)
+    /// Apply projective coordinate randomization (blinding)
     /// to all three kernel points in place.
     ///
     /// Each of `t1`, `t2`, `t1_minus_t2` is blinded with its own
     /// independent random scaling — and each couple-half within
-    /// those is also independently blinded per S125 doctrine. The
+    /// those is also independently blinded per the per-half independence doctrine. The
     /// affine difference invariant `t1_minus_t2 = t1 - t2` is
     /// preserved because projective rescaling doesn't change the
     /// underlying affine point.
@@ -613,7 +613,7 @@ mod tests {
 
         assert!(
             found.is_some(),
-            "S128: failed to find a first deterministic liftable point on E_0",
+            "failed to find a first deterministic liftable point on E_0",
         );
         found.unwrap_or((MontgomeryPoint::infinity(), JacobianPoint::infinity()))
     }
@@ -655,7 +655,7 @@ mod tests {
 
         assert!(
             found.is_some(),
-            "S128: failed to find a second deterministic distinct liftable point on E_0",
+            "failed to find a second deterministic distinct liftable point on E_0",
         );
         found.unwrap_or((MontgomeryPoint::infinity(), JacobianPoint::infinity()))
     }
@@ -669,11 +669,11 @@ mod tests {
 
         assert!(
             bool::from(doubled.p1.is_equivalent(&couple.p1.double(&curves.e1.a))),
-            "S128: couple double must delegate to JacobianPoint::double on the E_1 half",
+            "couple double must delegate to JacobianPoint::double on the E_1 half",
         );
         assert!(
             bool::from(doubled.p2.is_equivalent(&couple.p2.double(&curves.e2.a))),
-            "S128: couple double must delegate to JacobianPoint::double on the E_2 half",
+            "couple double must delegate to JacobianPoint::double on the E_2 half",
         );
     }
 
@@ -703,7 +703,7 @@ mod tests {
         assert_eq!(
             couple.double_iter(0, &curves),
             couple,
-            "S128: double_iter(0, curves) must leave the couple point unchanged pointwise",
+            "double_iter(0, curves) must leave the couple point unchanged pointwise",
         );
     }
 
@@ -734,11 +734,11 @@ mod tests {
 
         assert!(
             bool::from(iterated.p1.is_equivalent(&repeated.p1)),
-            "S128: double_iter(3, curves) must match three doubles on the E_1 half",
+            "double_iter(3, curves) must match three doubles on the E_1 half",
         );
         assert!(
             bool::from(iterated.p2.is_equivalent(&repeated.p2)),
-            "S128: double_iter(3, curves) must match three doubles on the E_2 half",
+            "double_iter(3, curves) must match three doubles on the E_2 half",
         );
     }
 
@@ -767,11 +767,11 @@ mod tests {
 
         assert!(
             bool::from(xz.p1.ct_eq(&couple.p1.to_montgomery_xz())),
-            "S128: to_couple_xz must delegate to JacobianPoint::to_montgomery_xz on the E_1 half",
+            "to_couple_xz must delegate to JacobianPoint::to_montgomery_xz on the E_1 half",
         );
         assert!(
             bool::from(xz.p2.ct_eq(&couple.p2.to_montgomery_xz())),
-            "S128: to_couple_xz must delegate to JacobianPoint::to_montgomery_xz on the E_2 half",
+            "to_couple_xz must delegate to JacobianPoint::to_montgomery_xz on the E_2 half",
         );
     }
 
@@ -801,11 +801,11 @@ mod tests {
 
         assert!(
             !bool::from(p.p1.is_equivalent(&q.p1)),
-            "S128: add_components_pair test must use distinct E_1 inputs",
+            "add_components_pair test must use distinct E_1 inputs",
         );
         assert!(
             !bool::from(p.p2.is_equivalent(&q.p2)),
-            "S128: add_components_pair test must use distinct E_2 inputs",
+            "add_components_pair test must use distinct E_2 inputs",
         );
 
         let pair = p.add_components_pair(&q, &curves);
@@ -814,11 +814,11 @@ mod tests {
 
         assert_eq!(
             pair[0], e1,
-            "S128: add_components_pair[0] must match JacobianPoint::add_components on E_1",
+            "add_components_pair[0] must match JacobianPoint::add_components on E_1",
         );
         assert_eq!(
             pair[1], e2,
-            "S128: add_components_pair[1] must match JacobianPoint::add_components on E_2",
+            "add_components_pair[1] must match JacobianPoint::add_components on E_2",
         );
     }
 
@@ -846,15 +846,15 @@ mod tests {
 
         assert!(
             bool::from(doubled.p1.is_infinity()),
-            "S128: doubling couple infinity must keep the E_1 half at infinity",
+            "doubling couple infinity must keep the E_1 half at infinity",
         );
         assert!(
             bool::from(doubled.p2.is_infinity()),
-            "S128: doubling couple infinity must keep the E_2 half at infinity",
+            "doubling couple infinity must keep the E_2 half at infinity",
         );
         assert_eq!(
             doubled, infinity,
-            "S128: doubling couple infinity must preserve the canonical pair of infinity sentinels",
+            "doubling couple infinity must preserve the canonical pair of infinity sentinels",
         );
     }
 
@@ -875,7 +875,7 @@ mod tests {
         check_couple_infinity_doubles_to_infinity::<Fp5Element>();
     }
 
-    // S128 advisor item (3): mixed-infinity couple — `(O, P).double()` must
+    // Advisor item: mixed-infinity couple — `(O, P).double()` must
     // produce `(O, 2P)`. The (2,2)-isogeny gluing kernel can hit exactly
     // this boundary case during a descent step where one elliptic-product
     // component has been pushed to infinity but the other still carries a
@@ -891,12 +891,12 @@ mod tests {
         let doubled_left = left_inf.double(&curves);
         assert!(
             bool::from(doubled_left.p1.is_infinity()),
-            "S128: doubling (O, P) must keep the E_1 half at infinity",
+            "doubling (O, P) must keep the E_1 half at infinity",
         );
         let expected_2p = p.double(&curves.e2.a);
         assert!(
             bool::from(doubled_left.p2.is_equivalent(&expected_2p)),
-            "S128: doubling (O, P) must produce 2P on the E_2 half",
+            "doubling (O, P) must produce 2P on the E_2 half",
         );
 
         // (P, O) → (2P, O), symmetric case
@@ -905,11 +905,11 @@ mod tests {
         let expected_2p_e1 = p.double(&curves.e1.a);
         assert!(
             bool::from(doubled_right.p1.is_equivalent(&expected_2p_e1)),
-            "S128: doubling (P, O) must produce 2P on the E_1 half",
+            "doubling (P, O) must produce 2P on the E_1 half",
         );
         assert!(
             bool::from(doubled_right.p2.is_infinity()),
-            "S128: doubling (P, O) must keep the E_2 half at infinity",
+            "doubling (P, O) must keep the E_2 half at infinity",
         );
     }
 
@@ -930,7 +930,7 @@ mod tests {
         check_couple_double_mixed_infinity::<Fp5Element>();
     }
 
-    // S133 projective coordinate randomization tests for the couple-pair.
+    // Projective coordinate randomization tests for the couple-pair.
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -945,11 +945,11 @@ mod tests {
         let randomized = couple.randomize_projective(&mut rng);
         assert!(
             bool::from(randomized.p1.is_equivalent(&couple.p1)),
-            "S133: couple randomize must preserve E_1-half projective equivalence",
+            "couple randomize must preserve E_1-half projective equivalence",
         );
         assert!(
             bool::from(randomized.p2.is_equivalent(&couple.p2)),
-            "S133: couple randomize must preserve E_2-half projective equivalence",
+            "couple randomize must preserve E_2-half projective equivalence",
         );
     }
 
@@ -970,7 +970,7 @@ mod tests {
         check_couple_randomize_preserves_per_half::<Fp5Element>();
     }
 
-    // S133 + S125 doctrine: the two halves of a couple-randomize must
+    // The two halves of a couple-randomize must
     // use INDEPENDENT λ values. If both halves shared one λ, then
     // input `(P, P)` (same Jacobian on both sides) would yield a
     // randomized `(λ²X, λ³Y, λZ)` on BOTH halves identically — i.e.,
@@ -985,13 +985,13 @@ mod tests {
         let couple = CoupleJacobianPoint::<Fp1Element>::new(p, p);
         assert!(
             bool::from(couple.p1.ct_eq_repr(&couple.p2)),
-            "S133 setup: input couple must have pointwise-identical halves",
+            "setup: input couple must have pointwise-identical halves",
         );
         let mut rng = fresh_rng(0x88);
         let randomized = couple.randomize_projective(&mut rng);
         assert!(
             !bool::from(randomized.p1.ct_eq_repr(&randomized.p2)),
-            "S133: couple randomize must use independent lambdas per half — \
+            "couple randomize must use independent lambdas per half — \
              identical inputs must produce pointwise-different outputs \
              (probability of shared-lambda coincidence is ~2^-500)",
         );
@@ -999,15 +999,15 @@ mod tests {
         // outputs are different bit patterns of the same affine point.
         assert!(
             bool::from(randomized.p1.is_equivalent(&couple.p1)),
-            "S133: independent-lambda blinding still preserves affine E_1 point",
+            "independent-lambda blinding still preserves affine E_1 point",
         );
         assert!(
             bool::from(randomized.p2.is_equivalent(&couple.p2)),
-            "S133: independent-lambda blinding still preserves affine E_2 point",
+            "independent-lambda blinding still preserves affine E_2 point",
         );
     }
 
-    // S148 — EcBasis + ThetaKernelCouplePoints struct smoke tests.
+    // EcBasis + ThetaKernelCouplePoints struct smoke tests.
 
     #[test]
     fn ec_basis_construction_preserves_fields_at_lvl1() {
@@ -1024,17 +1024,17 @@ mod tests {
 
         let basis = EcBasis::new(p_pt, q_pt, pmq_pt);
 
-        assert_eq!(basis.p, p_pt, "S148: EcBasis.p preserved as-passed");
-        assert_eq!(basis.q, q_pt, "S148: EcBasis.q preserved as-passed");
+        assert_eq!(basis.p, p_pt, "EcBasis.p preserved as-passed");
+        assert_eq!(basis.q, q_pt, "EcBasis.q preserved as-passed");
         assert_eq!(
             basis.p_minus_q, pmq_pt,
-            "S148: EcBasis.p_minus_q preserved as-passed",
+            "EcBasis.p_minus_q preserved as-passed",
         );
     }
 
-    // S149 — CoupleMontgomeryPoint::double + double_iter tests.
+    // CoupleMontgomeryPoint::double + double_iter tests.
 
-    /// S149 oracle: x_double((3, 1), a24 = 1) = (64, 192) per
+    /// Oracle: x_double((3, 1), a24 = 1) = (64, 192) per
     /// Costello-Hisil-Smith xDBL formula.
     /// Couple: both halves at (3, 1) with same a24 → both halves output (64, 192).
     #[test]
@@ -1070,10 +1070,10 @@ mod tests {
             }
             acc
         };
-        assert_eq!(doubled.p1.x, expected_x, "S149: doubled.p1.x = 64");
-        assert_eq!(doubled.p1.z, expected_z, "S149: doubled.p1.z = 192");
-        assert_eq!(doubled.p2.x, expected_x, "S149: doubled.p2.x = 64");
-        assert_eq!(doubled.p2.z, expected_z, "S149: doubled.p2.z = 192");
+        assert_eq!(doubled.p1.x, expected_x, "doubled.p1.x = 64");
+        assert_eq!(doubled.p1.z, expected_z, "doubled.p1.z = 192");
+        assert_eq!(doubled.p2.x, expected_x, "doubled.p2.x = 64");
+        assert_eq!(doubled.p2.z, expected_z, "doubled.p2.z = 192");
     }
 
     #[test]
@@ -1088,10 +1088,10 @@ mod tests {
             MontgomeryPoint::<Fp1Element>::new(two, one_v),
         );
         let r = p.double_iter(0, &one_v, &one_v);
-        assert_eq!(r, p, "S149: double_iter(0) = identity");
+        assert_eq!(r, p, "double_iter(0) = identity");
     }
 
-    // S176 — CoupleMontgomeryPoint::to_affine.
+    // CoupleMontgomeryPoint::to_affine.
 
     #[test]
     fn couple_montgomery_to_affine_componentwise_matches_per_half_at_lvl1() {
@@ -1110,12 +1110,12 @@ mod tests {
         assert_eq!(
             affine.p1,
             p.p1.to_affine(),
-            "S176: couple to_affine p1 must match per-half",
+            "couple to_affine p1 must match per-half",
         );
         assert_eq!(
             affine.p2,
             p.p2.to_affine(),
-            "S176: couple to_affine p2 must match per-half",
+            "couple to_affine p2 must match per-half",
         );
     }
 
@@ -1126,11 +1126,11 @@ mod tests {
         let affine_inf = inf.to_affine();
         assert!(
             bool::from(affine_inf.is_infinity()),
-            "S176: couple to_affine of (O, O) → (O, O)",
+            "couple to_affine of (O, O) → (O, O)",
         );
     }
 
-    // S175 — CoupleJacobianPoint::to_affine.
+    // CoupleJacobianPoint::to_affine.
 
     #[test]
     fn couple_jacobian_to_affine_componentwise_matches_per_half_at_lvl1() {
@@ -1149,12 +1149,12 @@ mod tests {
         assert_eq!(
             affine.p1,
             p.p1.to_affine(),
-            "S175: to_affine p1 must match per-half",
+            "to_affine p1 must match per-half",
         );
         assert_eq!(
             affine.p2,
             p.p2.to_affine(),
-            "S175: to_affine p2 must match per-half",
+            "to_affine p2 must match per-half",
         );
     }
 
@@ -1165,7 +1165,7 @@ mod tests {
         let affine_inf = inf.to_affine();
         assert!(
             bool::from(affine_inf.is_infinity()),
-            "S175: to_affine of (O, O) must remain (O, O)",
+            "to_affine of (O, O) must remain (O, O)",
         );
     }
 
@@ -1184,10 +1184,10 @@ mod tests {
         );
         let once = p.to_affine();
         let twice = once.to_affine();
-        assert_eq!(once, twice, "S175: to_affine is idempotent",);
+        assert_eq!(once, twice, "to_affine is idempotent",);
     }
 
-    // S174 — CoupleMontgomeryPoint::is_two_torsion + is_two_torsion_with_curves.
+    // CoupleMontgomeryPoint::is_two_torsion + is_two_torsion_with_curves.
 
     #[test]
     fn couple_montgomery_is_two_torsion_true_when_both_halves_2t_at_lvl1() {
@@ -1209,7 +1209,7 @@ mod tests {
         );
         assert!(
             bool::from(p.is_two_torsion(&a_e0, &a_e0)),
-            "S174: couple with both halves 2-torsion → TRUE",
+            "couple with both halves 2-torsion → TRUE",
         );
     }
 
@@ -1228,11 +1228,11 @@ mod tests {
         let mixed_p2 = CoupleMontgomeryPoint::new(two_tors, nontors);
         assert!(
             !bool::from(mixed_p1.is_two_torsion(&a_e0, &a_e0)),
-            "S174: p1 non-2-torsion → FALSE",
+            "p1 non-2-torsion → FALSE",
         );
         assert!(
             !bool::from(mixed_p2.is_two_torsion(&a_e0, &a_e0)),
-            "S174: p2 non-2-torsion → FALSE",
+            "p2 non-2-torsion → FALSE",
         );
     }
 
@@ -1254,15 +1254,15 @@ mod tests {
         assert_eq!(
             bool::from(via_wrapper),
             bool::from(via_explicit),
-            "S174: with_curves variant must match explicit-A variant",
+            "with_curves variant must match explicit-A variant",
         );
         assert!(
             bool::from(via_wrapper),
-            "S174: (0:1, 0:1) on E_0 × E_0 is couple 2-torsion",
+            "(0:1, 0:1) on E_0 × E_0 is couple 2-torsion",
         );
     }
 
-    // S172 — ThetaKernelCouplePoints::is_two_torsion.
+    // ThetaKernelCouplePoints::is_two_torsion.
 
     #[test]
     fn theta_kernel_is_two_torsion_true_when_all_three_2t_at_lvl1() {
@@ -1295,7 +1295,7 @@ mod tests {
         let kernel = ThetaKernelCouplePoints::new(origin_origin, i_i, neg_i_neg_i);
         assert!(
             bool::from(kernel.is_two_torsion_unchecked()),
-            "S172: all three 2-torsion couples → kernel is_two_torsion TRUE",
+            "all three 2-torsion couples → kernel is_two_torsion TRUE",
         );
     }
 
@@ -1327,7 +1327,7 @@ mod tests {
         ] {
             assert!(
                 !bool::from(k.is_two_torsion_unchecked()),
-                "S172: kernel with {label} must NOT be is_two_torsion",
+                "kernel with {label} must NOT be is_two_torsion",
             );
         }
     }
@@ -1335,17 +1335,16 @@ mod tests {
     #[test]
     fn theta_kernel_is_two_torsion_false_for_all_infinity_at_lvl1() {
         use crate::gf::fp::Fp1Element;
-        // All-infinity kernel: Y=1 (sentinel), Z=0 — per S170 doctrine,
-        // is_two_torsion FALSE because Z=0 excludes.
+        // All-infinity kernel: Y=1 (sentinel), Z=0 — is_two_torsion FALSE because Z=0 excludes.
         let inf = CoupleJacobianPoint::<Fp1Element>::infinity();
         let kernel = ThetaKernelCouplePoints::new(inf, inf, inf);
         assert!(
             !bool::from(kernel.is_two_torsion_unchecked()),
-            "S172: all-infinity kernel is NOT 2-torsion (Z=0 excludes)",
+            "all-infinity kernel is NOT 2-torsion (Z=0 excludes)",
         );
     }
 
-    // S171 — CoupleJacobianPoint::is_two_torsion.
+    // CoupleJacobianPoint::is_two_torsion.
 
     #[test]
     fn couple_jacobian_is_two_torsion_true_when_both_halves_two_torsion_at_lvl1() {
@@ -1367,7 +1366,7 @@ mod tests {
         let couple = CoupleJacobianPoint::new(origin, pos_i);
         assert!(
             bool::from(couple.is_two_torsion_unchecked()),
-            "S171: couple with both halves 2-torsion must return TRUE",
+            "couple with both halves 2-torsion must return TRUE",
         );
     }
 
@@ -1387,26 +1386,26 @@ mod tests {
 
         assert!(
             !bool::from(mixed_p1.is_two_torsion_unchecked()),
-            "S171: couple with p1 non-2-torsion is NOT 2-torsion",
+            "couple with p1 non-2-torsion is NOT 2-torsion",
         );
         assert!(
             !bool::from(mixed_p2.is_two_torsion_unchecked()),
-            "S171: couple with p2 non-2-torsion is NOT 2-torsion",
+            "couple with p2 non-2-torsion is NOT 2-torsion",
         );
     }
 
     #[test]
     fn couple_jacobian_is_two_torsion_false_for_infinity_at_lvl1() {
         use crate::gf::fp::Fp1Element;
-        // Infinity has Y=1 in canonical sentinel → is_two_torsion FALSE per S170 doctrine.
+        // Infinity has Y=1 in canonical sentinel → is_two_torsion FALSE (Z=0 excludes).
         let inf = CoupleJacobianPoint::<Fp1Element>::infinity();
         assert!(
             !bool::from(inf.is_two_torsion_unchecked()),
-            "S171: (O, O) is NOT 2-torsion (Z=0 on both halves)",
+            "(O, O) is NOT 2-torsion (Z=0 on both halves)",
         );
     }
 
-    // S167 — ThetaKernelCouplePoints::is_infinity.
+    // ThetaKernelCouplePoints::is_infinity.
 
     #[test]
     fn theta_kernel_is_infinity_true_when_all_three_inf_at_lvl1() {
@@ -1415,7 +1414,7 @@ mod tests {
         let kernel = ThetaKernelCouplePoints::new(inf, inf, inf);
         assert!(
             bool::from(kernel.is_infinity()),
-            "S167: all-infinity kernel must have is_infinity == TRUE",
+            "all-infinity kernel must have is_infinity == TRUE",
         );
     }
 
@@ -1441,12 +1440,12 @@ mod tests {
         ] {
             assert!(
                 !bool::from(k.is_infinity()),
-                "S167: kernel with {label} must NOT be is_infinity",
+                "kernel with {label} must NOT be is_infinity",
             );
         }
     }
 
-    // S166 — ThetaKernelCouplePoints blinding methods.
+    // ThetaKernelCouplePoints blinding methods.
 
     #[test]
     fn theta_kernel_randomize_preserves_affine_identity_at_lvl1() {
@@ -1479,27 +1478,27 @@ mod tests {
         // Affine identity (via is_equivalent) preserved on each field.
         assert!(
             bool::from(blinded.t1.p1.is_equivalent(&t1.p1)),
-            "S166: blinded.t1.p1 affinely equal to original",
+            "blinded.t1.p1 affinely equal to original",
         );
         assert!(
             bool::from(blinded.t1.p2.is_equivalent(&t1.p2)),
-            "S166: blinded.t1.p2 affinely equal to original",
+            "blinded.t1.p2 affinely equal to original",
         );
         assert!(
             bool::from(blinded.t2.p1.is_equivalent(&t2.p1)),
-            "S166: blinded.t2.p1 affinely equal to original",
+            "blinded.t2.p1 affinely equal to original",
         );
         assert!(
             bool::from(blinded.t2.p2.is_equivalent(&t2.p2)),
-            "S166: blinded.t2.p2 affinely equal to original",
+            "blinded.t2.p2 affinely equal to original",
         );
         assert!(
             bool::from(blinded.t1_minus_t2.p1.is_equivalent(&t1m2.p1)),
-            "S166: blinded.t1_minus_t2.p1 affinely equal to original",
+            "blinded.t1_minus_t2.p1 affinely equal to original",
         );
         assert!(
             bool::from(blinded.t1_minus_t2.p2.is_equivalent(&t1m2.p2)),
-            "S166: blinded.t1_minus_t2.p2 affinely equal to original",
+            "blinded.t1_minus_t2.p2 affinely equal to original",
         );
     }
 
@@ -1508,7 +1507,7 @@ mod tests {
         // With identical t1 = t2 = t1m2 inputs and a single rng,
         // randomize should produce DIFFERENT projective representations
         // for each (because each field consumes its own per-half lambdas).
-        // This is the S125 "independent per-call" doctrine in action.
+        // This is the "independent per-call" doctrine in action.
         use crate::gf::fp::Fp1Element;
         use crate::gf::fp2::Fp2;
         use rand_chacha::ChaCha20Rng;
@@ -1530,11 +1529,11 @@ mod tests {
         // though their affine equivalence to `same` is preserved.
         assert!(
             blinded.t1 != blinded.t2 || blinded.t2 != blinded.t1_minus_t2,
-            "S166: blinded kernel fields must differ projectively (independent lambdas)",
+            "blinded kernel fields must differ projectively (independent lambdas)",
         );
     }
 
-    // S165 — ThetaKernelCouplePoints::to_couple_xz_triple.
+    // ThetaKernelCouplePoints::to_couple_xz_triple.
 
     #[test]
     fn theta_kernel_to_couple_xz_triple_matches_per_field_at_lvl1() {
@@ -1564,17 +1563,17 @@ mod tests {
         assert_eq!(
             triple[0],
             t1.to_couple_xz(),
-            "S165: triple[0] = t1.to_couple_xz()"
+            "triple[0] = t1.to_couple_xz()"
         );
         assert_eq!(
             triple[1],
             t2.to_couple_xz(),
-            "S165: triple[1] = t2.to_couple_xz()"
+            "triple[1] = t2.to_couple_xz()"
         );
         assert_eq!(
             triple[2],
             t1m2.to_couple_xz(),
-            "S165: triple[2] = t1_minus_t2.to_couple_xz()"
+            "triple[2] = t1_minus_t2.to_couple_xz()"
         );
     }
 
@@ -1587,12 +1586,12 @@ mod tests {
         for (i, cmp) in triple.iter().enumerate() {
             assert!(
                 bool::from(cmp.is_infinity()),
-                "S165: triple[{i}] of all-infinity kernel must be infinity",
+                "triple[{i}] of all-infinity kernel must be infinity",
             );
         }
     }
 
-    // S164 — ThetaKernelCouplePoints::double_iter.
+    // ThetaKernelCouplePoints::double_iter.
 
     #[test]
     fn theta_kernel_double_iter_zero_is_identity_at_lvl1() {
@@ -1601,11 +1600,11 @@ mod tests {
         let kernel = ThetaKernelCouplePoints::new(inf, inf, inf);
         let curves = CoupleCurve::<Fp1Element>::e0_e0();
         let r = kernel.double_iter(0, &curves);
-        assert_eq!(r.t1, inf, "S164: double_iter(0).t1 = identity");
-        assert_eq!(r.t2, inf, "S164: double_iter(0).t2 = identity");
+        assert_eq!(r.t1, inf, "double_iter(0).t1 = identity");
+        assert_eq!(r.t2, inf, "double_iter(0).t2 = identity");
         assert_eq!(
             r.t1_minus_t2, inf,
-            "S164: double_iter(0).t1_minus_t2 = identity"
+            "double_iter(0).t1_minus_t2 = identity"
         );
     }
 
@@ -1638,22 +1637,22 @@ mod tests {
             assert_eq!(
                 r.t1,
                 t1.double_iter(n, &curves),
-                "S164: t1 matches per-field"
+                "t1 matches per-field"
             );
             assert_eq!(
                 r.t2,
                 t2.double_iter(n, &curves),
-                "S164: t2 matches per-field"
+                "t2 matches per-field"
             );
             assert_eq!(
                 r.t1_minus_t2,
                 t1m2.double_iter(n, &curves),
-                "S164: t1_minus_t2 matches per-field",
+                "t1_minus_t2 matches per-field",
             );
         }
     }
 
-    // S163 — is_e0 + is_e0_e0 predicates.
+    // is_e0 + is_e0_e0 predicates.
 
     #[test]
     fn montgomery_curve_is_e0_true_for_e0_at_lvl1() {
@@ -1661,7 +1660,7 @@ mod tests {
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
         assert!(
             bool::from(e0.is_e0()),
-            "S163: MontgomeryCurve::e0().is_e0() must be TRUE",
+            "MontgomeryCurve::e0().is_e0() must be TRUE",
         );
     }
 
@@ -1673,7 +1672,7 @@ mod tests {
         let curve = MontgomeryCurve::<Fp1Element>::new(one_v);
         assert!(
             !bool::from(curve.is_e0()),
-            "S163: MontgomeryCurve with A=1 must not be E_0",
+            "MontgomeryCurve with A=1 must not be E_0",
         );
     }
 
@@ -1683,7 +1682,7 @@ mod tests {
         let cc = CoupleCurve::<Fp1Element>::e0_e0();
         assert!(
             bool::from(cc.is_e0_e0()),
-            "S163: e0_e0().is_e0_e0() must be TRUE",
+            "e0_e0().is_e0_e0() must be TRUE",
         );
     }
 
@@ -1698,11 +1697,11 @@ mod tests {
         };
         assert!(
             !bool::from(mixed.is_e0_e0()),
-            "S163: couple with one non-E_0 half is NOT (E_0, E_0)",
+            "couple with one non-E_0 half is NOT (E_0, E_0)",
         );
     }
 
-    // S162 — CoupleJacobianPoint::negate.
+    // CoupleJacobianPoint::negate.
 
     #[test]
     fn couple_jacobian_negate_round_trip_is_identity_at_lvl1() {
@@ -1720,11 +1719,11 @@ mod tests {
         // Projective equivalence preserves negation round-trip.
         assert!(
             bool::from(neg_neg.p1.is_equivalent(&p.p1)),
-            "S162: -(-p1) must equal p1 (projective)",
+            "-(-p1) must equal p1 (projective)",
         );
         assert!(
             bool::from(neg_neg.p2.is_equivalent(&p.p2)),
-            "S162: -(-p2) must equal p2 (projective)",
+            "-(-p2) must equal p2 (projective)",
         );
     }
 
@@ -1741,8 +1740,8 @@ mod tests {
             JacobianPoint::<Fp1Element>::new(three, one_v, two),
         );
         let neg = p.negate();
-        assert_eq!(neg.p1, p.p1.negate(), "S162: negate p1 must match per-half");
-        assert_eq!(neg.p2, p.p2.negate(), "S162: negate p2 must match per-half");
+        assert_eq!(neg.p1, p.p1.negate(), "negate p1 must match per-half");
+        assert_eq!(neg.p2, p.p2.negate(), "negate p2 must match per-half");
     }
 
     #[test]
@@ -1752,11 +1751,11 @@ mod tests {
         let neg_inf = inf.negate();
         assert!(
             bool::from(neg_inf.is_infinity()),
-            "S162: -(O, O) must remain at infinity",
+            "-(O, O) must remain at infinity",
         );
     }
 
-    // S161 — is_infinity predicates on couple types.
+    // is_infinity predicates on couple types.
 
     #[test]
     fn couple_jacobian_is_infinity_true_for_infinity_at_lvl1() {
@@ -1764,7 +1763,7 @@ mod tests {
         let inf = CoupleJacobianPoint::<Fp1Element>::infinity();
         assert!(
             bool::from(inf.is_infinity()),
-            "S161: CoupleJacobianPoint::infinity().is_infinity() must be TRUE",
+            "CoupleJacobianPoint::infinity().is_infinity() must be TRUE",
         );
     }
 
@@ -1777,12 +1776,12 @@ mod tests {
         let mixed = CoupleJacobianPoint::new(JacobianPoint::infinity(), finite_p);
         assert!(
             !bool::from(mixed.is_infinity()),
-            "S161: couple with one finite half is NOT infinity",
+            "couple with one finite half is NOT infinity",
         );
         let mixed_other = CoupleJacobianPoint::new(finite_p, JacobianPoint::infinity());
         assert!(
             !bool::from(mixed_other.is_infinity()),
-            "S161: couple with one finite half (other side) is NOT infinity",
+            "couple with one finite half (other side) is NOT infinity",
         );
     }
 
@@ -1792,7 +1791,7 @@ mod tests {
         let inf = CoupleMontgomeryPoint::<Fp1Element>::infinity();
         assert!(
             bool::from(inf.is_infinity()),
-            "S161: CoupleMontgomeryPoint::infinity().is_infinity() must be TRUE",
+            "CoupleMontgomeryPoint::infinity().is_infinity() must be TRUE",
         );
     }
 
@@ -1806,13 +1805,13 @@ mod tests {
         let mixed = CoupleMontgomeryPoint::new(MontgomeryPoint::infinity(), finite);
         assert!(
             !bool::from(mixed.is_infinity()),
-            "S161: couple-Montgomery with one finite half is NOT infinity",
+            "couple-Montgomery with one finite half is NOT infinity",
         );
     }
 
-    // S160 — CoupleMontgomeryPoint::ladder + ladder_with_curves tests.
+    // CoupleMontgomeryPoint::ladder + ladder_with_curves tests.
 
-    /// S160 oracle: scalar = [0] (zero) on a couple should produce
+    /// Oracle: scalar = [0] (zero) on a couple should produce
     /// `(O, O)` componentwise. Confirms `0 · P = O` per the
     /// underlying MontgomeryPoint::ladder semantics.
     #[test]
@@ -1833,15 +1832,15 @@ mod tests {
 
         assert!(
             bool::from(r.p1.is_infinity()),
-            "S160: 0 · P_1 must be infinity",
+            "0 · P_1 must be infinity",
         );
         assert!(
             bool::from(r.p2.is_infinity()),
-            "S160: 0 · P_2 must be infinity",
+            "0 · P_2 must be infinity",
         );
     }
 
-    /// S160: confirm componentwise ladder matches per-half ladder
+    /// confirm componentwise ladder matches per-half ladder
     /// independently. Same scalar fed into both halves.
     #[test]
     fn couple_montgomery_ladder_componentwise_matches_per_half_at_lvl1() {
@@ -1866,15 +1865,15 @@ mod tests {
 
         assert_eq!(
             via_couple.p1, solo_1,
-            "S160: couple ladder.p1 must match per-half ladder on E_1",
+            "couple ladder.p1 must match per-half ladder on E_1",
         );
         assert_eq!(
             via_couple.p2, solo_2,
-            "S160: couple ladder.p2 must match per-half ladder on E_2",
+            "couple ladder.p2 must match per-half ladder on E_2",
         );
     }
 
-    /// S160: confirm `ladder_with_curves` matches the explicit-a24
+    /// confirm `ladder_with_curves` matches the explicit-a24
     /// variant on the same input.
     #[test]
     fn couple_montgomery_ladder_with_curves_matches_explicit_at_lvl1() {
@@ -1900,12 +1899,12 @@ mod tests {
 
         assert_eq!(
             r_wrapper, r_explicit,
-            "S160: ladder_with_curves must match ladder with explicit a24",
+            "ladder_with_curves must match ladder with explicit a24",
         );
     }
 
-    /// S151: confirm `double_with_curves` produces the same output as
-    /// the explicit-a24 variant. Same input fixture as S149 oracle
+    /// confirm `double_with_curves` produces the same output as
+    /// the explicit-a24 variant. Same input fixture as the oracle test
     /// (curve a=0, P=(3,1) on each half) — but now CoupleCurve carries
     /// a=0 and the wrapper computes a24=(0+2)/4=1/2 from it.
     ///
@@ -1935,7 +1934,7 @@ mod tests {
 
         assert_eq!(
             r_wrapper, r_explicit,
-            "S151: double_with_curves must match double with explicit a24",
+            "double_with_curves must match double with explicit a24",
         );
     }
 
@@ -1957,7 +1956,7 @@ mod tests {
             MontgomeryPoint::<Fp1Element>::new(two, one_v),
         );
         let r = p.double_iter_with_curves(0, &curves);
-        assert_eq!(r, p, "S151: double_iter_with_curves(0) = identity");
+        assert_eq!(r, p, "double_iter_with_curves(0) = identity");
     }
 
     #[test]
@@ -1983,7 +1982,7 @@ mod tests {
             let r_explicit = p.double_iter(n, &curves.e1.a24(), &curves.e2.a24());
             assert_eq!(
                 r_wrapper, r_explicit,
-                "S151: double_iter_with_curves({n}) must match explicit-a24 variant",
+                "double_iter_with_curves({n}) must match explicit-a24 variant",
             );
         }
     }
@@ -2002,7 +2001,7 @@ mod tests {
         );
         let r_iter = p.double_iter(1, &one_v, &one_v);
         let r_solo = p.double(&one_v, &one_v);
-        assert_eq!(r_iter, r_solo, "S149: double_iter(1) = double");
+        assert_eq!(r_iter, r_solo, "double_iter(1) = double");
     }
 
     #[test]
@@ -2017,11 +2016,11 @@ mod tests {
 
         let kernel = ThetaKernelCouplePoints::new(t1, t2, t1m2);
 
-        assert_eq!(kernel.t1, t1, "S148: kernel.t1 preserved");
-        assert_eq!(kernel.t2, t2, "S148: kernel.t2 preserved");
+        assert_eq!(kernel.t1, t1, "kernel.t1 preserved");
+        assert_eq!(kernel.t2, t2, "kernel.t2 preserved");
         assert_eq!(
             kernel.t1_minus_t2, t1m2,
-            "S148: kernel.t1_minus_t2 preserved"
+            "kernel.t1_minus_t2 preserved"
         );
     }
 }

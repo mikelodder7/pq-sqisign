@@ -19,16 +19,16 @@
 //!
 //! - **Basis storage** — the C reference stores basis vectors as
 //!   COLUMNS of `ibz_mat_4x4_t`; our [`LeftIdeal::basis`] stores
-//!   them as ROWS. S214 transcription applies the transposition.
+//!   them as ROWS. Transcription applies the transposition.
 //! - **Coordinate system** — the C reference stores basis vectors
 //!   in standard `(1, i, j, ij)` quaternion coords; our `LeftIdeal`
-//!   stores them in `O_0`-basis coords. S214 applies the conversion
+//!   stores them in `O_0`-basis coords. Transcription applies the conversion
 //!   `(a, b, c, d) → (a - d, b - c, 2c, 2d)` (derived from
 //!   `o0_basis_to_standard_doubled`'s inverse).
 //! - **`cached_norm` convention** — the C reference's `.norm` field
 //!   is the REDUCED quaternion ideal norm `N_red(γ_I)`. Our
 //!   [`LeftIdeal::cached_norm`] is the LATTICE INDEX `N_red(γ_I)²`
-//!   per S201. Transcription squares the C reference's norm.
+//!   (lattice-index convention). Transcription squares the C reference's norm.
 
 use crypto_bigint::{Int, Uint};
 
@@ -40,12 +40,11 @@ use crate::quaternion::ideal::LeftIdeal;
 ///
 /// # Provenance
 ///
-/// Transcribed via the S213 research agent from
+/// Transcribed from
 /// `src/precomp/ref/lvl1/quaternion_data.c` lines 1888-2050
-/// (`GMP_LIMB_BITS == 64` branch). Verbatim quotes preserved in
-/// the S213 close in `ISA.md`.
+/// (`GMP_LIMB_BITS == 64` branch).
 ///
-/// # Math sanity (S213)
+/// # Math sanity
 ///
 /// C-ref basis is in `(1, i, j, ij)` coords, column-major. Each
 /// column → one Rust basis row, with the `(a, b, c, d) → (a − d,
@@ -56,7 +55,7 @@ use crate::quaternion::ideal::LeftIdeal;
 /// Similarly `col3 = (0, 0, 0, 1)` (= `k`) → `(−1, 0, 0, 2)` →
 /// `−1 + 2·(1+k)/2 = k` ✓.
 ///
-/// # `cached_norm` (S201 convention)
+/// # `cached_norm` (lattice-index convention)
 ///
 /// The C reference's `.norm` field is the reduced quaternion ideal
 /// norm `0x30000000000000000000000000000001` (= `3·2^124 + 1`).
@@ -68,10 +67,10 @@ pub fn alternate_connecting_ideal_0_l1() -> LeftIdeal<8> {
     // C `CONNECTING_IDEALS[1]` basis, row-major `basis[i][j]` (verbatim from
     // `quaternion_data.c`). The C header is explicit: a matrix COLUMN divided
     // by the denominator is an algebra element — so the column convention is
-    // correct, which `c_ideal_to_left_ideal` (S328) applies. `Uint::from_words`
+    // correct, which `c_ideal_to_left_ideal` applies. `Uint::from_words`
     // uses little-endian limbs matching GMP's `_mp_d`.
     //
-    // **S338 correction**: the prior transcription used the C *rows* as the
+    // **Correction**: the prior transcription used the C *rows* as the
     // ideal generators (transposed) — that lattice is NOT a left O_0-ideal
     // (`connecting_ideal_1_element_convention` proved rows are not left-closed,
     // columns are). The norm²/runs-to-completion tests could not catch it
@@ -84,14 +83,14 @@ pub fn alternate_connecting_ideal_0_l1() -> LeftIdeal<8> {
     let c = w(0x1, 0x5000000000000000); // 0x50…01
     let cbasis = [[a, z, z, b], [z, a, c, z], [z, z, one, z], [z, z, z, one]];
     // C reduced norm 0x30…01 = 3·2^124 + 1; `c_ideal_to_left_ideal` stores
-    // `cached_norm = norm²` (the S201 lattice-index convention).
+    // `cached_norm = norm²` (the lattice-index convention).
     let norm = Uint::<8>::from_words([0x1, 0x3000000000000000, 0, 0, 0, 0, 0, 0]);
     crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &Int::<8>::from_i64(2), &norm)
 }
 
 /// L1 `ALTERNATE_CONNECTING_IDEALS[1]` = the C reference's
 /// `CONNECTING_IDEALS[2]` (extracted from `quaternion_data.c`, GMP-64 limbs;
-/// COLUMN convention via `c_ideal_to_left_ideal` per S338). Reduced norm
+/// COLUMN convention via `c_ideal_to_left_ideal`). Reduced norm
 /// `0x3c7a53236805e962bfc80abdc339faff`; `cached_norm = norm²`, denom reduces to 1 (integral O_0-ideal).
 pub fn alternate_connecting_ideal_1_l1() -> LeftIdeal<8> {
     let w = |lo: u64, hi: u64| *Uint::<8>::from_words([lo, hi, 0, 0, 0, 0, 0, 0]).as_int();
@@ -119,7 +118,7 @@ pub fn alternate_connecting_ideal_1_l1() -> LeftIdeal<8> {
 
 /// L1 `ALTERNATE_CONNECTING_IDEALS[2]` = the C reference's
 /// `CONNECTING_IDEALS[3]` (extracted from `quaternion_data.c`, GMP-64 limbs;
-/// COLUMN convention via `c_ideal_to_left_ideal` per S338). Reduced norm
+/// COLUMN convention via `c_ideal_to_left_ideal`). Reduced norm
 /// `0xbca4df64395c83c1e37d4733b8af2f1`; `cached_norm = norm²`, denom reduces to 1 (integral O_0-ideal).
 pub fn alternate_connecting_ideal_2_l1() -> LeftIdeal<8> {
     let w = |lo: u64, hi: u64| *Uint::<8>::from_words([lo, hi, 0, 0, 0, 0, 0, 0]).as_int();
@@ -147,7 +146,7 @@ pub fn alternate_connecting_ideal_2_l1() -> LeftIdeal<8> {
 
 /// L1 `ALTERNATE_CONNECTING_IDEALS[3]` = the C reference's
 /// `CONNECTING_IDEALS[4]` (extracted from `quaternion_data.c`, GMP-64 limbs;
-/// COLUMN convention via `c_ideal_to_left_ideal` per S338). Reduced norm
+/// COLUMN convention via `c_ideal_to_left_ideal`). Reduced norm
 /// `0x16fca7cbe44f64676f19e288b6f757d1`; `cached_norm = norm²`, denom reduces to 1 (integral O_0-ideal).
 pub fn alternate_connecting_ideal_3_l1() -> LeftIdeal<8> {
     let w = |lo: u64, hi: u64| *Uint::<8>::from_words([lo, hi, 0, 0, 0, 0, 0, 0]).as_int();
@@ -175,7 +174,7 @@ pub fn alternate_connecting_ideal_3_l1() -> LeftIdeal<8> {
 
 /// L1 `ALTERNATE_CONNECTING_IDEALS[4]` = the C reference's
 /// `CONNECTING_IDEALS[5]` (extracted from `quaternion_data.c`, GMP-64 limbs;
-/// COLUMN convention via `c_ideal_to_left_ideal` per S338). Reduced norm
+/// COLUMN convention via `c_ideal_to_left_ideal`). Reduced norm
 /// `0x59a410c3a2e4fa2ca951773baaca0cf9`; `cached_norm = norm²`, denom reduces to 1 (integral O_0-ideal).
 pub fn alternate_connecting_ideal_4_l1() -> LeftIdeal<8> {
     let w = |lo: u64, hi: u64| *Uint::<8>::from_words([lo, hi, 0, 0, 0, 0, 0, 0]).as_int();
@@ -203,7 +202,7 @@ pub fn alternate_connecting_ideal_4_l1() -> LeftIdeal<8> {
 
 /// L1 `ALTERNATE_CONNECTING_IDEALS[5]` = the C reference's
 /// `CONNECTING_IDEALS[6]` (extracted from `quaternion_data.c`, GMP-64 limbs;
-/// COLUMN convention via `c_ideal_to_left_ideal` per S338). Reduced norm
+/// COLUMN convention via `c_ideal_to_left_ideal`). Reduced norm
 /// `0x14cb6c2975e50380e818b56bb3e7d51d`; `cached_norm = norm²`, denom reduces to 1 (integral O_0-ideal).
 pub fn alternate_connecting_ideal_5_l1() -> LeftIdeal<8> {
     let w = |lo: u64, hi: u64| *Uint::<8>::from_words([lo, hi, 0, 0, 0, 0, 0, 0]).as_int();
@@ -234,8 +233,8 @@ mod tests {
     use super::*;
     use std::eprintln;
 
-    /// S214 regression: `cached_norm` equals `reduced_norm²` per the
-    /// S201 lattice-index convention.
+    /// regression: `cached_norm` equals `reduced_norm²` per the
+    /// lattice-index convention.
     #[test]
     fn alt_connecting_ideal_0_l1_cached_norm_is_reduced_norm_squared() {
         let ideal = alternate_connecting_ideal_0_l1();
@@ -243,11 +242,11 @@ mod tests {
         let expected_cached = expected_reduced.wrapping_mul(&expected_reduced);
         assert_eq!(
             ideal.cached_norm, expected_cached,
-            "cached_norm must equal reduced_norm² per S201 convention",
+            "cached_norm must equal reduced_norm² per the lattice-index convention",
         );
     }
 
-    /// S214 regression: `reduced_norm_vartime()` round-trips the C ref's
+    /// regression: `reduced_norm_vartime()` round-trips the C ref's
     /// `.norm` field (the integer square root of `cached_norm`).
     #[test]
     fn alt_connecting_ideal_0_l1_reduced_norm_round_trips() {
@@ -263,7 +262,7 @@ mod tests {
     /// The C stores the connecting ideal at std-coords `lattice.denom = 2`, but
     /// in O_0-coords an INTEGRAL left ideal is canonically denom 1 (all O_0
     /// coords are even, so `c_ideal_to_left_ideal`'s `reduce_denom` divides the
-    /// 2 out — S336/S338). Denom 1 is also what the spine expects.
+    /// 2 out). Denom 1 is also what the spine expects.
     #[test]
     fn alt_connecting_ideal_0_l1_denom_is_one() {
         let ideal = alternate_connecting_ideal_0_l1();
@@ -271,28 +270,30 @@ mod tests {
     }
 
     // (Removed `alt_connecting_ideal_0_l1_trivial_columns_match_conversion` —
-    // it asserted the pre-S338 transposed row-as-element basis, which is not a
+    // it asserted the pre-fix transposed row-as-element basis, which is not a
     // valid left O_0-ideal. Correctness is now covered by
     // `connecting_ideal_1_element_convention` (left-closure + reduced norm).)
 
-    // ── S215: probe L1 ALT[0] through the existing primitives ─────────
+    // ── probe L1 ALT[0] through the existing primitives ───────────────
 
-    /// S215 probe: `lideal_reduce_basis` on L1 ALT[0] at the REAL L1
+    /// probe: `lideal_reduce_basis` on L1 ALT[0] at the REAL L1
     /// prime panics inside LLL's `int_div_exact` step. The probe
-    /// confirms what S206 flagged: at LIMBS=8 with p ≈ 2^251, LLL's
+    /// confirms: at LIMBS=8 with p ≈ 2^251, LLL's
     /// intermediate computations on a basis with 128-bit entries
     /// overflow the 512-bit Uint, causing the exact-division assertion
     /// to fail.
     ///
-    /// **Blocker for S216+**: wide-Int variants of `lideal_reduce_basis`,
+    /// **Blocker**: wide-Int variants of `lideal_reduce_basis`,
     /// `lideal_rescale_by_smallest_basis_element`, and `find_uv` are
     /// needed before alternate-orders body wiring can be validated
     /// numerically against the real L1 prime + real ALT data.
     ///
-    /// **Marked `#[ignore]`** until the wide-Int path lands. Re-enable
-    /// after S216+ ships `lideal_reduce_basis_wide` etc.
+    /// **Marked `#[ignore]`**: this test exercises the narrow `LIMBS=8`
+    /// reduction directly, which overflows on the real L1 ALT data. Production
+    /// uses the wide reduction path (`lideal_reduce_basis_wide`); re-enabling
+    /// this test would require porting it onto that path.
     #[test]
-    #[ignore = "precision overflow at LIMBS=8 with real L1 prime — needs wide-Int variants (S216+)"]
+    #[ignore = "narrow LIMBS=8 reduction overflows on real L1 ALT data"]
     fn alt_connecting_ideal_0_l1_lll_is_unimodular() {
         let p: Uint<8> = crate::params::lvl1::prime().resize::<8>();
         let id = alternate_connecting_ideal_0_l1();
@@ -307,7 +308,7 @@ mod tests {
         );
     }
 
-    /// S215 sanity probe: an attempt to bypass the L1-prime precision
+    /// sanity probe: an attempt to bypass the L1-prime precision
     /// concern by testing LLL on ALT[0]'s structure at p=7 ALSO
     /// panics inside `int_div_exact`.
     ///
@@ -323,9 +324,10 @@ mod tests {
     /// required to test ALT entries (real C-ref data) at ANY prime,
     /// not just the L1 production magnitude.
     ///
-    /// **Marked `#[ignore]`** with the rest until wide-Int lands.
+    /// **Marked `#[ignore]`** with the rest: same narrow-path overflow (the
+    /// integer-GSO exceeds `Uint<8>` on 128-bit basis entries at any prime).
     #[test]
-    #[ignore = "LLL integer-GSO overflows Uint<8> on 128-bit basis entries at any prime — needs wide-Int variants (S216+)"]
+    #[ignore = "narrow LIMBS=8 integer-GSO overflows on 128-bit basis entries"]
     fn alt_connecting_ideal_0_l1_lll_mechanically_valid_at_small_prime() {
         let p = Uint::<8>::from_u64(7);
         let id = alternate_connecting_ideal_0_l1();
@@ -343,8 +345,8 @@ mod tests {
         );
     }
 
-    /// S215 probe: `lideal_rescale_by_smallest_basis_element` outcome
-    /// on L1 ALT[0]. The S203 invariant says SQIsign-shaped principal
+    /// probe: `lideal_rescale_by_smallest_basis_element` outcome
+    /// on L1 ALT[0]. The invariant says SQIsign-shaped principal
     /// ideals rescale to `O_0` (`cached_norm == 1`). This test
     /// documents whether L1 ALT[0] satisfies the invariant.
     ///
@@ -355,9 +357,9 @@ mod tests {
     /// path in `reduced_norm_vartime`) OR the divisibility check
     /// failed (entry doesn't satisfy the SQIsign-shaped contract at
     /// our small-prime smoke fixture). Either outcome is informative
-    /// for S216 body wiring.
+    /// for future body wiring.
     #[test]
-    #[ignore = "precision overflow at LIMBS=8 with real L1 prime — needs wide-Int variants (S216+)"]
+    #[ignore = "precision overflow at LIMBS=8 with real L1 prime — needs wide-Int variants"]
     fn alt_connecting_ideal_0_l1_rescale_outcome() {
         let p: Uint<8> = crate::params::lvl1::prime().resize::<8>();
         let id = alternate_connecting_ideal_0_l1();
@@ -367,14 +369,14 @@ mod tests {
         );
         match rescaled {
             Some(r) => {
-                // S203 invariant: rescaled = O_0 → cached_norm == 1.
+                // invariant: rescaled = O_0 → cached_norm == 1.
                 // If this fails, ALT[0] is NOT SQIsign-shaped at L1 prime
                 // (or our LLL doesn't find the principal generator as δ).
                 // Either way, this test PINS the current behavior.
                 assert_eq!(
                     r.cached_norm,
                     Uint::<8>::from_u64(1),
-                    "rescaled cached_norm must be 1 per S203 invariant; \
+                    "rescaled cached_norm must be 1 (rescale-to-unit-lattice invariant); \
                      deviation signals ALT[0] is not SQIsign-shaped at L1 prime",
                 );
             }
@@ -382,13 +384,13 @@ mod tests {
                 panic!(
                     "rescale returned None — ALT[0] may not satisfy the SQIsign-shaped \
                      contract at the real L1 prime, OR cached_norm isn't a perfect square \
-                     (the latter should be impossible given the S214 construction)."
+                     (the latter should be impossible given the lattice-index construction)."
                 );
             }
         }
     }
 
-    /// S217: compose wide LLL (S216) with the existing narrow
+    /// compose wide LLL with the existing narrow
     /// `lideal_rescale_by_smallest_basis_element` on ALT[0] at p=7.
     ///
     /// **Math sanity for narrow rescale at p=7**: the autocompute
@@ -400,7 +402,7 @@ mod tests {
     /// rescale is OK at p=7.
     ///
     /// Per-outcome assertions:
-    /// - `Some(rescaled)` with `cached_norm == 1`: S203 invariant holds;
+    /// - `Some(rescaled)` with `cached_norm == 1`: rescale-to-unit-lattice invariant holds;
     ///   ALT[0] IS SQIsign-shaped.
     /// - `Some(rescaled)` with `cached_norm != 1`: ALT[0] is rescale-
     ///   able but not SQIsign-shaped (the smallest LLL basis element
@@ -417,13 +419,13 @@ mod tests {
         );
         match rescaled {
             Some(r) => {
-                // S203 invariant check (informational): cached_norm == 1
+                // invariant check (informational): cached_norm == 1
                 // for SQIsign-shaped. Otherwise the rescale still succeeded
                 // structurally but produced a non-unit lattice.
                 let n_after = r.cached_norm;
                 let n_before = reduced.cached_norm;
                 eprintln!(
-                    "S217 outcome: rescale Ok; cached_norm pre = {:?}, post = {:?}",
+                    "rescale Ok; cached_norm pre = {:?}, post = {:?}",
                     n_before, n_after
                 );
                 // At minimum, denom should update per the wide-LLL-prep:
@@ -439,15 +441,15 @@ mod tests {
             }
             None => {
                 eprintln!(
-                    "S217 outcome: rescale returned None — ALT[0]'s LLL-shortest δ \
+                    "rescale returned None — ALT[0]'s LLL-shortest δ \
                      doesn't generate the principal part (or cached_norm not a perfect square). \
-                     Documented; S218+ may need to handle this case in find_uv_alternate_orders."
+                     Documented; future sessions may need to handle this case in find_uv_alternate_orders."
                 );
             }
         }
     }
 
-    /// S216: ALT[0] LLL via the wide variant at `WIDE=20` (1280-bit) +
+    /// ALT[0] LLL via the wide variant at `WIDE=20` (1280-bit) +
     /// p=7. Validates that the wide path handles ALT-magnitude basis
     /// entries without overflow.
     ///
@@ -475,14 +477,14 @@ mod tests {
         );
     }
 
-    /// S215 probe: `lideal_intersect(O_0, ALT[0])` outcome. For coprime
-    /// norms, S190's `lideal_intersect` falls through to `ideal_multiply`.
+    /// probe: `lideal_intersect(O_0, ALT[0])` outcome. For coprime
+    /// norms, `lideal_intersect` falls through to `ideal_multiply`.
     /// Since `N(O_0) = 1` and `N(ALT[0]) = reduced_norm²` (with reduced
     /// norm > 1), gcd(1, anything) = 1 → coprime path triggers →
     /// returns `Ok(ideal_multiply(O_0, ALT[0]))`. The product `O_0 · ALT[0]`
     /// is just `ALT[0]` (left-multiplication by full order is identity).
     #[test]
-    #[ignore = "precision overflow at LIMBS=8 with real L1 prime — needs wide-Int variants (S216+)"]
+    #[ignore = "precision overflow at LIMBS=8 with real L1 prime — needs wide-Int variants"]
     fn alt_connecting_ideal_0_l1_intersect_with_full_order_is_self() {
         let p: Uint<8> = crate::params::lvl1::prime().resize::<8>();
         let full = LeftIdeal::<8>::full_order();
@@ -496,13 +498,13 @@ mod tests {
         );
     }
 
-    /// S338 element-convention guard for the C connecting-ideal basis. The C
+    /// element-convention guard for the C connecting-ideal basis. The C
     /// header is explicit ("columns divided by denom are algebra elements"),
     /// and a left O_0-ideal must satisfy `O_0·I ⊆ I`; only the correct
     /// convention is left-closed. This test proves: (a) the SHIPPED
     /// `alternate_connecting_ideal_0_l1` (column convention via
     /// `c_ideal_to_left_ideal`) IS left-closed with reduced norm 3·2^124+1, and
-    /// (b) the TRANSPOSED rows-as-elements lattice (the pre-S338 bug) is NOT
+    /// (b) the TRANSPOSED rows-as-elements lattice (the pre-fix transposed bug) is NOT
     /// left-closed — guarding against a regression to the transpose. `det`/norm
     /// are transpose-invariant, so closure is the discriminating check.
     #[test]
@@ -548,7 +550,7 @@ mod tests {
         );
 
         // (b) Transposed (rows-as-elements) lattice is NOT left-closed — the
-        //     pre-S338 bug. Build it the old way: each C ROW → std-coords
+        //     pre-fix transposed bug. Build it the old way: each C ROW → std-coords
         //     element → O_0-coords.
         let mut rows_basis = [[z; 4]; 4];
         for (r, row) in cbasis.iter().enumerate() {
@@ -562,13 +564,13 @@ mod tests {
         );
         assert!(
             !closed(&rows),
-            "transposed (rows-as-elements) lattice must NOT be left-closed (S338 bug guard)",
+            "transposed (rows-as-elements) lattice must NOT be left-closed (column-convention guard)",
         );
     }
 
-    /// S339: all 6 L1 alternate connecting ideals (C `CONNECTING_IDEALS[1..7]`)
+    /// all 6 L1 alternate connecting ideals (C `CONNECTING_IDEALS[1..7]`)
     /// are valid left O_0-ideals with the C reference reduced norms. Validates
-    /// the scripted port of [2..6] (and re-checks the S338-fixed [1]) via the
+    /// the scripted port of [2..6] (and re-checks [1]) via the
     /// structural left-closure invariant + the reduced-norm + denom-1 checks.
     #[test]
     fn all_alternate_connecting_ideals_l1_are_left_ideals() {

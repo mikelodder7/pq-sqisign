@@ -21,22 +21,19 @@
 //! 2. Compute the theta-coordinate evaluation of `K`'s representation.
 //! 3. Project back to the elliptic-curve isogeny via the canonical map.
 //!
-//! The detailed algorithms (theta evaluation, gluing, projection) span
-//! roughly 25-30 sessions of implementation per the ISA roadmap. This
-//! module ships the scaffolding (public API + types) so downstream code
-//! (Sign/Verify orchestration) can target a stable interface while the
-//! inner algorithms are filled in over future sessions.
+//! This module holds the public API + types for the translation. The
+//! detailed evaluator (theta evaluation, gluing, projection) is
+//! implemented in [`crate::isogeny::clapotis_spine`]; the generic
+//! `ideal_to_isogeny` / `evaluate_response_isogeny` entry points here
+//! remain thin stubs (see their docs).
 //!
 //! # Output shape
 //!
-//! [`IdealToIsogenyResult`] bundles the data Sign needs from the
-//! translation:
-//! - The codomain curve `E_K = E_0 / ker(φ)` (placeholder `PhantomData<P>`
-//!   for now; will be a Montgomery curve over `F_{p²}` once filled in).
-//! - The kernel point or isogeny chain representation (TBD per spec).
-//!
-//! Sign extracts the response `σ` from this output and the upstream
-//! commitment/challenge state.
+//! [`IdealToIsogenyResult`] is the output type for the generic stub
+//! entry point. It is a `PhantomData<P>` placeholder: the codomain
+//! curve `E_K = E_0 / ker(φ)` (a Montgomery curve over `F_{p²}`) and
+//! the kernel/isogeny-chain representation are produced by the spine
+//! evaluator in [`crate::isogeny::clapotis_spine`], not by this type.
 
 use core::marker::PhantomData;
 
@@ -257,7 +254,7 @@ pub fn enumerate_hypercube<const LIMBS: usize>(
     out
 }
 
-/// Wide-precision variant of [`enumerate_hypercube`] (S231). Identical
+/// Wide-precision variant of [`enumerate_hypercube`]. Identical
 /// candidate enumeration + filters (all-even / mod-3 / i-action symmetry
 /// / odd-quotient / `count-1` truncation), but evaluates `vᵀ·G·v` and the
 /// `adjusted_norm` division in `WIDE` precision so neither overflows at
@@ -363,16 +360,17 @@ pub fn enumerate_hypercube_wide<const NARROW: usize, const WIDE: usize>(
     out
 }
 
-/// Structured output of [`ideal_to_isogeny`] at security level `P`.
+/// Structured output of the [`ideal_to_isogeny`] stub at security level `P`.
 ///
-/// Placeholder for the codomain curve + isogeny representation that the
-/// Clapotis evaluator returns. Filled in once the higher-dimensional theta
-/// algorithms land.
+/// `PhantomData<P>` placeholder for the codomain curve + isogeny
+/// representation. The functional translation lives in the spine
+/// evaluator [`crate::isogeny::clapotis_spine`], which returns its own
+/// richer types; this placeholder backs the generic stub entry point.
 #[derive(Debug, Clone)]
 pub struct IdealToIsogenyResult<P: Params> {
-    /// Phantom for the security level. Future fields will include the
-    /// codomain Montgomery curve (`A24` projective form) and the isogeny
-    /// chain or theta-coordinate data.
+    /// Phantom for the security level. A non-placeholder result would
+    /// carry the codomain Montgomery curve (`A24` projective form) and
+    /// the isogeny chain or theta-coordinate data.
     pub _marker: PhantomData<P>,
 }
 
@@ -396,15 +394,14 @@ impl<P: Params> IdealToIsogenyResult<P> {
 /// `q` is the prime factor from γ-randomization, returned alongside `K`.
 /// The downstream isogeny degree is `q · T = K.cached_norm`.
 ///
-/// # Current status — stubbed
+/// # Status — generic stub
 ///
-/// Returns `Error::Unimplemented("ideal_to_isogeny: ...")`. The full
-/// Clapotis evaluator algorithm is the dominant remaining scope (~25-30
-/// sessions per the ISA roadmap). This stub establishes the public API
-/// contract so:
-/// - Sign/Verify orchestration can wire against a stable signature.
-/// - Tests can assert the post-KLPT-body integration shape.
-/// - Future sessions can fill the body in place without touching callers.
+/// This generic entry point returns `Error::Unimplemented`. The
+/// functional Clapotis evaluator is implemented in
+/// [`crate::isogeny::clapotis_spine`] (`ideal_to_isogeny_clapotis`),
+/// which the keygen/sign paths call directly. This stub establishes a
+/// stable public API contract so Sign/Verify orchestration and tests
+/// can target a fixed signature.
 ///
 /// # Inputs
 ///
@@ -416,17 +413,16 @@ impl<P: Params> IdealToIsogenyResult<P> {
 ///
 /// # Errors
 ///
-/// Currently always returns `Error::Unimplemented`. Future
-/// implementations may return other errors if the input ideal's norm
-/// structure is incompatible with the evaluator's preconditions.
-#[allow(clippy::needless_pass_by_value)] // future implementations consume the rng
+/// Always returns `Error::Unimplemented`; the functional path is the
+/// spine evaluator (see above).
+#[allow(clippy::needless_pass_by_value)] // the spine evaluator consumes the rng
 pub fn ideal_to_isogeny<P: Params, const TLIMBS: usize, R: CryptoRng>(
     _klpt_output: &LeftIdealWideNorm<TLIMBS>,
     _q: Uint<8>,
     _rng: &mut R,
 ) -> Result<IdealToIsogenyResult<P>> {
     Err(Error::Unimplemented(
-        "ideal_to_isogeny: Clapotis evaluator pending (the dominant remaining scope, ~25-30 sessions)",
+        "ideal_to_isogeny: generic entry point unimplemented — the functional Clapotis evaluator is in clapotis_spine",
     ))
 }
 
@@ -440,14 +436,13 @@ pub fn ideal_to_isogeny<P: Params, const TLIMBS: usize, R: CryptoRng>(
 /// apply it to the derived challenge, and check the resulting curve
 /// matches the public key's expected codomain.
 ///
-/// # Current status — stubbed
+/// # Status — generic stub
 ///
-/// Returns `Error::Unimplemented`. The full verify path consumes the
-/// same Clapotis evaluator infrastructure that [`ideal_to_isogeny`]
-/// builds — once that algorithmic body lands, this function fills in
-/// with the parsing + isogeny-evaluation + codomain-check sequence.
-/// Currently in place so `crate::verify` can dispatch through a
-/// stable contract.
+/// Returns `Error::Unimplemented`. The functional Level-1 verify path
+/// is wired elsewhere in `crate::verify`; this generic entry point is a
+/// stable dispatch contract (only the unwired L3/L5 levels route here).
+/// A functional body would do the parsing + isogeny-evaluation +
+/// codomain-check sequence.
 ///
 /// # Inputs
 ///
@@ -458,12 +453,12 @@ pub fn ideal_to_isogeny<P: Params, const TLIMBS: usize, R: CryptoRng>(
 ///
 /// # Errors
 ///
-/// Currently always returns `Error::Unimplemented`. Future
-/// implementations will return `Error::InvalidSignature` (or similar)
-/// when the response isogeny's codomain doesn't match `pk`'s curve.
+/// Always returns `Error::Unimplemented`. A functional body would
+/// return `Error::InvalidSignature` (or similar) when the response
+/// isogeny's codomain doesn't match `pk`'s curve.
 pub fn evaluate_response_isogeny<P: Params>(_sig: &[u8], _msg: &[u8], _pk: &[u8]) -> Result<()> {
     Err(Error::Unimplemented(
-        "evaluate_response_isogeny: Clapotis evaluator pending (the dominant remaining scope, ~25-30 sessions)",
+        "evaluate_response_isogeny: generic entry point unimplemented — the functional Clapotis evaluator is in clapotis_spine",
     ))
 }
 
@@ -473,7 +468,7 @@ mod tests {
 
     #[test]
     fn ideal_to_isogeny_stub_returns_unimplemented_at_lvl1() {
-        // S77 scaffolding test: the public API stub is in place and
+        // scaffolding test: the public API stub is in place and
         // returns the documented `Unimplemented` error. This locks
         // down the contract that downstream code (Sign/Verify
         // orchestration) can wire against.
@@ -491,32 +486,32 @@ mod tests {
         let mut rng = NistPqcRng::new(&[0x77u8; 48]);
 
         let result = ideal_to_isogeny::<Level1, 8, _>(&klpt_output, q, &mut rng);
-        let err = result.expect_err("S77: stub must return Unimplemented");
+        let err = result.expect_err("stub must return Unimplemented");
         let Error::Unimplemented(msg) = err else {
-            unreachable!("S77: expected Unimplemented, got {err:?}");
+            unreachable!("expected Unimplemented, got {err:?}");
         };
         assert!(
             msg.contains("Clapotis evaluator") || msg.contains("dominant remaining scope"),
-            "S77: stub's error message must reference the Clapotis evaluator deferral; got: {msg}",
+            "stub's error message must reference the Clapotis evaluator deferral; got: {msg}",
         );
     }
 
     #[test]
     fn evaluate_response_isogeny_stub_returns_unimplemented_at_lvl1() {
-        // S84 contract test: the verify-side stub mirrors S77's
+        // contract test: the verify-side stub mirrors the
         // ideal_to_isogeny contract. Placeholder byte slices; the stub
         // returns Unimplemented regardless of input. Locks the contract
         // that `crate::verify` wires against.
         use crate::params::Level1;
 
         let result = evaluate_response_isogeny::<Level1>(&[], b"msg", &[]);
-        let err = result.expect_err("S84: verify stub must return Unimplemented");
+        let err = result.expect_err("verify stub must return Unimplemented");
         let Error::Unimplemented(msg) = err else {
-            unreachable!("S84: expected Unimplemented, got {err:?}");
+            unreachable!("expected Unimplemented, got {err:?}");
         };
         assert!(
             msg.contains("Clapotis evaluator") || msg.contains("dominant remaining scope"),
-            "S84: verify stub's error must reference the Clapotis deferral; got: {msg}",
+            "verify stub's error must reference the Clapotis deferral; got: {msg}",
         );
     }
 
@@ -989,9 +984,9 @@ pub fn find_uv_from_lists<const LIMBS: usize>(
     use crate::quaternion::sign_orchestration::uint_inv_mod_vartime;
     let zero_int = Int::<LIMBS>::from_i64(0);
 
-    // S193 scope: only the orchestrator's actual call pattern is
-    // ported. Cornacchia-constrained paths return None (defer to a
-    // future session when call sites materialize).
+    // Only the orchestrator's actual call pattern is ported.
+    // Cornacchia-constrained paths (number_sum_square != 0) return
+    // None; no current call site exercises them.
     if number_sum_square != 0 {
         return None;
     }
@@ -1030,7 +1025,7 @@ pub fn find_uv_from_lists<const LIMBS: usize>(
 
             // Compute inv = d2^{-1} mod d1.
             //
-            // S238: the d1 == 1 case is handled specially. `uint_inv_mod_vartime`
+            // the d1 == 1 case is handled specially. `uint_inv_mod_vartime`
             // returns `None` for modulus 1 (its m==1 guard), and the old code
             // treated that as "gcd ≠ 1, skip" — silently DISCARDING every pair
             // with d1 = 1. But modulo 1 EVERY residue is 0, so d2 is trivially
@@ -1159,7 +1154,7 @@ impl<const LIMBS: usize> FindUvResult<LIMBS> {
     }
 }
 
-/// S241: build the Clapotis **θ endomorphism** `θ = β2 · conj(β1) / n(I)`
+/// build the Clapotis **θ endomorphism** `θ = β2 · conj(β1) / n(I)`
 /// from a [`FindUvResult`] — the first step of Movement 2 (dim-2 isogeny
 /// kernel construction), per the SQIsign C reference's
 /// `dim2id2iso_ideal_to_isogeny_clapotis`. The dim-2 kernel is generated
@@ -1322,7 +1317,7 @@ pub(crate) fn lattice_reduced_norm<const L: usize, const W: usize>(
 /// `&[]` (the empty slice) maps to the current `num_alternate_order
 /// = 0` baseline — the j=0 path that S195-S204 validated.
 ///
-/// The j-loop body (S206+) requires:
+/// The j-loop body requires:
 /// - Looping over `j ∈ [1, alt_connecting.len()]` and computing
 ///   `ideal[j] = lideal_intersect(conj(reduced_id), alt_connecting[j-1])`.
 /// - Per-j LLL + rescale + Gram + enumerate.
@@ -1385,7 +1380,7 @@ pub fn find_uv<const LIMBS: usize>(
     use crate::quaternion::ideal_mul::lideal_reduce_basis_wide;
     use crate::quaternion::o0_mul::uint_as_nonneg_int;
 
-    // S211 Option C dispatch: non-empty alt_connecting goes to the
+    // Option C dispatch: non-empty alt_connecting goes to the
     // separate find_uv_alternate_orders function (j-loop body lives
     // there, isolated from the j=0 path). Empty slice → existing j=0
     // body below, unchanged from S195-S210.
@@ -1395,7 +1390,7 @@ pub fn find_uv<const LIMBS: usize>(
     // intermediates exceed 4096 bits at real scale (WIDE=64 panicked in
     // `int_div_exact`; WIDE=128 runs to completion — see
     // `s345_find_uv_alternate_orders_real_l1_limbs16_all_six_alts`). The
-    // earlier WIDE=20 (S216) only ever covered the p=7 smoke fixtures.
+    // earlier WIDE=20 only ever covered the p=7 smoke fixtures.
     // Over-wide is always correct (more headroom), just slower; per-level
     // tuning is future work.
     if !alt_connecting.is_empty() {
@@ -1414,7 +1409,7 @@ pub fn find_uv<const LIMBS: usize>(
     // `Params` is future work.)
     let reduced = lideal_reduce_basis_wide::<LIMBS, 128>(lideal, p);
 
-    // S278: enumerate short vectors DIRECTLY in the LLL-reduced ORIGINAL
+    // enumerate short vectors DIRECTLY in the LLL-reduced ORIGINAL
     // ideal — the C-ref `find_uv` path, valid for ANY ideal (principal
     // or not). The S200-era δ-rescale to `reduced_id` was a
     // principal-only step (rescaling a principal ideal → O_0, which made
@@ -1428,7 +1423,7 @@ pub fn find_uv<const LIMBS: usize>(
     // Step 3: build the pulled-back Gram on the LLL-reduced ideal
     // `reduced`. The enumeration finds β ∈ I directly (β = reduced·vec).
     //
-    // S231: compute the pullback in WIDE precision. At the real L1 prime
+    // compute the pullback in WIDE precision. At the real L1 prime
     // the basis entries are ~2^249 and the O_0 metric ~2^251, so the
     // narrow `Bᵀ·M·B` INTERMEDIATES (~2^749) wrap `Int<LIMBS>` (511-bit
     // at LIMBS=8) and silently corrupt the Gram — S230 root-caused the
@@ -1478,7 +1473,7 @@ pub fn find_uv<const LIMBS: usize>(
         .wrapping_mul(&denom_sq_wide)
         .wrapping_mul(&n_ideal_wide);
 
-    // S208: box_size is now a caller-supplied per-level parameter
+    // box_size is now a caller-supplied per-level parameter
     // (C ref's FINDUV_box_size: L1=2, L3=3, L5=3). Validated via the
     // research agents in S206-S207.
     let m: i64 = box_size;
@@ -1678,7 +1673,7 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
          this function specifically handles the non-empty case",
     );
 
-    // S218: j-loop SETUP — LLL + rescale input → reduced_id, then for
+    // j-loop SETUP — LLL + rescale input → reduced_id, then for
     // each j ∈ [1, alt_connecting.len()] build ideal[j] = conj(reduced_id)
     // · ALT[j-1] then wide-LLL. Per S217 finding: NO rescale on j>0
     // entries — the C ref's body uses lideal_mul + LLL only.
@@ -1689,16 +1684,6 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
     // overflows on cached_norm ~p²; S225 calibration). The per-j products
     // below already wide-LLL via the WIDE const generic.
     let reduced = lideal_reduce_basis_wide::<LIMBS, 128>(lideal, p);
-    #[cfg(feature = "kat")]
-    {
-        let n_in = lattice_reduced_norm::<LIMBS, 32>(&reduced.basis, &reduced.denom);
-        std::eprintln!(
-            "DIAG fuv_alt: cached_norm bits={} is_sq={} lattice_N bits={:?}",
-            lideal.cached_norm.bits_vartime(),
-            lideal.reduced_norm_vartime().is_some(),
-            n_in.map(|n| n.bits_vartime()),
-        );
-    }
     let reduced_id = lideal_rescale_by_smallest_basis_element::<LIMBS>(&reduced, p).ok_or(
         Error::NoBezoutSolution(
             "find_uv_alternate_orders: rescale failed on input lideal — not SQIsign-shaped \
@@ -1727,7 +1712,7 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
         reduced_per_j.push(reduced_j);
     }
 
-    // Step 3 (S219): Build the shared δ from reduced.basis[0]. Mirrors
+    // Step 3: Build the shared δ from reduced.basis[0]. Mirrors
     // find_uv's S195 δ-extraction code: o0_basis_to_standard_doubled
     // converts O_0-basis coords to (1,i,j,k) scaled by 2; rational
     // denominator = 2 · reduced.denom (the 2 absorbs the doubling).
@@ -1739,7 +1724,7 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
         denom: two_uint.wrapping_mul(&reduced.denom),
     };
 
-    // Step 4 (S219): per-j Gram + enumerate. For each reduced_per_j[j]
+    // Step 4: per-j Gram + enumerate. For each reduced_per_j[j]
     // we pull-back the O_0 Gram, enumerate, sort, and build the
     // small_norms / quotients lists for find_uv_from_lists. S220 also
     // retains the sorted short-vectors per j so the finalize step can
@@ -1750,7 +1735,7 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
     let mut small_norms_per_j: Vec<Vec<Int<LIMBS>>> = Vec::with_capacity(reduced_per_j.len());
     let mut quotients_per_j: Vec<Vec<Int<LIMBS>>> = Vec::with_capacity(reduced_per_j.len());
 
-    // S232: per-j gram + enumerate in WIDE precision, mirroring the S231
+    // per-j gram + enumerate in WIDE precision, mirroring the S231
     // find_uv j=0 fix. The per-j pullback Bᵀ·M·B has the same real-prime
     // intermediate overflow (~2^749 wraps Int<LIMBS>) as the j=0 path; the
     // narrow version was latent-only because j>0 isn't reached at p=7 yet,
@@ -1803,25 +1788,12 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
             .iter()
             .map(|d| int_div_floor::<LIMBS>(target, d))
             .collect();
-        #[cfg(feature = "kat")]
-        {
-            let firsts: Vec<u32> = small_norms_j
-                .iter()
-                .take(6)
-                .map(|d| Uint::<LIMBS>::from_words(d.to_words()).bits_vartime())
-                .collect();
-            std::eprintln!(
-                "DIAG fuv_alt: j short_vecs={} first_d_bits={:?}",
-                small_norms_j.len(),
-                firsts,
-            );
-        }
         short_vecs_per_j.push(short_vecs_j);
         small_norms_per_j.push(small_norms_j);
         quotients_per_j.push(quotients_j);
     }
 
-    // Step 5 (S219): Cross-product Bezout (j1, j2) with j2 >= j1.
+    // Step 5: Cross-product Bezout (j1, j2) with j2 >= j1.
     // First success wins; iteration order matches the C ref's nested
     // loop (outer j1, inner j2 ≥ j1).
     for j1 in 0..reduced_per_j.len() {
@@ -1875,7 +1847,7 @@ pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
                         index_alternate_order_2: 0,
                     });
                 }
-                // S345: general j>0 β finalize. Port of dim2id2iso.c:641-673,
+                // general j>0 β finalize. Port of dim2id2iso.c:641-673,
                 // reconciled to our rescaled-frame representation:
                 //
                 //   - A j=0 component lifts DIRECTLY as `β' = reduced·vec ∈ I`
@@ -2127,18 +2099,18 @@ mod find_uv_tests {
         Int::<8>::from_i64(v)
     }
 
-    /// S241: the Movement-2 θ endomorphism `θ = β2·conj(β1)/n(I)` has
+    /// the Movement-2 θ endomorphism `θ = β2·conj(β1)/n(I)` has
     /// reduced norm `d1·d2`, at the real L1 prime. Builds (β1,β2,d1,d2)
-    /// from the S238-verified `find_uv` (box=2, target=2^248), constructs
+    /// from `find_uv` (box=2, target=2^248), constructs
     /// θ via `theta_endomorphism`, and checks `N_red(θ) = d1·d2`.
     ///
     /// The norm check runs WIDE (θ.num ~ a few hundred bits after
     /// normalize, but N_red squares them + multiplies by p, and d1·d2·
-    /// denom² can be large) — done at Int<16> like the S234 postcondition.
-    /// This is the first verified piece of the Clapotis evaluator's
-    /// quaternion-to-isogeny bridge (Movement 2).
+    /// denom² can be large) — done at Int<16>. This is the first verified
+    /// piece of the Clapotis evaluator's quaternion-to-isogeny bridge
+    /// (Movement 2).
     #[test]
-    fn s241_theta_endomorphism_has_norm_d1d2() {
+    fn theta_endomorphism_has_norm_d1d2() {
         use crate::quaternion::lattice::widen_int_lattice;
         use crate::quaternion::o0_mul::principal_left_ideal_from_o0;
         let p: Uint<8> = crate::params::lvl1::prime().resize::<8>();
@@ -2152,7 +2124,7 @@ mod find_uv_tests {
             &[],
             crate::params::Level1::FINDUV_BOX_SIZE,
         )
-        .expect("S238: find_uv Ok at box=2 / 2^248");
+        .expect("find_uv Ok at box=2 / 2^248");
         let n_id = lideal.reduced_norm_vartime().expect("perfect square");
 
         let theta = theta_endomorphism::<8, 16>(&r, &n_id, &p)
@@ -2181,19 +2153,18 @@ mod find_uv_tests {
         );
     }
 
-    /// S238: with the d=1-skip bug fixed, `find_uv` now finds a Bezout
+    /// with the d=1-skip bug fixed, `find_uv` now finds a Bezout
     /// solution at the C-ref's actual L1 box_size = 2 (FINDUV_BOX_SIZE) on
     /// the real-target shape 2^TORSION_EVEN_POWER (= 2^248, the production
-    /// target per S236's C-ref read). Before S238 this returned NoBezout
-    /// (the box=2 small-d list at real p is {1,5,5}; d=1 was skipped,
-    /// leaving {5,5} with 5∤2^248 — the entire S233-S237 "box_size saga").
-    /// Now d=1 is usable: `u·1 + v·d2 = 2^248` is solvable.
+    /// target). The box=2 small-d list at real p is {1,5,5}; before the fix
+    /// d=1 was skipped, leaving {5,5} with 5∤2^248. Now d=1 is usable:
+    /// `u·1 + v·d2 = 2^248` is solvable.
     ///
     /// Verifies the full result: Ok at box=2, the Bezout identity
     /// `u·d1+v·d2=target`, and (wide, since values are ~2^750) the β
     /// reduced-norm postcondition `N(βᵢ.num)=βᵢ.denom²·n(I)·dᵢ`.
     #[test]
-    fn s238_find_uv_solves_at_box2_real_2power_target() {
+    fn find_uv_solves_at_box2_real_2power_target() {
         use crate::quaternion::lattice::widen_int_lattice;
         use crate::quaternion::o0_mul::principal_left_ideal_from_o0;
         let p: Uint<8> = crate::params::lvl1::prime().resize::<8>();
@@ -2209,7 +2180,7 @@ mod find_uv_tests {
             &[],
             crate::params::Level1::FINDUV_BOX_SIZE,
         )
-        .expect("S238: find_uv must solve 2^248 at box=2 once d=1 is usable");
+        .expect("find_uv must solve 2^248 at box=2 once d=1 is usable");
         let zero = i(0);
         assert!(
             r.u > zero && r.v > zero && r.d1 > zero && r.d2 > zero,
@@ -2249,13 +2220,13 @@ mod find_uv_tests {
         }
     }
 
-    /// S234: the find_uv β satisfies the reduced-norm POSTCONDITION at the
+    /// the find_uv β satisfies the reduced-norm POSTCONDITION at the
     /// real L1 prime — `N(βᵢ.num) = βᵢ.denom² · n(I) · dᵢ` for both lifts.
-    /// This is the deepest correctness check of the find_uv pipeline: S233
-    /// verified the Bezout IDENTITY (`u·d1+v·d2=target`), but the β
+    /// This is the deepest correctness check of the find_uv pipeline: the
+    /// Bezout IDENTITY (`u·d1+v·d2=target`) is one claim, but the β
     /// quaternion LIFT is a separate claim — that each βᵢ is a genuine
     /// element of reduced norm `n(I)·dᵢ` in the original ideal frame (the
-    /// S200 postcondition, previously only checked at p=7).
+    /// postcondition, previously only checked at p=7).
     ///
     /// Magnitude note: at real p both sides are ~2^750 (n(I)~p~2^251,
     /// β.denom~2^249), far beyond `Int<8>`'s 511-bit cap — so the CHECK
@@ -2264,16 +2235,16 @@ mod find_uv_tests {
     /// narrow-fitting components); only this verification arithmetic is
     /// widened to avoid the check itself overflowing.
     #[test]
-    fn s234_find_uv_beta_postcondition_holds_at_real_l1_prime() {
+    fn find_uv_beta_postcondition_holds_at_real_l1_prime() {
         use crate::quaternion::lattice::widen_int_lattice;
         use crate::quaternion::o0_mul::principal_left_ideal_from_o0;
         let p: Uint<8> = crate::params::lvl1::prime().resize::<8>();
         let gamma = [i(1), i(0), i(1), i(0)]; // (i+j)/2 → cached_norm ~p²
         let lideal = principal_left_ideal_from_o0::<8>(&gamma, &p);
         let target = *Uint::<8>::ONE.shl_vartime(60).as_int();
-        // box=3: real-prime density (S233). Yields a real Ok(Bezout).
+        // box=3: real-prime density. Yields a real Ok(Bezout).
         let r = find_uv::<8>(&target, &lideal, &p, &[], 3)
-            .expect("find_uv must yield Ok at real L1 prime with box=3 (S233)");
+            .expect("find_uv must yield Ok at real L1 prime with box=3");
 
         let n_id = lideal
             .reduced_norm_vartime()
@@ -2302,32 +2273,32 @@ mod find_uv_tests {
                 .wrapping_mul(&d_w);
             assert_eq!(
                 lhs, rhs,
-                "{lbl}: N(β.num) must equal β.denom²·n(I)·d at the real L1 prime (S200 postcondition)",
+                "{lbl}: N(β.num) must equal β.denom²·n(I)·d at the real L1 prime",
             );
         }
     }
 
-    /// S233: `find_uv` produces a genuine `Ok(Bezout)` at the real L1
-    /// prime — not just no-panic (S231) but an actual solution. This is
+    /// `find_uv` produces a genuine `Ok(Bezout)` at the real L1
+    /// prime — not just no-panic but an actual solution. This is
     /// the first END-TO-END SUCCESS of the find_uv pipeline at real scale.
     ///
     /// Two findings baked in: (1) the target is built via `Uint` (real
     /// isogeny-degree targets ~2^N exceed i64, so `i()` can't express
     /// them); 2^60 is used here as a representative large target — well
     /// past i64 if signed, and far above the tiny 1024 the no-panic tests
-    /// used. (2) **box_size = 3, NOT L1's FINDUV_BOX_SIZE = 2.** S233
-    /// probe finding: at the real prime, box=2 finds NO Bezout for any
-    /// target shape (2^e, 2^e±1, odd·2^k), while box≥3 finds one for all
-    /// of them. The C ref's L1 FINDUV_box_size=2 was validated by S208
-    /// only at the p=7 SMOKE prime; the real-prime reduced ideal needs a
-    /// denser box. [S234 docket: re-examine the C ref's box_size — is L1=2
-    /// real, with our enumerate filters dropping a candidate the C ref
-    /// keeps, or is the per-level constant target-magnitude-dependent?]
+    /// used. (2) **box_size = 3, NOT L1's FINDUV_BOX_SIZE = 2.** At the
+    /// real prime, box=2 finds NO Bezout for any target shape (2^e, 2^e±1,
+    /// odd·2^k), while box≥3 finds one for all of them. The C ref's L1
+    /// FINDUV_box_size=2 was only validated at the p=7 SMOKE prime; the
+    /// real-prime reduced ideal needs a denser box. [Open: re-examine the
+    /// C ref's box_size — is L1=2 real, with our enumerate filters dropping
+    /// a candidate the C ref keeps, or is the constant target-magnitude-
+    /// dependent?]
     ///
     /// The returned Bezout identity is checked: `u·d1 + v·d2 == target`,
     /// with `u, v, d1, d2 > 0`.
     #[test]
-    fn s233_find_uv_yields_real_bezout_at_real_l1_prime() {
+    fn find_uv_yields_real_bezout_at_real_l1_prime() {
         use crate::quaternion::o0_mul::principal_left_ideal_from_o0;
         let p: Uint<8> = crate::params::lvl1::prime().resize::<8>();
         let gamma = [i(1), i(0), i(1), i(0)]; // (i+j)/2 → cached_norm ~p²
@@ -2349,21 +2320,18 @@ mod find_uv_tests {
         );
     }
 
-    /// S231: the FULL `find_uv` j=0 path runs to completion at the real L1
-    /// prime — the original S224 goal, finally reachable. This is the
-    /// capstone of the real-prime wall sequence: S226 fixed the LLL
-    /// overflow (wide LLL), S231 fixed the enumerate overflow
-    /// (`pull_back_gram_wide` + `enumerate_hypercube_wide`, both at
-    /// FINDUV_WIDE=16). On a realistic γ (with an (i+j)/2 component, so
+    /// the FULL `find_uv` j=0 path runs to completion at the real L1
+    /// prime. The LLL overflow was fixed with a wide LLL pass; the enumerate
+    /// overflow was fixed with `pull_back_gram_wide` + `enumerate_hypercube_wide`
+    /// (both at FINDUV_WIDE=16). On a realistic γ (with an (i+j)/2 component, so
     /// cached_norm ~p²) at the real prime (5·2^248−1), `find_uv` returns a
     /// Result — Ok if a Bezout solution exists in the box, or a clean
     /// NoBezoutSolution for this small smoke-test target — rather than
-    /// PANICKING in the enumerate divisibility assert (the S226→S230
-    /// failure). NO-PANIC is the contract; real isogeny-degree-target
-    /// Bezout/postcondition correctness is later work needing a sized
-    /// target.
+    /// PANICKING in the enumerate divisibility assert. NO-PANIC is the
+    /// contract; real isogeny-degree-target Bezout/postcondition correctness
+    /// is later work needing a sized target.
     #[test]
-    fn s231_find_uv_j0_runs_to_completion_at_real_l1_prime() {
+    fn find_uv_j0_runs_to_completion_at_real_l1_prime() {
         use crate::quaternion::o0_mul::principal_left_ideal_from_o0;
         let p: Uint<8> = crate::params::lvl1::prime().resize::<8>();
         let gamma = [i(1), i(0), i(1), i(0)]; // (i+j)/2 → cached_norm ~p²
@@ -2372,8 +2340,7 @@ mod find_uv_tests {
             lideal.cached_norm > Uint::<8>::from_u64(u64::MAX),
             "fixture must be real-prime-scale (cached_norm ≫ 2^64)",
         );
-        // Runs to completion (no panic in the enumerate divisibility
-        // assert). Before S231 this panicked at clapotis.rs:228.
+        // Runs to completion (no panic in the enumerate divisibility assert).
         let result = find_uv::<8>(
             &i(1024),
             &lideal,
@@ -2387,29 +2354,29 @@ mod find_uv_tests {
         );
     }
 
-    /// S232: `find_uv_alternate_orders` runs to completion at the real L1
+    /// `find_uv_alternate_orders` runs to completion at the real L1
     /// prime — its per-j gram + enumerate now use the same wide path as
-    /// the S231 j=0 fix (`pull_back_gram_wide` + `enumerate_hypercube_wide`
-    /// at FINDUV_WIDE=16). Before S232 the per-j pullback had the same
+    /// the j=0 fix (`pull_back_gram_wide` + `enumerate_hypercube_wide`
+    /// at FINDUV_WIDE=16). Before the fix, the per-j pullback had the same
     /// latent real-prime overflow as find_uv's j=0 path (only untested
     /// because the cross-product reaches j>0 cells rarely at p=7). On the
     /// REAL L1 ALT[0] fixture at the real prime, the function must return a
-    /// Result (Ok / NoBezoutSolution / the S221 fail-closed Unimplemented
+    /// Result (Ok / NoBezoutSolution / the fail-closed Unimplemented
     /// for a j>0 Bezout hit) rather than PANICKING in the enumerate
     /// divisibility assert. NO-PANIC is the contract.
     ///
-    /// **S338 `#[ignore]`**: after the S338 fix to `alternate_connecting_ideal_0_l1`
+    /// `#[ignore]`: after the fix to `alternate_connecting_ideal_0_l1`
     /// (it was transposed — rows-as-elements, NOT a valid left O_0-ideal; now
     /// the correct column convention, denom 1), `find_uv_alternate_orders` on the
     /// corrected real-scale ideal reaches the metric-GSO at LIMBS=8 and hits the
     /// KNOWN LIMBS=8 precision overflow (the GSO `int_div_exact` non-exact
-    /// assert — the same limitation the sibling S215 tests are `#[ignore]`'d
+    /// assert — the same limitation the sibling tests are `#[ignore]`'d
     /// for). The old transposed ideal happened to bail (NoBezoutSolution) before
     /// reaching it. Re-enable once the reduce runs on the wide-Int path
-    /// end-to-end (S339+).
-    #[ignore = "corrected real-scale ALT ideal reaches the known LIMBS=8 GSO overflow — needs the wide-Int reduce path (S339+)"]
+    /// end-to-end.
+    #[ignore = "corrected real-scale ALT ideal reaches the known LIMBS=8 GSO overflow — needs the wide-Int reduce path"]
     #[test]
-    fn s232_find_uv_alternate_orders_runs_to_completion_at_real_l1_prime() {
+    fn find_uv_alternate_orders_runs_to_completion_at_real_l1_prime() {
         use crate::quaternion::connecting_ideals::alternate_connecting_ideal_0_l1;
         use crate::quaternion::o0_mul::principal_left_ideal_from_o0;
         let p: Uint<8> = crate::params::lvl1::prime().resize::<8>();
@@ -2421,7 +2388,7 @@ mod find_uv_tests {
         );
         let alt = [alternate_connecting_ideal_0_l1()];
         // Runs to completion (no enumerate overflow panic). Any of Ok /
-        // NoBezoutSolution / Unimplemented(j>0 fail-closed, S221) is fine;
+        // NoBezoutSolution / Unimplemented(j>0 fail-closed) is fine;
         // a panic or other error is not.
         let result = find_uv_alternate_orders::<8, 32>(
             &i(1024),
@@ -2439,16 +2406,13 @@ mod find_uv_tests {
         );
     }
 
-    /// S345: the LIMBS=16 real-L1 exercise the S232 test (LIMBS=8, GSO
-    /// overflow) was waiting for. Runs `find_uv_alternate_orders` at the
-    /// spine width (LIMBS=16) on a real-prime-scale input with ALL SIX real
-    /// `ALTERNATE_CONNECTING_IDEALS`, production target `2^248`, per-j
-    /// wide-reduce at WIDE=64.
+    /// Runs `find_uv_alternate_orders` at the spine width (LIMBS=16) on a
+    /// real-prime-scale input with ALL SIX real `ALTERNATE_CONNECTING_IDEALS`,
+    /// production target `2^248`, per-j wide-reduce at WIDE=64.
     ///
-    /// **S345 RESULT:** runs to completion (~9s) and returns `Ok(index 0,0)`
-    /// — the first real-L1 confirmation that the per-j wide-reduce machinery
-    /// (item 4's "wide-Int reduce") works end-to-end at the spine width,
-    /// resolving the S232/S339+ block. The earlier WIDE=64 attempt panicked
+    /// Runs to completion (~9s) and returns `Ok(index 0,0)` — the first
+    /// real-L1 confirmation that the per-j wide-reduce machinery works
+    /// end-to-end at the spine width. The earlier WIDE=64 attempt panicked
     /// in the integer-GSO (`int_div_exact` non-exact, lattice.rs:97) — that
     /// was pure WIDTH insufficiency, NOT degenerate input and NOT a
     /// "GSO-runs-narrow" bug (`lll_4x4_in_metric_wide` already runs the GSO
@@ -2456,12 +2420,12 @@ mod find_uv_tests {
     /// exceed 4096 bits at real L1, so `WIDE = 128` (8192-bit) is required.
     /// The `(0,0)` index is expected for this PRINCIPAL fixture (it rescales
     /// to `O_0`, so the alternate-order rotation is trivial and j=0 wins) —
-    /// so this validates the SETUP but does NOT yet exercise the S345 j>0 β
+    /// so this validates the SETUP but does NOT yet exercise the j>0 β
     /// finalize, which still needs a non-principal input where j=0's
     /// enumeration misses. Heavy.
-    #[ignore = "heavy real-L1 (~9s): validates the per-j wide-reduce runs to completion at LIMBS=16/WIDE=128 (S345)"]
+    #[ignore = "heavy real-L1 (~9s): validates the per-j wide-reduce runs to completion at LIMBS=16/WIDE=128"]
     #[test]
-    fn s345_find_uv_alternate_orders_real_l1_limbs16_all_six_alts() {
+    fn find_uv_alternate_orders_real_l1_limbs16_all_six_alts() {
         use crate::quaternion::connecting_ideals::{
             alternate_connecting_ideal_0_l1, alternate_connecting_ideal_1_l1,
             alternate_connecting_ideal_2_l1, alternate_connecting_ideal_3_l1,
@@ -2487,7 +2451,7 @@ mod find_uv_tests {
         };
 
         let p: Uint<16> = crate::params::lvl1::prime().resize::<16>();
-        // Real-prime-scale principal input (cached_norm ~p²); the S232 fixture.
+        // Real-prime-scale principal input (cached_norm ~p²).
         let gamma = [
             Int::<16>::from_i64(1),
             Int::<16>::from_i64(0),
@@ -2522,12 +2486,12 @@ mod find_uv_tests {
             Ok(r) => {
                 // Ok ⇒ the containment self-gate passed for both β.
                 std::eprintln!(
-                    "S345 find_uv_alt: Ok, index_alternate_order_1={}, index_alternate_order_2={}",
+                    "find_uv_alt: Ok, index_alternate_order_1={}, index_alternate_order_2={}",
                     r.index_alternate_order_1,
                     r.index_alternate_order_2,
                 );
             }
-            Err(e) => std::eprintln!("S345 find_uv_alt: Err({e:?})"),
+            Err(e) => std::eprintln!("find_uv_alt: Err({e:?})"),
         }
         assert!(
             matches!(
@@ -2538,29 +2502,25 @@ mod find_uv_tests {
         );
     }
 
-    /// S226: the WIDE=32 LLL+rescale stage survives the real L1 prime.
-    /// This is the EXACT stage S226 fixed in `find_uv`'s j=0 path: before
-    /// S226 the narrow `lideal_reduce_basis` overflowed its integer-GSO
-    /// recurrence on a real-L1-prime principal ideal (cached_norm ~p²
-    /// ~2^500; S224 reproduced the panic, S225 calibrated WIDE=32). This
-    /// test reproduces `find_uv`'s first two steps directly — wide LLL
-    /// then narrow rescale — and asserts BOTH survive (no panic) AND the
-    /// rescale returns `Some` (the SQIsign-shaped invariant holds at real
-    /// scale, not just at p=7).
+    /// the WIDE=32 LLL+rescale stage survives the real L1 prime.
+    /// Before the fix, the narrow `lideal_reduce_basis` overflowed its
+    /// integer-GSO recurrence on a real-L1-prime principal ideal
+    /// (cached_norm ~p² ~2^500). This test reproduces `find_uv`'s first
+    /// two steps directly — wide LLL then narrow rescale — and asserts
+    /// BOTH survive (no panic) AND the rescale returns `Some` (the
+    /// SQIsign-shaped invariant holds at real scale, not just at p=7).
     ///
-    /// NOTE (resolved S231): the FULL `find_uv` j=0 path now runs to
-    /// completion at real p — see `s231_find_uv_j0_runs_to_completion_at_real_l1_prime`.
-    /// S227-S230 root-caused the downstream enumerate panic to
-    /// `pull_back_gram` OVERFLOWING at real scale (Bᵀ·G·B intermediates
-    /// ~2^749 wrap in Int<8>). S231 fixed it with `pull_back_gram_wide` +
-    /// `enumerate_hypercube_wide` at FINDUV_WIDE=16. (Our `4·denom²`
-    /// adjusted_norm is KEPT: it pairs with `o0_reduced_norm_gram_matrix`'s
-    /// ×4 integer-safety bake-in — our vᵀGv carries a ×4 the C ref's
-    /// `denom²`-only convention does not; the existing tests confirm ×4 is
-    /// correct for OUR gram. S230's "drop the ×4" applied only to the C
-    /// ref's differently-scaled gram.)
+    /// NOTE: the FULL `find_uv` j=0 path now runs to completion at real p
+    /// — see `find_uv_j0_runs_to_completion_at_real_l1_prime`. The downstream
+    /// enumerate panic was caused by `pull_back_gram` OVERFLOWING at real
+    /// scale (Bᵀ·G·B intermediates ~2^749 wrap in Int<8>); fixed with
+    /// `pull_back_gram_wide` + `enumerate_hypercube_wide` at FINDUV_WIDE=16.
+    /// (Our `4·denom²` adjusted_norm is KEPT: it pairs with
+    /// `o0_reduced_norm_gram_matrix`'s ×4 integer-safety bake-in — our
+    /// vᵀGv carries a ×4 the C ref's `denom²`-only convention does not;
+    /// the existing tests confirm ×4 is correct for OUR gram.)
     #[test]
-    fn s226_wide_lll_then_rescale_survives_real_l1_prime() {
+    fn wide_lll_then_rescale_survives_real_l1_prime() {
         use crate::quaternion::ideal_mul::{
             lideal_reduce_basis_wide, lideal_rescale_by_smallest_basis_element,
         };
@@ -2574,7 +2534,7 @@ mod find_uv_tests {
             lideal.cached_norm > Uint::<8>::from_u64(u64::MAX),
             "fixture must be real-prime-scale (cached_norm ≫ 2^64)",
         );
-        // Step 1 (the S226 fix): wide LLL — must not panic at real p.
+        // Step 1: wide LLL — must not panic at real p.
         let reduced = lideal_reduce_basis_wide::<8, 32>(&lideal, &p);
         // Step 2: the EXISTING narrow rescale survives on the wide-reduced
         // basis and confirms the SQIsign-shaped invariant at real scale.
@@ -2585,14 +2545,14 @@ mod find_uv_tests {
         );
     }
 
-    /// S222 verifier (test-scoped): does the rational quaternion `beta`
+    /// verifier (test-scoped): does the rational quaternion `beta`
     /// lie in the ideal `lideal`? This is the convention-distinguishing
-    /// membership arbiter the j>0 finalize will need (the S221 finding:
-    /// `LeftIdeal::contains` distinguishes a wrong multiply/conjugate
-    /// order where the norm postcondition — multiplicative AND
-    /// conjugation-invariant, the S207 trap — cannot). It is verified
-    /// here against the S200-proven (0,0) β so it is ready to promote to
-    /// a `pub(crate)` fn once real-prime parameters make j>0 verifiable.
+    /// membership arbiter the j>0 finalize will need: `LeftIdeal::contains`
+    /// distinguishes a wrong multiply/conjugate order where the norm
+    /// postcondition — multiplicative AND conjugation-invariant — cannot.
+    /// It is verified here against the proven (0,0) β so it is ready to
+    /// promote to a `pub(crate)` fn once real-prime parameters make j>0
+    /// verifiable.
     ///
     /// Math: `beta = beta.num / beta.denom` in standard `(1, i, j, k)`
     /// coords; `standard_to_o0_basis(beta.num)` gives the integer
@@ -2604,7 +2564,7 @@ mod find_uv_tests {
     ///
     /// Test-scale only: scales with `wrapping_mul`; at p=7 fixture
     /// magnitudes this does not overflow. Real-prime use needs a wide
-    /// variant (tracked for S222+).
+    /// variant.
     fn rational_quat_in_ideal(
         lideal: &crate::quaternion::ideal::LeftIdeal<8>,
         beta: &RationalQuaternion<8>,
@@ -2629,7 +2589,7 @@ mod find_uv_tests {
         scaled.contains(&query)
     }
 
-    /// Pick the first target in the S200 sweep that yields a Bezout
+    /// Pick the first target in the sweep that yields a Bezout
     /// solution on the principal ideal `O_0·γ`, γ = (1, 0, 1, 0) at p=7.
     fn proven_find_uv_beta_on_anchor() -> (crate::quaternion::ideal::LeftIdeal<8>, FindUvResult<8>)
     {
@@ -2648,16 +2608,16 @@ mod find_uv_tests {
                 return (lideal, r);
             }
         }
-        unreachable!("S200 anchor must yield a Bezout solution in the sweep");
+        unreachable!("anchor must yield a Bezout solution in the sweep");
     }
 
-    /// S222 POSITIVE: the S200-proven find_uv β (both β1 and β2) lies in
+    /// POSITIVE: the find_uv β (both β1 and β2) lies in
     /// the original ideal `O_0·γ`. This is the membership half of the
     /// convention arbiter — it confirms our (0,0) convention `β = β'·δ`
     /// returns β to the original ideal frame (the C-ref postcondition
     /// `quat_lattice_contains(ideal, β)`).
     #[test]
-    fn s222_rational_beta_in_ideal_holds_for_proven_find_uv_beta() {
+    fn rational_beta_in_ideal_holds_for_proven_find_uv_beta() {
         let (lideal, r) = proven_find_uv_beta_on_anchor();
         assert!(
             rational_quat_in_ideal(&lideal, &r.beta1),
@@ -2669,14 +2629,14 @@ mod find_uv_tests {
         );
     }
 
-    /// S222 NEGATIVE: the verifier rejects elements that are NOT in the
+    /// NEGATIVE: the verifier rejects elements that are NOT in the
     /// ideal — proving it actually discriminates (an always-true verifier
     /// would be worthless). Uses MATHEMATICALLY GUARANTEED non-members:
     /// `O_0·γ` with N_red(γ) = 3 is a proper ideal, so no unit lies in it.
     /// Both `1` and `i` are units (N_red = 1), hence `1 ∉ O_0·γ` and
     /// `i ∉ O_0·γ` independent of any denominator bookkeeping.
     #[test]
-    fn s222_rational_beta_in_ideal_rejects_units_for_non_unit_ideal() {
+    fn rational_beta_in_ideal_rejects_units_for_non_unit_ideal() {
         use crate::quaternion::algebra::{Quaternion, RationalQuaternion};
         let (lideal, _r) = proven_find_uv_beta_on_anchor();
         // Sanity: γ has reduced norm 3 → proper ideal, units excluded.
@@ -2696,13 +2656,13 @@ mod find_uv_tests {
         );
     }
 
-    /// S222 ROUND-TRIP: `standard_to_o0_basis` is the inverse of
+    /// ROUND-TRIP: `standard_to_o0_basis` is the inverse of
     /// `o0_basis_to_standard_doubled` up to the doubling factor — i.e.
     /// `standard_to_o0_basis(o0_basis_to_standard_doubled(v)) == 2·v` for
     /// any O_0-coord vector v. This pins the coordinate conversion the
     /// membership verifier (and the β-finalize) both rely on.
     #[test]
-    fn s222_o0_standard_roundtrip_is_doubling() {
+    fn o0_standard_roundtrip_is_doubling() {
         use crate::quaternion::o0_mul::{o0_basis_to_standard_doubled, standard_to_o0_basis};
         for v in [
             [i(1), i(0), i(0), i(0)],
@@ -2767,7 +2727,7 @@ mod find_uv_tests {
     }
 
     /// `number_sum_square != 0` (Cornacchia-constrained paths) returns
-    /// None in the current S193 port. The orchestrator passes 0; the
+    /// None in the current port. The orchestrator passes 0; the
     /// non-zero paths are reserved for future call sites.
     #[test]
     fn find_uv_from_lists_cornacchia_path_returns_none() {
@@ -2780,7 +2740,7 @@ mod find_uv_tests {
                 find_uv_from_lists::<8>(&target, &norms1, &norms2, &quotients2, false, nss);
             assert!(
                 result.is_none(),
-                "Cornacchia paths (number_sum_square={nss}) must surface as None at S193, got {result:?}",
+                "Cornacchia paths (number_sum_square={nss}) must surface as None, got {result:?}",
             );
         }
     }
@@ -2832,7 +2792,7 @@ mod find_uv_tests {
     /// many short vectors and the Bezout search finds a
     /// `(u, v, d1, d2)` with `u·d1 + v·d2 = 1024`.
     ///
-    /// **Postcondition** (S200): `N_red(β_i) = n(I)·d_i` where `n(I)` is
+    /// **Postcondition**: `N_red(β_i) = n(I)·d_i` where `n(I)` is
     /// the reduced quaternion ideal norm. We assert the denom-independent
     /// form `N_red(β.num) = β.denom² · n(I) · d_i`. For full_order
     /// `n(I) = 1`, so the postcondition simplifies to
@@ -2868,7 +2828,7 @@ mod find_uv_tests {
         // Alternate-order indices both zero at num_alternate_order=0.
         assert_eq!(r.index_alternate_order_1, 0);
         assert_eq!(r.index_alternate_order_2, 0);
-        // S200 postcondition: N(β.num) = β.denom² · n(I) · d.
+        // postcondition: N(β.num) = β.denom² · n(I) · d.
         // For full_order n(I) = 1 → N(β.num) = β.denom² · d.
         let n_id = lideal
             .reduced_norm_vartime()
@@ -2897,23 +2857,20 @@ mod find_uv_tests {
             .wrapping_mul(&r.d2);
         assert_eq!(
             n_beta1, expected1,
-            "N(β1.num) must equal β1.denom² · n(I) · d1 (S200 postcondition)",
+            "N(β1.num) must equal β1.denom² · n(I) · d1",
         );
         assert_eq!(
             n_beta2, expected2,
-            "N(β2.num) must equal β2.denom² · n(I) · d2 (S200 postcondition)",
+            "N(β2.num) must equal β2.denom² · n(I) · d2",
         );
     }
 
     /// `find_uv` with non-empty `alt_connecting` dispatches to
-    /// `find_uv_alternate_orders`. Originally (S205-S217) the dispatched
-    /// function returned Unimplemented immediately; S218-S219 wired the
-    /// body up through cross-product Bezout; S220 wired the (0,0) β
-    /// finalize. This test confirms the dispatch path is wired end-to-end
-    /// AND that routing through the alternate-orders function with a
-    /// (placeholder) alt entry yields the SAME result as the direct j=0
-    /// `find_uv` path — i.e. the dispatch is transparent for the (0,0)
-    /// hit.
+    /// `find_uv_alternate_orders`. This test confirms the dispatch path is
+    /// wired end-to-end AND that routing through the alternate-orders
+    /// function with a (placeholder) alt entry yields the SAME result as
+    /// the direct j=0 `find_uv` path — i.e. the dispatch is transparent
+    /// for the (0,0) hit.
     #[test]
     fn find_uv_dispatch_to_alternate_orders_matches_direct_find_uv() {
         use crate::quaternion::ideal::LeftIdeal;
@@ -2941,7 +2898,7 @@ mod find_uv_tests {
     /// variant is distinct from `Error::Unimplemented` (reserved for
     /// non-empty `alt_connecting` and other deferred features).
     ///
-    /// S238: this previously used `target = 2`, which relied on the
+    /// this previously used `target = 2`, which relied on the
     /// (now-fixed) d=1-skip bug — with d=1 usable, `1·1 + 1·1 = 2` IS a
     /// valid solution, so `target = 2` now correctly succeeds. `target =
     /// 1` is the genuine smallest no-solution case (u + v = 1 with both
@@ -2980,7 +2937,7 @@ mod find_uv_tests {
     /// `o0_reduced_norm_gram_matrix`. **This invariant FAILS** if
     /// the lift uses `B · v` (= `mat_4x4_eval(B, v)`) instead of
     /// `Bᵀ · v` whenever `B` is not symmetric — exactly the
-    /// transpose bug the Forge S195 audit caught.
+    /// transpose bug caught in the original audit.
     ///
     /// The test exercises the same composition `find_uv` uses
     /// internally (the lift + Gram + norm primitives) without
@@ -3000,7 +2957,7 @@ mod find_uv_tests {
     /// `o0_reduced_norm_gram_matrix`. **This invariant FAILS** if
     /// the lift uses `B · v` (= `mat_4x4_eval`) instead of `Bᵀ · v`
     /// whenever `B` is non-symmetric — exactly the transpose bug
-    /// the Forge S195 audit caught.
+    /// caught in the original audit.
     ///
     /// The test bypasses LLL (which tends to symmetrize the basis
     /// for our small fixtures) and uses the raw non-symmetric basis
@@ -3062,7 +3019,7 @@ mod find_uv_tests {
 
         // Also verify the buggy lift FAILS the same identity on at
         // least one e_k — proving the test would have caught the
-        // S195 transpose bug.
+        // transpose bug.
         let mut buggy_caught = false;
         for k in 0..4 {
             let mut v = [i(0); 4];
@@ -3089,7 +3046,7 @@ mod find_uv_tests {
     ///
     /// The "no solution" outcome is NOT a test failure — it signals the
     /// `m=3` hard-coded box is too tight for that fixture's lattice
-    /// density. The S202 test sweep covers multiple γ shapes; per-fixture
+    /// density. The test sweep covers multiple γ shapes; per-fixture
     /// outcomes are aggregated to assert that AT LEAST ONE non-trivial
     /// fixture yielded a solution (proving the pipeline works beyond
     /// full_order), without forcing every fixture to succeed.
@@ -3106,7 +3063,7 @@ mod find_uv_tests {
 
     /// Parameterized helper: build the principal ideal `O_0 · γ`, try
     /// each target in the trial range, and on first success verify the
-    /// Bezout identity AND the S200 norm postcondition
+    /// Bezout identity AND the norm postcondition
     /// `N(β.num) = β.denom² · n(I) · d`. Returns `Verified` on success,
     /// `NoSolutionInBox` when no target hits.
     ///
@@ -3173,16 +3130,15 @@ mod find_uv_tests {
         PostconditionOutcome::NoSolutionInBox
     }
 
-    /// S200 milestone test — postcondition holds for the canonical
-    /// non-trivial fixture `γ = (1, 0, 1, 0)` at p=7 (`N_red(γ) = 3`).
-    /// First test that proved find_uv's rescale-then-undo composition
-    /// works beyond `full_order`.
+    /// postcondition holds for the canonical non-trivial fixture
+    /// `γ = (1, 0, 1, 0)` at p=7 (`N_red(γ) = 3`). Proves find_uv's
+    /// rescale-then-undo composition works beyond `full_order`.
     #[test]
     fn find_uv_postcondition_holds_on_non_trivial_principal_ideal() {
         use crate::quaternion::o0_mul::principal_left_ideal_from_o0;
         let p: Uint<8> = Uint::from_u64(7);
         let gamma = [i(1), i(0), i(1), i(0)];
-        // Sanity: cached_norm 9, reduced_norm 3 (the S200 anchor).
+        // Sanity: cached_norm 9, reduced_norm 3 (anchor fixture).
         let lideal = principal_left_ideal_from_o0::<8>(&gamma, &p);
         assert_eq!(lideal.cached_norm, Uint::<8>::from_u64(9));
         assert_eq!(lideal.reduced_norm_vartime(), Some(Uint::<8>::from_u64(3)));
@@ -3191,11 +3147,11 @@ mod find_uv_tests {
             try_find_uv_postcondition(&gamma, &p, &targets, crate::params::Level1::FINDUV_BOX_SIZE);
         assert!(
             matches!(outcome, PostconditionOutcome::Verified { .. }),
-            "S200 anchor fixture must yield a Verified outcome, got {outcome:?}",
+            "anchor fixture must yield a Verified outcome, got {outcome:?}",
         );
     }
 
-    /// S202 sweep test — postcondition holds across MULTIPLE non-trivial
+    /// sweep test — postcondition holds across MULTIPLE non-trivial
     /// principal-ideal fixtures at p=7. Each fixture targets a different
     /// `N_red(γ)` and a different O_0-basis pattern. The sweep ASSERTS
     /// that the postcondition NEVER violates (any numerical failure
@@ -3218,7 +3174,7 @@ mod find_uv_tests {
             (
                 [i(1), i(0), i(1), i(0)],
                 3,
-                "γ=1+(i+j)/2, N=3 (S200 anchor)",
+                "γ=1+(i+j)/2, N=3 (anchor)",
             ),
             ([i(1), i(1), i(1), i(0)], 5, "γ=1+i+(i+j)/2, N=5"),
             ([i(1), i(1), i(0), i(1)], 5, "γ=1+i+(1+k)/2, N=5 alternate"),
@@ -3246,7 +3202,7 @@ mod find_uv_tests {
         }
         assert!(
             verified_count >= 2,
-            "S202 sweep requires at least 2 of {} fixtures to yield Verified \
+            "sweep requires at least 2 of {} fixtures to yield Verified \
              (got {verified_count}). All assertions inside the helper would have \
              panicked on numerical violations; this aggregate counts how many \
              fixtures had Bezout solutions in the m=3 box.",
@@ -3263,7 +3219,7 @@ mod find_uv_tests {
     }
 
     /// LIMBS-generic helper for the find_uv postcondition check on the
-    /// S200 anchor fixture (γ = (1, 0, 1, 0), N_red = 3, at p=7). Used
+    /// anchor fixture (γ = (1, 0, 1, 0), N_red = 3, at p=7). Used
     /// by the L1/L3/L5 tests below to validate find_uv is genuinely
     /// LIMBS-generic — catches accidental LIMBS-8 specialization.
     fn check_find_uv_anchor_postcondition_at_limbs<const LIMBS: usize>(box_size: i64) {
@@ -3322,35 +3278,35 @@ mod find_uv_tests {
         }
         assert!(
             any_succeeded,
-            "S200 anchor fixture should yield Bezout in m=3 box at LIMBS={LIMBS}",
+            "anchor fixture should yield Bezout in m=3 box at LIMBS={LIMBS}",
         );
     }
 
-    /// S204: L3 LIMBS (12) variant of the S200 anchor postcondition test.
-    /// S210: now uses `Level3::FINDUV_BOX_SIZE = 3` (= C ref's value).
+    /// L3 LIMBS (12) variant of the anchor postcondition test.
+    /// now uses `Level3::FINDUV_BOX_SIZE = 3` (= C ref's value).
     #[test]
-    fn find_uv_postcondition_holds_on_s200_anchor_at_l3_limbs() {
+    fn find_uv_postcondition_holds_on_anchor_at_l3_limbs() {
         check_find_uv_anchor_postcondition_at_limbs::<12>(crate::params::Level3::FINDUV_BOX_SIZE);
     }
 
-    /// S204: L5 LIMBS (16) variant.
-    /// S210: now uses `Level5::FINDUV_BOX_SIZE = 3` (= C ref's value).
+    /// L5 LIMBS (16) variant.
+    /// now uses `Level5::FINDUV_BOX_SIZE = 3` (= C ref's value).
     #[test]
-    fn find_uv_postcondition_holds_on_s200_anchor_at_l5_limbs() {
+    fn find_uv_postcondition_holds_on_anchor_at_l5_limbs() {
         check_find_uv_anchor_postcondition_at_limbs::<16>(crate::params::Level5::FINDUV_BOX_SIZE);
     }
 
-    /// S220: `find_uv_alternate_orders` end-to-end through the (0,0) β
-    /// finalize on the REAL L1 ALT[0] entry. Composes everything from
-    /// S213-S219 (LLL + rescale → reduced_id; per-j ideal_multiply +
-    /// wide-LLL; per-j Gram + enumerate; cross-product Bezout) and then
-    /// finalizes the (j1=0, j2=0) hit.
+    /// `find_uv_alternate_orders` end-to-end through the (0,0) β
+    /// finalize on the REAL L1 ALT[0] entry. Composes everything
+    /// (LLL + rescale → reduced_id; per-j ideal_multiply + wide-LLL;
+    /// per-j Gram + enumerate; cross-product Bezout) and then finalizes
+    /// the (j1=0, j2=0) hit.
     ///
-    /// **Differential element-equality arbiter (per S207/advisor):** the
+    /// **Differential element-equality arbiter:** the
     /// norm postcondition `N(β) = denom²·n(I)·d` CANNOT distinguish our
     /// convention `β = β_lift·δ` from the C-ref's `β = conj(δ·β_lift)`,
     /// because reduced norm is multiplicative AND conjugation-invariant.
-    /// So we verify the (0,0) finalize against `find_uv` (the S200-proven
+    /// So we verify the (0,0) finalize against `find_uv` (the proven
     /// oracle): the (0,0) sub-result is computed from `reduced_per_j[0]`
     /// (= the rescaled input ideal, identical to `find_uv`'s `reduced_id`)
     /// with the same δ, enumerate, and Bezout convention, so the FULL
@@ -3391,7 +3347,7 @@ mod find_uv_tests {
         assert_eq!(via_alt.index_alternate_order_2, 0);
     }
 
-    /// S220: `find_uv_alternate_orders` on the `[full_order()]`
+    /// `find_uv_alternate_orders` on the `[full_order()]`
     /// placeholder finalizes the (0,0) Bezout hit. Since `reduced_per_j[0]`
     /// = the rescaled `O_0` input (same as `find_uv`'s `reduced_id`) and
     /// the placeholder alt entry contributes only an unreachable j>0 path,
@@ -3416,10 +3372,10 @@ mod find_uv_tests {
         );
     }
 
-    /// S208: validates that the S200 anchor fixture (γ = (1, 0, 1, 0)
-    /// at p=7) still yields a Bezout solution when `box_size = 2` —
-    /// the C reference's actual L1 value (extracted via S206 research
-    /// agent). Previously hardcoded m = 3 was over-allocated for L1;
+    /// validates that the anchor fixture (γ = (1, 0, 1, 0) at p=7)
+    /// still yields a Bezout solution when `box_size = 2` —
+    /// the C reference's actual L1 value. Previously hardcoded m = 3
+    /// was over-allocated for L1;
     /// this test pins whether m = 2 is sufficient density for our
     /// small-prime fixture.
     ///
@@ -3439,7 +3395,7 @@ mod find_uv_tests {
         let p: Uint<8> = Uint::from_u64(7);
         let gamma = [i(1), i(0), i(1), i(0)];
         let lideal = principal_left_ideal_from_o0::<8>(&gamma, &p);
-        // Try the same target range as the S200 anchor test.
+        // Try the same target range as the anchor test.
         let targets = [16u64, 32, 64, 128, 256, 512, 1024, 2048, 4096];
         let mut any_succeeded = false;
         for target_u in targets {
@@ -3458,7 +3414,7 @@ mod find_uv_tests {
         // density for at least this fixture.
         assert!(
             any_succeeded,
-            "S208 probe: m=2 (C ref's L1 FINDUV_box_size) found no Bezout solution for γ=(1,0,1,0) at p=7 \
+            "probe: m=2 (C ref's L1 FINDUV_box_size) found no Bezout solution for γ=(1,0,1,0) at p=7 \
              across targets {{16, 32, ..., 4096}}. This may signal that the C ref's L1 box is too tight \
              for small-prime test fixtures — production L1 inputs at real 251-bit prime should fare better.",
         );

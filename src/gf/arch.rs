@@ -8,8 +8,8 @@
 //! compiled for, so callers (and tests) can confirm at runtime which fast
 //! path is live.
 //!
-//! Future sessions will move per-prime Montgomery reduction here when the
-//! generic path is the bottleneck.
+//! Per-prime Montgomery reduction is not specialized here; it could move
+//! into this module if the generic path becomes a bottleneck.
 
 /// Which architecture-specific fast path the current build selected.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -57,7 +57,7 @@ pub trait Params: 'static + Copy + core::fmt::Debug {
     /// `[-m, m]^4` hypercube that
     /// [`enumerate_hypercube`](crate::isogeny::clapotis::enumerate_hypercube)
     /// walks when feeding the Clapotis `find_uv` orchestrator. Per-level
-    /// values extracted in S206 / S209 from the SQIsign C reference's
+    /// values extracted from the SQIsign C reference's
     /// `src/precomp/ref/lvl{1,3,5}/include/quaternion_constants.h`:
     ///
     /// | Level | `FINDUV_BOX_SIZE` |
@@ -66,7 +66,7 @@ pub trait Params: 'static + Copy + core::fmt::Debug {
     /// | L3 | 3 |
     /// | L5 | 3 |
     ///
-    /// Validated at L1 by the S208 probe test
+    /// Validated at L1 by the probe test
     /// `find_uv_at_l1_box_size_two_matches_c_ref_constant`: m=2 finds
     /// Bezout solutions for our γ=(1,0,1,0) smoke-test fixture.
     const FINDUV_BOX_SIZE: i64;
@@ -76,7 +76,7 @@ pub trait Params: 'static + Copy + core::fmt::Debug {
     /// `CONNECTING_IDEALS[NUM_ALTERNATE_EXTREMAL_ORDERS + 1]` includes
     /// index `[0]` (the trivial connector that's skipped) plus the
     /// non-trivial entries (`ALTERNATE_CONNECTING_IDEALS = CONNECTING_IDEALS + 1`).
-    /// Per-level values per S206 research agents:
+    /// Per-level values from the C reference:
     ///
     /// | Level | `NUM_ALTERNATE_EXTREMAL_ORDERS` |
     /// |---|---|
@@ -84,19 +84,18 @@ pub trait Params: 'static + Copy + core::fmt::Debug {
     /// | L3 | 7 |
     /// | L5 | 6 |
     ///
-    /// **L3 settled in S213** via verbatim quote from
+    /// **L3 settled** via verbatim quote from
     /// `src/precomp/ref/lvl3/include/quaternion_data.h:4`:
     /// `#define NUM_ALTERNATE_EXTREMAL_ORDERS 7`. Cross-check at
     /// line 11 of the same header: `extern const quat_left_ideal_t
-    /// CONNECTING_IDEALS[8];` confirms the +1 invariant (Agent 1's
-    /// S206 reading was correct; Agent 2 was wrong).
+    /// CONNECTING_IDEALS[8];` confirms the +1 invariant.
     const NUM_ALTERNATE_EXTREMAL_ORDERS: usize;
     /// `FINDUV_cube_size` from the C reference — the count of
     /// short-vector candidates `enumerate_hypercube` accepts before
     /// the `find_uv` orchestrator considers the box "exhausted".
     /// This is a PRE-SORT count (the C ref filters down further via
     /// the odd-quotient and i-action symmetry filters). Per-level
-    /// values per S206 research agents:
+    /// values per the C reference:
     ///
     /// | Level | `FINDUV_CUBE_SIZE` |
     /// |---|---|
@@ -114,9 +113,8 @@ pub trait Params: 'static + Copy + core::fmt::Debug {
 mod tests {
     use super::*;
 
-    /// S209: `FINDUV_BOX_SIZE` per level matches the C reference's
-    /// `src/precomp/ref/lvl{1,3,5}/include/quaternion_constants.h`
-    /// (extracted via S206 research agents).
+    /// `FINDUV_BOX_SIZE` per level matches the C reference's
+    /// `src/precomp/ref/lvl{1,3,5}/include/quaternion_constants.h`.
     #[test]
     fn finduv_box_size_per_level_matches_c_ref_constants() {
         assert_eq!(
@@ -136,9 +134,8 @@ mod tests {
         );
     }
 
-    /// S212/S213: `NUM_ALTERNATE_EXTREMAL_ORDERS` per level matches
-    /// S206 research + S213 confirmation. **L3 was settled in S213**
-    /// via verbatim quote from
+    /// `NUM_ALTERNATE_EXTREMAL_ORDERS` per level matches the C reference.
+    /// **L3 settled** via verbatim quote from
     /// `src/precomp/ref/lvl3/include/quaternion_data.h:4`.
     #[test]
     fn num_alternate_extremal_orders_per_level_matches_c_ref_constants() {
@@ -150,7 +147,7 @@ mod tests {
         assert_eq!(
             Level3::NUM_ALTERNATE_EXTREMAL_ORDERS,
             7,
-            "L3 NUM_ALTERNATE = 7 — confirmed S213 (Agent 1 was right)",
+            "L3 NUM_ALTERNATE = 7 — confirmed by C reference",
         );
         assert_eq!(
             Level5::NUM_ALTERNATE_EXTREMAL_ORDERS,
@@ -159,8 +156,7 @@ mod tests {
         );
     }
 
-    /// S212: `FINDUV_CUBE_SIZE` per level matches S206 research agent
-    /// values. Both agents agreed on these.
+    /// `FINDUV_CUBE_SIZE` per level matches the C reference values.
     #[test]
     fn finduv_cube_size_per_level_matches_c_ref_constants() {
         assert_eq!(Level1::FINDUV_CUBE_SIZE, 624, "L1 FINDUV_CUBE_SIZE = 624");

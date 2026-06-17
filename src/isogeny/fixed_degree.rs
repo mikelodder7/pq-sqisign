@@ -107,7 +107,7 @@ pub(crate) fn fixed_degree_isogeny_and_eval<R: CryptoRng>(
 
 /// KEYGEN-faithful fixed-degree isogeny (C `_fixed_degree_isogeny_impl` with
 /// `small = true`, index 0). Differs from [`fixed_degree_isogeny_and_eval`] in
-/// the three ways the C keygen path differs (S347):
+/// the three ways the C keygen path differs:
 ///
 /// - **`small = true` length** = `bitsize(p) + QUAT_repres_bound_input − u_bitsize`
 ///   = `271 − u_bitsize` at lvl1 (not the fixed 246); `f_basis = length + HD`.
@@ -491,14 +491,14 @@ mod tests {
         assert_eq!(length, 246);
     }
 
-    /// S345: the INDEXED φ runs end-to-end from an alternate NICE curve
+    /// The INDEXED φ runs end-to-end from an alternate NICE curve
     /// (index 1 ⇒ k=0). Exercises the full alt-curve assembly:
     /// `represent_integer_over_alt_order` → `u^{-1}` scale → item-6 indexed
     /// endomorphism on the NICE curve's even basis → lift → theta chain on
     /// `E0_alt × E0_alt`. Contract: produces a degree-`2^246` codomain and
     /// pushes the eval points (returns `Some`). Heavy (246-step chain). Not a
     /// byte-exactness check — that is the item-8 KAT.
-    #[ignore = "heavy: end-to-end indexed φ from an alternate NICE curve (S345)"]
+    #[ignore = "heavy: end-to-end indexed φ from an alternate NICE curve"]
     #[test]
     fn fixed_degree_isogeny_indexed_k1_runs_end_to_end() {
         use crate::ec::couple::CoupleMontgomeryPoint;

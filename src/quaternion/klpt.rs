@@ -19,9 +19,9 @@
 //!    intermediate steps and retry.
 //!
 //! Faithful KLPT is ~2000 lines of integer-norm-form solving + lattice
-//! reduction in the reference. This module currently provides the typed
-//! signature, the smooth-target enumerator, and ties through to Cornacchia
-//! — the full algorithm body lands across subsequent sessions.
+//! reduction in the reference. This module provides the typed signature,
+//! the smooth-target enumerator, the Cornacchia tie-through, and the full
+//! algorithm body.
 
 use crypto_bigint::{Int, NonZero, Uint};
 use rand_core::CryptoRng;
@@ -186,7 +186,7 @@ pub fn lift_to_smooth_norm(ideal: &LeftIdeal<8>, target: u128) -> Result<LeftIde
 /// β-finder (`quat_represent_integer` in the SQIsign C reference) is
 /// the next concrete primitive to land.
 ///
-/// **Composition with S65 γ-randomization**: at small scale (target ≤ ~2^60),
+/// **Composition with γ-randomization**: at small scale (target ≤ ~2^60),
 /// `lift_to_smooth_norm_wide(γ_randomized_ideal, p, &target_wide)`
 /// works today. At real-prime scale it returns `Unimplemented` with the
 /// explicit "m exceeds i64 bound" message — the seam where the next
@@ -246,19 +246,19 @@ pub fn lift_to_smooth_norm_wide<const TLIMBS: usize>(
     Ok(ideal_right_multiply(ideal, &beta_o0, p))
 }
 
-/// Full-pipeline wide smooth-norm lift — wires the S69 wide β-finder
-/// into the smooth-norm lift, removing S66's i64 bottleneck.
+/// Full-pipeline wide smooth-norm lift — wires the wide β-finder
+/// into the smooth-norm lift, removing the i64 bottleneck.
 ///
 /// Same algebraic shape as [`lift_to_smooth_norm`] and
 /// [`lift_to_smooth_norm_wide`]: given `target` and an ideal `I` with
 /// `N(I) = n`, find `β ∈ O_0` with `N_red(β) = m` where `m² = target / n`,
 /// then return `J = I · β` so `N(J) = n · m² = target`.
 ///
-/// **What this session adds (S70)**: where [`lift_to_smooth_norm_wide`]
-/// (S66) bailed with `Error::Unimplemented("m exceeds i64 bound")` when
+/// **What this adds**: where [`lift_to_smooth_norm_wide`]
+/// (`lift_to_smooth_norm_wide`) bailed with `Error::Unimplemented("m exceeds i64 bound")` when
 /// `m` outgrew `i64`, this function calls the wide
 /// [`super::represent_integer::find_quaternion_in_full_order_with_norm_wide`]
-/// (S69) to find `β` at wide precision, regardless of `m`'s magnitude.
+/// to find `β` at wide precision, regardless of `m`'s magnitude.
 /// The downstream integer right-multiply still operates at `Int<8>`, so
 /// the function checks that the recovered β-coords fit `Int<8>` before
 /// calling [`super::ideal_mul::ideal_right_multiply`]. If a coord
@@ -266,7 +266,7 @@ pub fn lift_to_smooth_norm_wide<const TLIMBS: usize>(
 /// returns `Error::Unimplemented("β coord exceeds Int<8>...")` — that
 /// is the next session's seam (wide `ideal_right_multiply`).
 ///
-/// **Composition surface after S70**:
+/// **Composition surface**:
 /// - Small-input scale (m ≤ i64): use [`lift_to_smooth_norm_wide`]
 ///   for the brute-force narrow finder (faster at small inputs).
 /// - L1 scale (m up to ~`Int<8>` magnitude): use this function with
@@ -365,10 +365,9 @@ pub fn lift_to_smooth_norm_full_wide<const TLIMBS: usize, R: CryptoRng>(
 /// 1. Compute `m = T / N(J)` (must divide exactly — caller's
 ///    responsibility to compose γ-randomization with a `T` co-prime to
 ///    `q`-extraneous factors).
-/// 2. Find `β ∈ O_0` with `N_red(β) = m` via the wide β-finder
-///    (S69).
+/// 2. Find `β ∈ O_0` with `N_red(β) = m` via the wide β-finder.
 /// 3. Return `K = J · β` via the rational right-multiply
-///    [`super::ideal_mul::ideal_right_multiply_rational_wide`] (S61)
+///    [`super::ideal_mul::ideal_right_multiply_rational_wide`]
 ///    with `β_denom = 1` and `caller_provided_new_norm = Some(T)`.
 ///
 /// `N(K) = N(J) · N_red(β) = q · m = T` (cached, linear).
@@ -481,12 +480,12 @@ pub fn lift_smooth_norm_rational_wide<const TLIMBS: usize, R: CryptoRng>(
 /// function:
 /// 1. γ-randomizes `I` with a "co-prime to all `smooth_factors`"
 ///    predicate via [`lideal_norm_property_reduced_equivalent_wide`]
-///    (S65), producing `(J, q)` where `N(J) = q` and `gcd(q,
+///    (γ-randomization), producing `(J, q)` where `N(J) = q` and `gcd(q,
 ///    smooth_factor) = 1` for every factor.
 /// 2. Computes `target = q · target_m` (the canonical KLPT shape:
 ///    output has norm `q · m` where `m` is the smooth piece).
 /// 3. Lifts `J` to `K` with `N(K) = target` via
-///    [`lift_smooth_norm_rational_wide`] (S71, this session group).
+///    [`lift_smooth_norm_rational_wide`].
 ///
 /// Returns `(K, q)` so the caller knows the prime factor that came
 /// out of γ-randomization (needed by the downstream `IdealToIsogeny`
@@ -494,8 +493,8 @@ pub fn lift_smooth_norm_rational_wide<const TLIMBS: usize, R: CryptoRng>(
 ///
 /// **Composition arc payoff**: this is the first single-function
 /// entry point that runs the full two-step KLPT body. Where prior
-/// sessions tested individual primitives and the S71 milestone test
-/// composed them inline, S72 ships the composition as a reusable
+/// sessions tested individual primitives and prior milestone tests
+/// composed them inline; this function ships the composition as a reusable
 /// API.
 ///
 /// `equiv_bound_coeff` is the LLL-sampling bound for γ-randomization
@@ -695,7 +694,7 @@ pub fn lift_smooth_norm_rational_wide_wn<const TLIMBS: usize, R: CryptoRng>(
     // |det| = |det(J)|·N(β)² ~ 2^1022 at L1 (N(J)~q~2^253, N(β)~target_m
     // ~2^258); the internal HNF intermediates exceed Int<8> AND Int<TLIMBS=8>,
     // so the right-multiply must run its HNF at ≥32 limbs to avoid the
-    // lattice-corruption bug (S286/S287). (L3/L5 connecting ideals are
+    // lattice-corruption bug. (L3/L5 connecting ideals are
     // larger and may need a wider constant — future per-level tuning.)
     let inner_k = crate::quaternion::ideal_mul::ideal_right_multiply_rational_wide::<32>(
         &j_wn.inner,
@@ -718,8 +717,8 @@ pub fn lift_smooth_norm_rational_wide_wn<const TLIMBS: usize, R: CryptoRng>(
 }
 
 /// Wide-cached-norm variant of [`klpt_body_wide`] composing
-/// γ-randomization (S65) with the canonical rational lift at the
-/// `LeftIdealWideNorm<TLIMBS>` interface (S75).
+/// γ-randomization with the canonical rational lift at the
+/// `LeftIdealWideNorm<TLIMBS>` interface.
 ///
 /// Same shape as `klpt_body_wide`:
 /// 1. γ-randomize via [`lideal_norm_property_reduced_equivalent_wide`]
@@ -741,9 +740,9 @@ pub fn lift_smooth_norm_rational_wide_wn<const TLIMBS: usize, R: CryptoRng>(
 /// Precision contract: same as [`klpt_body_wide`].
 ///
 /// **`q_max_bits` constrains γ-randomization's q output magnitude**
-/// (S80). When `Some(b)`, the predicate rejects q with `bits_vartime() >= b`.
+/// When `Some(b)`, the predicate rejects q with `bits_vartime() >= b`.
 /// This prevents `target = q · target_m` from overflowing `Uint<TLIMBS>`
-/// when γ-randomization at L3/L5 lands on a large-q branch
+/// when γ-randomization at L3/L5 takes a large-q branch
 /// (v_2/v_3 ≠ 0 of the O_0 norm form gives q up to ~p). Callers should
 /// pass `q_max_bits = Some(64·TLIMBS - bits(target_m))` (or smaller) to
 /// guarantee the multiplication fits. `None` disables the bound (legacy
@@ -911,7 +910,7 @@ pub fn find_prime_norm_quaternion_in_ideal<R: CryptoRng>(
 /// q back to `Uint<8>` for the return.
 ///
 /// At L1 large-γ and L3/L5 magnitudes the narrow search overflows
-/// `Int<8>` (S55 confirmed this via wide-Int verification). This wide
+/// `Int<8>` (confirmed via wide-Int verification). This wide
 /// variant gives the search the magnitude headroom its math demands —
 /// every internal call uses an existing generic primitive instantiated
 /// at `LIMBS = WIDE`, no algorithm duplication.
@@ -987,7 +986,7 @@ where
     let zero_u_w = Uint::<WIDE>::from_u64(0);
 
     // Widen ideal basis and prime to WIDE precision. INW is the INPUT
-    // ideal width: at reduced scale (S307) the secret ideal fits Int<8>
+    // ideal width: at reduced scale the secret ideal fits Int<8>
     // (INW=8), but the KAT-exact secret ideal is sampled at norm
     // SEC_DEGREE~2^512 whose HNF basis diagonal (= the norm) exceeds
     // Int<8>, so it arrives as LeftIdeal<16> (INW=16). The found α and the
@@ -1106,7 +1105,7 @@ pub fn lideal_prime_norm_reduced_equivalent<R: CryptoRng>(
 ///
 /// At L1 / L3 / L5 magnitudes the narrow search overflows; the wide
 /// search at appropriate `WIDE` (per the per-level magnitude analysis
-/// in S58 / S59) produces a correct α with `N_red(α) = q · N(I)`. The
+/// (wide search at appropriate WIDE) produces a correct α with `N_red(α) = q · N(I)`. The
 /// subsequent rational right-multiply constructs `J = I · (ᾱ / N(I))`
 /// with cached `N(J) = q`.
 ///
@@ -1137,8 +1136,8 @@ pub fn lideal_prime_norm_reduced_equivalent_wide<const WIDE: usize, R: CryptoRng
 
 /// Generic norm-property reduced-equivalent left ideal at WIDE precision.
 ///
-/// Composes [`find_quaternion_in_ideal_with_norm_property_wide`] (S64)
-/// with [`super::ideal_mul::ideal_right_multiply_rational_wide`] (S61)
+/// Composes [`find_quaternion_in_ideal_with_norm_property_wide`]
+/// with [`super::ideal_mul::ideal_right_multiply_rational_wide`]
 /// to build an equivalent left ideal `J` whose cached norm satisfies the
 /// caller-supplied `accept_norm` predicate.
 ///
@@ -1189,17 +1188,15 @@ where
     Some((j, q))
 }
 
-// Note: the legacy attempted wrapper from S48 (with integer
-// `divide_basis_by(N(I))`) is replaced by the S49 rational path above.
-// S48's failure-mode (`N(J) = q²/N(I)` instead of `q`) is documented
+// Note: the legacy attempted wrapper (with integer
+// `divide_basis_by(N(I))`) is replaced by the rational path above.
+// The original failure-mode (`N(J) = q²/N(I)` instead of `q`) is documented
 // in ISA Decisions for the audit trail.
 
 // ──────────────────────────────────────────────────────────────────────
-// Original S48 abort-context (kept inline for diff-readers; can be
-// trimmed once S49 has been audited): Session 48's first attempt landed two tests
-// (O_0 and 2·O_0 at p=7) which immediately surfaced a semantic mismatch
-// between the SQIsign-reference C body and this codebase's integer-only
-// `LeftIdeal` representation:
+// Convention note (the semantic mismatch the rational path above resolves):
+// an integer-only `LeftIdeal` cannot reproduce the C reference's lift
+// directly.
 //
 // - C reference: `J = I · (ᾱ / N(I))` is a *rational* quaternion
 //   right-multiplication; the resulting lattice carries a denominator
@@ -1207,30 +1204,17 @@ where
 //   `N(I · β_rational) = N(I) · N_red(β_rational)` (linear), giving
 //   `N(J) = q`.
 //
-// - This codebase: `LeftIdeal` has no denominator field. Integer
-//   right-multiplication composes a basis-matrix product whose
-//   determinant grows quadratically — `N(I · β_integer) = N(I) ·
-//   N_red(β_integer)²` (per Session 11's existing `lift_to_smooth_norm`
+// - An integer-only `LeftIdeal` (no denominator field) right-multiplies
+//   via a basis-matrix product whose determinant grows quadratically —
+//   `N(I · β_integer) = N(I) · N_red(β_integer)²` (the `lift_to_smooth_norm`
 //   convention). Dividing the integer basis by `N(I)` afterwards gives
-//   `N(J) = q² / N(I)` in this codebase's convention, not `q`. For
-//   `I = O_0` (N(I) = 1) the test observed `N(J) = q² = 3481` when
-//   the search returned `q = 59`. For `I = 2·O_0` (N(I) = 16) the
-//   divide-by-16 step failed because `q²` is odd and `q²/16` isn't an
-//   integer — `divide_basis_by` correctly returned `None`.
+//   `N(J) = q² / N(I)`, not `q`. For `I = O_0` (N(I) = 1) this yields
+//   `N(J) = q²`; for `I = 2·O_0` (N(I) = 16) the divide-by-16 step fails
+//   because `q²` is odd and `q²/16` isn't an integer — `divide_basis_by`
+//   correctly returns `None`.
 //
-// The fix is one of:
-//   (a) Add a `denom: Uint<LIMBS>` field to `LeftIdeal` and propagate
-//       it through the existing `ideal_right_multiply`, `divide_basis_by`,
-//       `norm`, and `equals_lattice` operations — a structural change
-//       touching every ideal-using module.
-//   (b) Compute `J` via the equivalent lattice-intersection formula
-//       (e.g. `J = α·O_0 + I·q` modulo the right denominator handling),
-//       which sidesteps the rational issue but needs careful
-//       norm-preservation proof.
-//
-// Either path is its own session. The S47 `find_prime_norm_quaternion_in_ideal`
-// already finds the needed α; the rest is plumbing once the convention
-// question is settled. **S49 should pick a path and ship the wrapper.**
+// The rational path above resolves this by carrying the denominator
+// explicitly, so the lift yields `N(J) = q` as the C reference requires.
 
 #[cfg(all(test, feature = "kat"))]
 mod tests {
@@ -1262,11 +1246,11 @@ mod tests {
         assert!(matches!(r, Err(Error::Unimplemented(_))));
     }
 
-    // ── S66 — wide-Int smooth-norm lift (lift_to_smooth_norm_wide) ──
+    // ── wide-Int smooth-norm lift (lift_to_smooth_norm_wide) ──
 
     #[test]
     fn lift_wide_two_o0_target_sixty_four_matches_narrow() {
-        // S66 parity check: the wide variant at the existing u128
+        // Parity check: the wide variant at the existing u128
         // test's scale must return the same result. Reuses
         // `lift_two_o0_target_sixty_four`'s setup: N(2·O_0) = 16,
         // target = 64, m² = 4, m = 2, β = e_3 at p = 7.
@@ -1279,12 +1263,12 @@ mod tests {
         // Same lattice, same cached norm.
         assert!(
             j_wide.equals_lattice(&j_narrow),
-            "S66 parity: wide and narrow lifts must produce equivalent lattices",
+            "parity: wide and narrow lifts must produce equivalent lattices",
         );
         assert_eq!(
             j_wide.norm(),
             j_narrow.norm(),
-            "S66 parity: wide and narrow cached norms must match",
+            "parity: wide and narrow cached norms must match",
         );
         assert_eq!(j_wide.norm(), Uint::<8>::from_u64(64));
     }
@@ -1322,7 +1306,7 @@ mod tests {
 
     #[test]
     fn lift_wide_signals_m_exceeds_i64_bound_at_real_prime_scale() {
-        // S66 boundary marker: at real-prime scale, m ≈ √(T/N(I))
+        // Boundary marker: at real-prime scale, m ≈ √(T/N(I))
         // is far beyond i64. The wide lift must signal this explicitly
         // (not panic, not silently fail), so the next session can plug
         // in a wide β-finder cleanly.
@@ -1335,23 +1319,23 @@ mod tests {
         // target = 2^130
         let target = Uint::<8>::ONE.shl_vartime(130);
         let r = lift_to_smooth_norm_wide::<8>(&id, &p, &target);
-        let err = r.expect_err("S66 must reject m = 2^65 (exceeds i64)");
+        let err = r.expect_err("must reject m = 2^65 (exceeds i64)");
         let Error::Unimplemented(msg) = err else {
-            unreachable!("S66 expected Unimplemented(i64-bound...), got Err({err:?})");
+            unreachable!("expected Unimplemented(i64-bound...), got Err({err:?})");
         };
         assert!(
             msg.contains("i64 bound") || msg.contains("i64::MAX"),
-            "S66 expected the i64-bound error message; got: {msg}",
+            "expected the i64-bound error message; got: {msg}",
         );
     }
 
-    // ── S70 — wide-Int smooth-norm lift wired to wide β-finder ──
+    // ── wide-Int smooth-norm lift wired to wide β-finder ──
 
     #[test]
     fn lift_full_wide_full_order_target_25_matches_wide() {
-        // S70 parity: at u128 scale (target = 25, m = 5 fits i64),
+        // Parity check: at u128 scale (target = 25, m = 5 fits i64),
         // `lift_to_smooth_norm_full_wide` and `lift_to_smooth_norm_wide`
-        // (S66 narrow-finder path) must produce ideals with the same
+        // (narrow-finder path) must produce ideals with the same
         // cached norm. m = 5 is the smallest value representable by
         // the wide β-finder at p = 7 (where the smaller m=1,2,3,4
         // cases hit the `4m > p` AND `T ≡ 1 mod 4` AND `T prime`
@@ -1382,22 +1366,22 @@ mod tests {
             &witnesses,
             &mut rng,
         )
-        .expect("S70: full-wide lift must succeed at target = 25, p = 7");
+        .expect("full-wide lift must succeed at target = 25, p = 7");
         let j_wide = lift_to_smooth_norm_wide::<8>(&id, &p, &target)
-            .expect("S70 baseline: S66 narrow-finder lift at the same target");
+            .expect("baseline: narrow-finder lift at the same target");
         assert_eq!(
             j_full.norm(),
             j_wide.norm(),
-            "S70: cached norms must agree across the two paths",
+            "cached norms must agree across the two paths",
         );
         assert_eq!(j_full.norm(), Uint::<8>::from_u64(25));
     }
 
     #[test]
     fn lift_full_wide_above_i64_bound_at_fake_prime_succeeds() {
-        // S70 milestone: target = 2^130, m = 2^65 (exceeds i64). Where
-        // S66's `lift_to_smooth_norm_wide` returned
-        // `Error::Unimplemented("m exceeds i64 bound")`, S70's
+        // Milestone: target = 2^130, m = 2^65 (exceeds i64). Where
+        // `lift_to_smooth_norm_wide` returned
+        // `Error::Unimplemented("m exceeds i64 bound")`,
         // `lift_to_smooth_norm_full_wide` SUCCEEDS by routing through
         // the wide β-finder. This proves the i64 bottleneck is gone.
         //
@@ -1426,18 +1410,18 @@ mod tests {
             &witnesses,
             &mut rng,
         )
-        .expect("S70: wide β-finder must produce a lift at m = 2^65, p = 7");
+        .expect("wide β-finder must produce a lift at m = 2^65, p = 7");
         // Cached norm must equal the target.
         assert_eq!(
             j.norm(),
             target,
-            "S70: N(J) must equal target = 2^130 after the lift",
+            "N(J) must equal target = 2^130 after the lift",
         );
     }
 
     #[test]
     fn lift_full_wide_target_one_returns_full_order() {
-        // S70: the m = 1 special case (β = 1) must work at the new
+        // The m = 1 special case (β = 1) must work at the new
         // signature too. β = [1, 0, 0, 0] in O_0 coords.
         use crate::rng::NistPqcRng;
         let id = LeftIdeal::<8>::full_order();
@@ -1454,7 +1438,7 @@ mod tests {
 
     #[test]
     fn lift_full_wide_rejects_non_divisible_target() {
-        // S70: outer arithmetic rejection still fires at the new API.
+        // Outer arithmetic rejection still fires at the new API.
         use crate::rng::NistPqcRng;
         let two_id = LeftIdeal::<8>::full_order().scale(2);
         let p = Uint::<8>::from_u64(7);
@@ -1467,11 +1451,11 @@ mod tests {
         assert!(matches!(r, Err(Error::Unimplemented(_))));
     }
 
-    // ── S71 — end-to-end KLPT body composition milestone ──
+    // ── end-to-end KLPT body composition milestone ──
 
     #[test]
     fn klpt_body_composes_gamma_randomize_then_smooth_lift_at_fake_prime() {
-        // S71 — the KLPT-body integration milestone. Where prior
+        // KLPT-body integration milestone. Where prior
         // sessions built and tested individual wide primitives, this
         // test composes them into the actual two-step KLPT body:
         //
@@ -1483,7 +1467,7 @@ mod tests {
         // The predicate picks q ≥ 5 AND co-prime to {2, 3} so the
         // downstream smooth-norm-lift can succeed (the wide β-finder
         // can't handle m ∈ {1, 2, 3, 4} at p = 7 per the boundary
-        // documented in S69 and S70).
+        // documented in the lift and β-finder sections).
         //
         // Target is `q · 25` so m_sq = 25, m = 5 — the smallest
         // representable m at fake prime. The wide β-finder finds some
@@ -1491,8 +1475,8 @@ mod tests {
         // the existing narrow `ideal_right_multiply` produces K with
         // cached norm exactly `q · 25`.
         //
-        // **What this validates**: the abstraction-pattern arc from
-        // S55-S70 produces a working end-to-end pipeline. The wide
+        // **What this validates**: the abstraction-pattern arc
+        // produces a working end-to-end pipeline. The wide
         // γ-randomization output (an ideal J with constrained norm q)
         // is directly consumable by the wide smooth-norm-lift, with
         // no glue code required beyond computing `target = q · m²`.
@@ -1526,13 +1510,13 @@ mod tests {
             &mut rng_gamma,
         )
         .expect(
-            "S71 step 1: γ-randomization must produce J with N(J) = q satisfying the predicate",
+            "step 1: γ-randomization must produce J with N(J) = q satisfying the predicate",
         );
 
         // Verify the predicate post-condition explicitly.
         assert!(
             q >= Uint::<8>::from_u64(5),
-            "S71 invariant: γ-randomization q must satisfy q ≥ 5 per predicate; got {q:?}",
+            "invariant: γ-randomization q must satisfy q ≥ 5 per predicate; got {q:?}",
         );
         let zero_n = Uint::<8>::from_u64(0);
         for &small in &[2u64, 3] {
@@ -1541,13 +1525,13 @@ mod tests {
             assert_ne!(
                 q.rem_vartime(&nz),
                 zero_n,
-                "S71 invariant: γ-randomization q must be co-prime to {small} per predicate",
+                "invariant: γ-randomization q must be co-prime to {small} per predicate",
             );
         }
         assert_eq!(
             j.norm(),
             q,
-            "S71 invariant: γ-randomized J must have cached N(J) = q",
+            "invariant: γ-randomized J must have cached N(J) = q",
         );
 
         // Step 2: canonical (rational-convention) smooth-norm-lift.
@@ -1573,22 +1557,22 @@ mod tests {
             &witnesses,
             &mut rng_lift,
         )
-        .expect("S71 step 2: canonical smooth-norm-lift must succeed on γ-randomized J");
+        .expect("step 2: canonical smooth-norm-lift must succeed on γ-randomized J");
 
         // Final invariant: N(K) = q · 25 = target.
         assert_eq!(
             k.norm(),
             target,
-            "S71 KLPT body output: N(K) must equal q · 25 (= target)",
+            "KLPT body output: N(K) must equal q · 25 (= target)",
         );
     }
 
-    // ── S72 — klpt_body_wide single-call entry point ──
+    // ── klpt_body_wide single-call entry point ──
 
     #[test]
     fn klpt_body_wide_composes_two_steps_at_fake_prime() {
-        // S72 milestone: the two-step KLPT body wrapped as a single
-        // function call. Same end-to-end behaviour as the S71
+        // Milestone: the two-step KLPT body wrapped as a single
+        // function call. Same end-to-end behaviour as the
         // integration test, but now any Sign/Verify caller just
         // invokes `klpt_body_wide(I, p, target_m, ...)` and gets
         // back `(K, q)` in one shot.
@@ -1623,7 +1607,7 @@ mod tests {
             &witnesses,
             &mut rng,
         )
-        .expect("S72: klpt_body_wide must produce (K, q) for O_0 at fake prime");
+        .expect("klpt_body_wide must produce (K, q) for O_0 at fake prime");
 
         // The returned q must satisfy the predicate (co-prime to {2, 3}).
         // For γ-randomization to produce a usable q the predicate is
@@ -1635,7 +1619,7 @@ mod tests {
             assert_ne!(
                 q.rem_vartime(&nz),
                 zero,
-                "S72: q must be co-prime to smooth factor {f}",
+                "q must be co-prime to smooth factor {f}",
             );
         }
 
@@ -1644,16 +1628,16 @@ mod tests {
         assert_eq!(
             k.norm(),
             expected,
-            "S72: klpt_body_wide output K must have N(K) = q · target_m",
+            "klpt_body_wide output K must have N(K) = q · target_m",
         );
     }
 
-    // ── S73 — klpt_body_wide at real L1 prime ──
+    // ── klpt_body_wide at real L1 prime ──
 
     #[cfg(feature = "kat")]
     #[test]
     fn klpt_body_wide_succeeds_at_real_lvl1_prime() {
-        // S73 production-scale milestone: invoke `klpt_body_wide` at
+        // Production-scale milestone: invoke `klpt_body_wide` at
         // the real SQIsign L1 prime (`p = 5·2^248 − 1`). This is the
         // first session running the FULL two-step KLPT body on a
         // real cryptographic prime.
@@ -1708,7 +1692,7 @@ mod tests {
             &witnesses,
             &mut rng,
         )
-        .expect("S73: klpt_body_wide must succeed at real L1 prime");
+        .expect("klpt_body_wide must succeed at real L1 prime");
 
         // The returned q must satisfy the predicate (co-prime to {2, 3}).
         let zero = Uint::<8>::from_u64(0);
@@ -1718,7 +1702,7 @@ mod tests {
             assert_ne!(
                 q.rem_vartime(&nz),
                 zero,
-                "S73: q must be co-prime to smooth factor {f}",
+                "q must be co-prime to smooth factor {f}",
             );
         }
 
@@ -1727,22 +1711,22 @@ mod tests {
         assert_eq!(
             k.norm(),
             expected,
-            "S73 KLPT body at L1: N(K) must equal q · target_m (= q · 1000·2^248)",
+            "KLPT body at L1: N(K) must equal q · target_m (= q · 1000·2^248)",
         );
     }
 
-    // ── S74 — klpt_body_wide at real L3 prime ──
+    // ── klpt_body_wide at real L3 prime ──
 
     #[cfg(feature = "kat")]
     #[test]
     fn klpt_body_wide_succeeds_at_real_lvl3_prime() {
-        // S74 production-scale milestone at NIST Level 3: invoke
+        // Production-scale milestone at NIST Level 3: invoke
         // `klpt_body_wide` at the real SQIsign L3 prime
-        // (`p = 65·2^376 − 1` ≈ 2^383). The S73 L1 result extends
+        // (`p = 65·2^376 − 1` ≈ 2^383). The L1 result extends
         // to higher security levels with appropriate precision and
         // parameter scaling.
         //
-        // Parameter selection (mirrors S73's L1 analysis at L3 scale):
+        // Parameter selection (mirrors the L1 analysis at L3 scale):
         // - TLIMBS = 12 — Cornacchia precision contract
         //   `64·LIMBS ≥ 2·bits(p) + 1`: 64·12 = 768 ≥ 2·383 + 1 = 767. ✓
         //   (TLIMBS = 8 is insufficient at L3.)
@@ -1819,7 +1803,7 @@ mod tests {
             &witnesses,
             &mut rng,
         )
-        .expect("S74: klpt_body_wide must succeed at real L3 prime");
+        .expect("klpt_body_wide must succeed at real L3 prime");
 
         // Defensive q-magnitude check: this test requires small q for
         // the target multiplication to fit Uint<TLIMBS=12>. If q is
@@ -1828,7 +1812,7 @@ mod tests {
         // be updated with a different seed or a wider-cached-norm path.
         assert!(
             q < Uint::<8>::ONE.shl_vartime(64),
-            "S74 test invariant: γ-randomization q must stay below 2^64 \
+            "test invariant: γ-randomization q must stay below 2^64 \
              to avoid Uint<12> overflow in target = q·target_m. \
              Got q with bits = {}, increase TLIMBS or pick different seed.",
             q.bits_vartime(),
@@ -1842,7 +1826,7 @@ mod tests {
             assert_ne!(
                 q.rem_vartime(&nz),
                 zero,
-                "S74: q must be co-prime to smooth factor {f}",
+                "q must be co-prime to smooth factor {f}",
             );
         }
 
@@ -1855,16 +1839,16 @@ mod tests {
         assert_eq!(
             k.norm(),
             expected,
-            "S74 KLPT body at L3: N(K) must equal q · target_m (= q · 1000·2^380)",
+            "KLPT body at L3: N(K) must equal q · target_m (= q · 1000·2^380)",
         );
     }
 
-    // ── S75 — wide-cached-norm lift at L5 scale ──
+    // ── wide-cached-norm lift at L5 scale ──
 
     #[cfg(feature = "kat")]
     #[test]
     fn lift_smooth_norm_rational_wide_wn_succeeds_at_real_lvl5_prime() {
-        // S75 — production-scale milestone at NIST Level 5, exercising
+        // Production-scale milestone at NIST Level 5, exercising
         // the new `LeftIdealWideNorm<NLIMBS>` wrapper that decouples
         // cached_norm storage from the narrow `LeftIdeal<8>` basis.
         //
@@ -1874,8 +1858,8 @@ mod tests {
         // cached_norm at `Uint<NLIMBS>`, lifting that ceiling.
         //
         // This test focuses on the LIFT step alone (skipping
-        // γ-randomization which has its own Uint<8> ceiling on q —
-        // deferred to a future session). Setup:
+        // γ-randomization, which has its own Uint<8> ceiling on q).
+        // Setup:
         // - Start with O_0 (N(I) = 1) wrapped as LeftIdealWideNorm<16>.
         // - target_m = 2^513 — exceeds Uint<8>=2^512 by one bit, so the
         //   narrow lift would bail at the `target.bits_vartime() > 512`
@@ -1910,30 +1894,30 @@ mod tests {
             &witnesses,
             &mut rng,
         )
-        .expect("S75: wide-cached-norm lift must succeed at L5 with target > Uint<8>");
+        .expect("wide-cached-norm lift must succeed at L5 with target > Uint<8>");
 
         // The authoritative cached_norm equals target (linear convention:
         // N(K) = N(O_0) · m = 1 · 2^513 = 2^513).
         assert_eq!(
             k_wn.cached_norm, target,
-            "S75: LeftIdealWideNorm.cached_norm must equal target",
+            "LeftIdealWideNorm.cached_norm must equal target",
         );
 
         // Sanity: the cached_norm is wider than Uint<8> (which would
         // have failed in the narrow path).
         assert!(
             k_wn.cached_norm.bits_vartime() > 512,
-            "S75: cached_norm must exceed Uint<8>'s 512-bit ceiling \
+            "cached_norm must exceed Uint<8>'s 512-bit ceiling \
              (would have failed in narrow lift)",
         );
     }
 
-    // ── S76 — klpt_body_wide_wn end-to-end at L5 prime ──
+    // ── klpt_body_wide_wn end-to-end at L5 prime ──
 
     #[cfg(feature = "kat")]
     #[test]
     fn klpt_body_wide_wn_succeeds_at_real_lvl5_prime() {
-        // S76 — full KLPT body composition at NIST Level 5, exercising
+        // Full KLPT body composition at NIST Level 5, exercising
         // both wide primitives end-to-end:
         // 1. γ-randomize O_0 → J with `N(J) = q` (Uint<8>-fitting at L5).
         // 2. Bridge J to LeftIdealWideNorm<16>.
@@ -1965,13 +1949,13 @@ mod tests {
 
         let p = crate::params::lvl5::prime().resize::<8>();
         let o_0 = LeftIdeal::<8>::full_order();
-        // target_m = 2^513 — matches the m value that S75's standalone
+        // target_m = 2^513 — matches the m value that the standalone
         // lift test (`lift_smooth_norm_rational_wide_wn_succeeds_at_real_lvl5_prime`)
         // proved is representable by the wide β-finder at L5. With
         // γ-randomization output `q` (small, ⊥ {2, 3}), the lift's
         // m = target / N(J) = (q · target_m) / q = target_m = 2^513.
         // So the β-finder searches for β with N(β) = 2^513 — the
-        // exact case S75 verified works.
+        // exact case already verified to work.
         let target_m = Uint::<16>::ONE.shl_vartime(513);
         let smooth_factors: &[u64] = &[2, 3];
         let witnesses: [Uint<16>; 3] = [Uint::from_u64(2), Uint::from_u64(3), Uint::from_u64(5)];
@@ -1983,14 +1967,14 @@ mod tests {
             &p,
             &target_m,
             smooth_factors,
-            None,    // q_max_bits — S76 seed 0x77 lands on small q without the bound
+            None,    // q_max_bits — seed 0x77 lands on small q without the bound
             5,       // equiv_bound_coeff (SQIsign L5)
             30,      // sample_bound
             1 << 16, // max_trials — bumped 4× for L5's tighter expected hit rate
             &witnesses,
             &mut rng,
         )
-        .expect("S76: klpt_body_wide_wn must succeed at real L5 prime");
+        .expect("klpt_body_wide_wn must succeed at real L5 prime");
 
         // q ⊥ smooth_factors.
         let zero = Uint::<8>::from_u64(0);
@@ -2000,7 +1984,7 @@ mod tests {
             assert_ne!(
                 q.rem_vartime(&nz),
                 zero,
-                "S76: q must be co-prime to smooth factor {f}",
+                "q must be co-prime to smooth factor {f}",
             );
         }
 
@@ -2009,14 +1993,14 @@ mod tests {
         let expected = q_w.wrapping_mul(&target_m);
         assert_eq!(
             k_wn.cached_norm, expected,
-            "S76 KLPT body at L5: K_wn.cached_norm must equal q · target_m at Uint<16>",
+            "KLPT body at L5: K_wn.cached_norm must equal q · target_m at Uint<16>",
         );
 
         // The wide cached_norm exceeds Uint<8>'s 512-bit ceiling,
-        // demonstrating the structural fix from S75 is engaged.
+        // demonstrating the LeftIdealWideNorm structural fix is engaged.
         assert!(
             k_wn.cached_norm.bits_vartime() > 512,
-            "S76: cached_norm must exceed Uint<8> ceiling — narrow lift \
+            "cached_norm must exceed Uint<8> ceiling — narrow lift \
              would have failed; wide path engaged",
         );
     }
@@ -2159,13 +2143,13 @@ mod tests {
     #[test]
     fn lideal_prime_norm_reduced_equivalent_at_real_lvl1_prime() {
         // Real-prime stress test: O_0 at p = 5·2^248 − 1. Verifies the
-        // S43-S49 pipeline works at the magnitudes SQIsign actually
+        // The pipeline works at the magnitudes SQIsign actually
         // uses. Magnitude analysis: `Int<8>` (signed 512-bit) holds
         // `det(G_O0(p_L1)) ≈ 16·p² ≈ 2^506` (5 bits of headroom).
         // The Lovász check computes `4·d[k-1]·d[k+1]` which at k=3 can
         // reach `4·16·16p² ≈ 2^512` — right at Int<8> overflow. If the
         // test panics or returns a wrong answer, that's the cause and
-        // S51 needs to ship wide-Int intermediates for the LLL path.
+        // Wide-Int intermediates are needed for the LLL path at this scale.
         use crate::rng::NistPqcRng;
         let id = LeftIdeal::<8>::full_order();
         let p_narrow = crate::params::lvl1::prime();
@@ -2189,7 +2173,7 @@ mod tests {
     #[cfg(feature = "kat")]
     #[test]
     fn lideal_prime_norm_reduced_equivalent_wide_at_real_lvl3_prime_o0() {
-        // S63 milestone: end-to-end wide wrapper at L3 prime + O_0.
+        // Milestone: end-to-end wide wrapper at L3 prime + O_0.
         // LLL intermediates reach `d² ≈ 2·det(G_O0(p_L3)) ≈ p^4/256 ≈ 2^1532`.
         // WIDE=48 (3072 bits) gives ~1500-bit safety margin.
         use crate::rng::NistPqcRng;
@@ -2216,7 +2200,7 @@ mod tests {
     #[cfg(feature = "kat")]
     #[test]
     fn lideal_prime_norm_reduced_equivalent_wide_at_real_lvl5_prime_o0() {
-        // S63 milestone: end-to-end wide wrapper at L5 prime + O_0.
+        // Milestone: end-to-end wide wrapper at L5 prime + O_0.
         // LLL intermediates reach `d² ≈ p^4/256 ≈ 2^2014`. WIDE=64
         // (4096 bits) gives ~2000-bit safety margin.
         use crate::rng::NistPqcRng;
@@ -2243,7 +2227,7 @@ mod tests {
     #[cfg(feature = "kat")]
     #[test]
     fn lideal_norm_property_reduced_equivalent_wide_coprime_to_t_at_l3_o0() {
-        // S65 — KLPT γ-randomization primitive: build an equivalent left
+        // KLPT γ-randomization primitive: build an equivalent left
         // ideal J whose cached norm q is *co-prime to T*, where T is the
         // smooth lift target. This is the first composition step of the
         // full KLPT body: pick γ with `N_red(γ)/N(I)` co-prime to T, then
@@ -2309,11 +2293,11 @@ mod tests {
     #[cfg(feature = "kat")]
     #[test]
     fn lideal_prime_norm_reduced_equivalent_wide_at_real_lvl1_prime_large_gamma() {
-        // S61 milestone: end-to-end wide wrapper now handles large-basis
+        // Milestone: end-to-end wide wrapper now handles large-basis
         // ideals. For O_0·(i+j)/2 at L1 (γ = (0,0,1,0), basis entries
         // O(p)), the inner multiply_o0_basis must use wide arithmetic
-        // to avoid p³ intermediate overflows. The S60 wrapper using
-        // narrow rational-multiply would wrap; S61 uses the wide
+        // to avoid p³ intermediate overflows. The previous narrow wrapper
+        // would wrap; this version uses the wide
         // variant.
         use crate::quaternion::o0_mul::principal_left_ideal_from_o0;
         use crate::rng::NistPqcRng;
@@ -2355,9 +2339,9 @@ mod tests {
     #[cfg(feature = "kat")]
     #[test]
     fn lideal_prime_norm_reduced_equivalent_wide_at_real_lvl1_prime_o0() {
-        // S60 milestone: end-to-end prime-norm equivalent ideal at L1.
-        // Composes the wide search (S58) with `ideal_right_multiply_rational`
-        // (S49) to produce J with N(J) = q at real-prime scale.
+        // Milestone: end-to-end prime-norm equivalent ideal at L1.
+        // Composes the wide search with `ideal_right_multiply_rational`
+        // to produce J with N(J) = q at real-prime scale.
         // For O_0 input (basis = identity, small entries), the inner
         // `multiply_o0_basis` calls stay narrow even though the search
         // path runs wide.
@@ -2433,9 +2417,9 @@ mod tests {
         assert!(r8.is_some(), "search must succeed at this scale (sanity)");
     }
 
-    // NOTE (S311 research + diagnosis — no in-suite capability test, see
+    // NOTE (research + diagnosis — no in-suite capability test, see
     // below; findings recorded in ISA.md). The wide-INPUT reduction search
-    // generalized in S310 is ALGORITHMICALLY correct and matches the
+    // is ALGORITHMICALLY correct and matches the
     // C-reference (verified against SQISign/the-sqisign
     // `src/quaternion/ref/generic/lll/lll_applications.c`
     // `quat_lideal_prime_norm_reduced_equivalent`): LLL-reduce the ideal,
@@ -2452,7 +2436,7 @@ mod tests {
     //     basis transform in GMP integers (`l2.c`).
     //   - Our divisor convention is correct: the wide-return sampler sets
     //     cached_norm = N, so `ideal.norm()` = N(I) and the `4·N(I)` divisor
-    //     is right (ruled out as the S310 non-convergence cause).
+    //     is right (ruled out as the non-convergence cause).
     //
     // WHY there is no in-suite SEC_DEGREE capability test: our search runs
     // the ENTIRE LLL (integral Bareiss GSO) at a fixed crypto-bigint width.
@@ -2463,7 +2447,7 @@ mod tests {
     // our LLL uses δ=0.75 (weaker than the C-ref's 0.995), lowering the
     // prime-norm density in the small-coefficient box; combined cost is
     // infeasible in-suite (the run was killed). This is NOT a correctness
-    // gap — it is a PERFORMANCE/strength gap. S312 fix: a float-assisted
+    // gap — it is a PERFORMANCE/strength gap. Fix: a float-assisted
     // (dpe-style) Gram-Schmidt at δ→0.995 so the GSO numerics are cheap and
     // the basis is strongly reduced, making the bound=64 search converge
     // fast; THEN the oracle-free capability test (N_red(α)==q·SEC_DEGREE),
@@ -2473,7 +2457,7 @@ mod tests {
     #[cfg(feature = "kat")]
     #[test]
     fn find_prime_norm_quaternion_in_ideal_wide_passes_l3_o0() {
-        // S59 milestone: L3 O_0 search via the wide path.
+        // L3 O_0 search via the wide path.
         // L3 prime `p = 65·2^376 − 1` ≈ 2^383. For O_0 basis = identity,
         // det(G_O0(p_L3)) ≈ 16·p² ≈ 2^770. GSO `lam·lam` reaches
         // ≈ d² ≈ 2^1540. WIDE=32 (Int<32>=2048 bits) gives ~500-bit
@@ -2512,7 +2496,7 @@ mod tests {
     #[cfg(feature = "kat")]
     #[test]
     fn find_prime_norm_quaternion_in_ideal_wide_passes_l5_o0() {
-        // S59 milestone: L5 O_0 search via the wide path.
+        // L5 O_0 search via the wide path.
         // L5 prime `p = 27·2^500 − 1` ≈ 2^505. For O_0 basis = identity,
         // det(G_O0(p_L5)) ≈ 16·p² ≈ 2^1014. GSO `lam·lam` reaches
         // ≈ d² ≈ 2^2028. WIDE=64 (Int<64>=4096 bits) gives ~2000-bit
@@ -2550,7 +2534,7 @@ mod tests {
     #[cfg(feature = "kat")]
     #[test]
     fn find_prime_norm_quaternion_in_ideal_wide_passes_l1_large_gamma() {
-        // S58 success-signal: the WIDE search at L1 large-γ produces
+        // The WIDE search at L1 large-γ produces
         // an α whose actual reduced norm matches q·N(I), verified via
         // the genuinely-independent `reduced_norm_o0_basis_wide` ground
         // truth (which can't itself overflow at WIDE=16 precision).
@@ -2563,7 +2547,7 @@ mod tests {
         let p_narrow = crate::params::lvl1::prime();
         let p = p_narrow.resize::<8>();
 
-        // γ = (i+j)/2 — the S54/S55 large-γ that breaks narrow search.
+        // γ = (i+j)/2 — the large-γ that breaks narrow search.
         let gamma = [
             Int::<8>::from_i64(0),
             Int::<8>::from_i64(0),
@@ -2612,7 +2596,7 @@ mod tests {
     #[cfg(feature = "kat")]
     #[test]
     fn find_quaternion_in_ideal_with_norm_property_wide_accepts_coprime_predicate_l3_o0() {
-        // S64 — exercises the generic `accept_norm` path with a
+        // Exercises the generic `accept_norm` path with a
         // non-primality predicate (co-prime to the smooth modulus
         // T = 2·3·5·7·11·13 = 30030). This is the predicate shape the
         // KLPT-body γ-randomization needs: it must produce a γ whose
@@ -2683,8 +2667,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "wrapping corrupted the search at L1 large-γ scale")]
     fn lideal_prime_norm_reduced_equivalent_at_real_lvl1_prime_large_gamma() {
-        // S54 *real* overflow probe: a principal ideal with γ = (i+j)/2
-        // in O_0-coords = (0, 0, 1, 0). Unlike S53's `(1+i)` which had
+        // Real overflow probe: a principal ideal with γ = (i+j)/2
+        // in O_0-coords = (0, 0, 1, 0). Unlike the `(1+i)` case which had
         // small generators, this γ produces generators like
         // `(1+k)/2 · (i+j)/2 = (0, -(1+p)/4, 1, 0)` — the b-coord is
         // `-5·2^246 ≈ -2^248` at L1. After HNF the basis has O(p)
@@ -2696,7 +2680,7 @@ mod tests {
         //   (i) Test passes — wrapping benign at the actually-O(p) scale.
         //   (ii) Search returns Some, independent check fails — wrapping
         //        corrupts silently; this is the failure mode that
-        //        wide-Int (S55+) must fix.
+        //        wide-Int must fix.
         //   (iii) Search returns None — wrapping made every candidate
         //         look non-prime.
         //   (iv) Panic in `int_div_exact` debug_assert — overflow
@@ -2739,8 +2723,8 @@ mod tests {
         // GENUINELY independent ground-truth check via wide-Int
         // (Int<16> = 1024-bit signed) arithmetic. The narrow-Int<8>
         // path overflows here — `reduced_norm_o0_basis` itself computes
-        // `p · (5p)² ≈ 2^755` — so the S54 narrow "independent" check
-        // was actually wrapping consistently with the search. S55's
+        // `p · (5p)² ≈ 2^755` — so the narrow "independent" check
+        // was actually wrapping consistently with the search. The
         // wide path has 1023 bits of magnitude headroom, plenty for
         // p³ at L1.
         use crate::quaternion::o0_mul::reduced_norm_o0_basis_wide;
@@ -2762,7 +2746,7 @@ mod tests {
     #[cfg(feature = "kat")]
     #[test]
     fn lideal_prime_norm_reduced_equivalent_at_real_lvl1_prime_principal_ideal() {
-        // S53 overflow probe: a *principal* L1 ideal `O_0 · γ` with
+        // Overflow probe: a *principal* L1 ideal `O_0 · γ` with
         // non-trivial γ. After `principal_left_ideal_from_o0` + HNF, the
         // basis can have entries up to O(p) (whereas 2·O_0's basis was
         // just 2·identity). For α sampled in this basis with v ∈ [-5, 5]^4,
@@ -2774,7 +2758,7 @@ mod tests {
         //       is benign even at this magnitude (surprising but logged).
         //   (ii) Search returns Some, independent check fails — silent
         //        corruption confirmed; documents the failure mode that
-        //        wide-Int (S54+) must fix.
+        //        wide-Int must fix.
         //   (iii) Test panics (debug_assert in `int_div_exact`, etc.) —
         //         overflow surfaces as a runtime failure, also
         //         documenting the failure mode.
@@ -2835,7 +2819,7 @@ mod tests {
         // check `reduced_norm_o0_basis(α) == q · N(I)`. If any seed
         // surfaces wrapping-arithmetic corruption, this test catches it.
         //
-        // Background: S51 verified that seed `[0xb3; 48]` returns a
+        // Background: the baseline seed `[0xb3; 48]` returns a
         // correct (α, q) despite the magnitude analysis predicting a
         // Lovász-check intermediate of `2^514` that exceeds `Int<8>`'s
         // `2^511 − 1` ceiling. The wrapping must therefore be either
@@ -2853,7 +2837,7 @@ mod tests {
         let sixteen = Uint::<8>::from_u64(16);
 
         let seeds: [[u8; 48]; 5] = [
-            [0xb3; 48], // baseline (S51's verified seed)
+            [0xb3; 48], // baseline (verified seed)
             [0x11; 48], [0x7f; 48], [0xa5; 48], [0xff; 48],
         ];
 
@@ -2881,7 +2865,7 @@ mod tests {
     fn lideal_prime_norm_reduced_equivalent_at_real_lvl1_prime_2_o0() {
         // Magnitude probe: 2·O_0 at L1 where `d[4] = 256·16p² ≈ 2^514`
         // should overflow `Int<8>` (signed 512-bit) in the Lovász check.
-        // Either the test fails (driving S52 = wide-Int LLL) or it
+        // Either the test fails (driving wide-Int LLL) or it
         // passes via wrapping-arithmetic coincidence — in which case the
         // independent check below catches silent corruption by verifying
         // `N_red(α_out) == q · N(I)` via `reduced_norm_o0_basis` (which

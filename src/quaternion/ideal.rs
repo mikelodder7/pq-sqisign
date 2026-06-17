@@ -647,7 +647,7 @@ mod tests {
         }
     }
 
-    // ── reduced_norm_vartime unit tests (S199) ─────────────────────────
+    // ── reduced_norm_vartime unit tests ────────────────────────────────
 
     #[test]
     fn reduced_norm_full_order_is_one() {
