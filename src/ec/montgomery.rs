@@ -129,6 +129,25 @@ impl<F: BaseField> MontgomeryPoint<F> {
         Self::new(x_out, z_out)
     }
 
+    /// Doubling specialized for the base curve `E0` with `(A:C) = (0:1)`.
+    ///
+    /// Verbatim port of C `xDBL_E0` (`ec.c:216`). C uses this variant inside the
+    /// biladder (`xDBLMUL`) whenever `A == 0`, and its output is a DIFFERENT
+    /// projective REPRESENTATIVE than `xDBL_A24` (exactly `2×`, from the
+    /// `t1 = t1 + t1` step) of the same affine point. Matching C's variant here
+    /// is required for byte-exact `E0` biscalar outputs (the θ-applied basis in
+    /// the fixed-degree isogeny) — the representative feeds the non-scale-
+    /// equivariant canonical sqrt downstream.
+    pub fn x_double_e0(&self) -> Self {
+        let t0 = self.x.add(&self.z).square();
+        let t1 = self.x.sub(&self.z).square();
+        let t2 = t0.sub(&t1);
+        let t1 = t1.add(&t1);
+        let x_out = t0.mul(&t1);
+        let z_out = t1.add(&t2).mul(&t2);
+        Self::new(x_out, z_out)
+    }
+
     /// Differential addition `xADD`: returns `self + rhs` given the x-only
     /// representation of `self − rhs` (the "minus" point). Cost: 4M + 2S.
     pub fn x_add(&self, rhs: &Self, minus: &Self) -> Self {
@@ -158,10 +177,21 @@ impl<F: BaseField> MontgomeryPoint<F> {
     /// `scalar` is interpreted little-endian (`scalar[0]` is the least
     /// significant byte), processing bits MSB-first. `a24 = (A + 2) / 4`.
     pub fn ladder(&self, scalar: &[u8], a24: &Fp2<F>) -> Self {
+        self.ladder_nbits(scalar, scalar.len() * 8, a24)
+    }
+
+    /// Montgomery ladder processing exactly `n_bits` bits (MSB-first) of
+    /// `scalar`. C's `xMUL`/`ec_mul` uses `kbits = bitlength(scalar)`; passing
+    /// the full byte width instead would run extra leading-zero iterations that
+    /// leave the affine result unchanged but ALTER the projective representative
+    /// (e.g. `R1 = ∞+P` becomes `(4x²z : 4z²x)` ≠ `(x:z)`). That broke the
+    /// representative-fragile `difference_point` in the verify basis recompute,
+    /// so callers whose downstream is representative-sensitive (e.g.
+    /// `clear_cofactor_for_maximal_even_order`) MUST pass the exact bitlength.
+    pub fn ladder_nbits(&self, scalar: &[u8], n_bits: usize, a24: &Fp2<F>) -> Self {
         let mut r0 = Self::infinity();
         let mut r1 = *self;
         let minus = *self;
-        let n_bits = scalar.len() * 8;
         let mut i = n_bits;
         while i > 0 {
             i -= 1;
@@ -253,12 +283,19 @@ impl<F: BaseField> MontgomeryCurve<F> {
         self.a.add(&two).mul(&inv_four)
     }
 
-    /// Build the projective curve representation `(A24 : C24) = (A + 2 : 4)`
-    /// — the form the isogeny pipeline operates in.
+    /// Build the NORMALIZED curve representation `(A24 : C24) = ((A + 2)/4 : 1)`.
+    ///
+    /// C normalizes E0's A24 (`ec_curve_normalize_A24`) to `(a24 : 1)` before
+    /// the fixed-degree / combine doublings, so its `xDBL_A24` carries no `C24`
+    /// factor. The non-normalized form `(A + 2 : 4)` makes `A24Curve::x_double`
+    /// multiply the projective REPRESENTATIVE by `c24 = 4` every step — a real
+    /// scale that is invisible to affine-`x`/`j` checks but accumulates to a
+    /// real power-of-4 that flips the non-scale-equivariant canonical sqrt in
+    /// `theta_isogeny_compute_4`, yielding the wrong codomain Montgomery model
+    /// (byte-wrong keygen pk and the wrong-`j` sign dim2 codomain). Normalizing
+    /// `c24 = 1` here matches C's representative through every theta chain.
     pub fn to_a24(&self) -> CurveA24<F> {
-        let two = Fp2::one().double();
-        let four = two.double();
-        CurveA24::new(self.a.add(&two), four)
+        CurveA24::new(self.a24(), Fp2::one())
     }
 
     /// `j`-invariant `j(E) = 256 (A^2 − 3)^3 / (A^2 − 4)`.
@@ -355,26 +392,30 @@ impl<F: BaseField> MontgomeryPoint<F> {
     ///
     /// `a24` is `(A + 2)/4` of the curve in affine `F_{p^2}` form.
     pub fn ladder3pt(p: &Self, q: &Self, p_minus_q: &Self, k: &[u8], a24: &Fp2<F>) -> Self {
-        let mut r0 = *q;
-        let mut r1 = *p;
-        let mut r2 = *p_minus_q;
+        // Verbatim port of C `ec_ladder3pt` (ec.c:519): X0=Q, X1=P, X2=P−Q;
+        // per bit (LSB first) cswap(X1,X2) when the bit is ZERO, then
+        // xDBLADD(X0,X1,X0,X1,X2) → (X0,X1) = (2·X0, X0+X1 diff X2), then
+        // cswap back. Return X1. (The earlier version swapped on bit==1 and
+        // wrote the sum into X2 — a different ladder that computes the wrong
+        // P+[k]Q, which made the verify challenge-curve recompute wrong.)
+        let mut x0 = *q;
+        let mut x1 = *p;
+        let mut x2 = *p_minus_q;
         for &byte in k {
             for bit_idx in 0..8 {
-                let bit = Choice::from((byte >> bit_idx) & 1);
-                // Conditionally swap (R1, R2) using bit.
-                let (a, b) = swap(&r1, &r2, bit);
-                r1 = a;
-                r2 = b;
-                let new_r2 = r1.x_add(&r0, &r2);
-                let new_r0 = r0.x_double(a24);
-                r2 = new_r2;
-                r0 = new_r0;
-                let (a, b) = swap(&r1, &r2, bit);
-                r1 = a;
-                r2 = b;
+                let swap_bit = Choice::from(((byte >> bit_idx) & 1) ^ 1); // swap when bit==0
+                let (a, b) = swap(&x1, &x2, swap_bit);
+                x1 = a;
+                x2 = b;
+                let (nx0, nx1) = MontgomeryPoint::x_dbl_add(&x0, &x1, &x2, a24);
+                x0 = nx0;
+                x1 = nx1;
+                let (a, b) = swap(&x1, &x2, swap_bit);
+                x1 = a;
+                x2 = b;
             }
         }
-        r1
+        x1
     }
 }
 

@@ -613,6 +613,28 @@ pub fn compute_challenge_verify(
         &sig.chall_coeff.to_le_bytes(),
         &a24,
     );
+    {
+        let mut b = [0u8; 64];
+        for (nm, p) in [
+            ("BAS_PX", &bas.p),
+            ("BAS_QX", &bas.q),
+            ("BAS_PMQX", &bas.p_minus_q),
+            ("KER_X", &kernel),
+        ] {
+            p.affine_x().to_bytes_le(&mut b);
+            std::eprint!("VERIFY25 {nm}=");
+            for x in b {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+        let cc = sig.chall_coeff.to_le_bytes();
+        std::eprint!("VERIFY25 CHALL_COEFF=");
+        for x in cc.as_ref().iter().take(16) {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+    }
     // Double `backtracking` times so the kernel has order 2^length.
     let a24c = epk.to_a24();
     let kernel = a24c.x_double_n(&kernel, u32::from(sig.backtracking));
@@ -684,6 +706,32 @@ pub fn challenge_and_aux_basis_verify(
     // Apply the change matrix to the challenge basis (mod 2^f).
     let f = pow_dim2_deg_resp + HD_EXTRA + two_resp;
     let a24 = e_chall.a24();
+    {
+        let mut bb = [0u8; 64];
+        for (nm, p) in [
+            ("P", &b_chall.p),
+            ("Q", &b_chall.q),
+            ("PMQ", &b_chall.p_minus_q),
+        ] {
+            p.affine_x().to_bytes_le(&mut bb);
+            std::eprint!("VERIFY6 premat BCH_{nm}=");
+            for x in &bb[..16] {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+        for (i, row) in sig.mat.iter().enumerate() {
+            for (j, v) in row.iter().enumerate() {
+                let mb = v.to_le_bytes();
+                std::eprint!("VERIFY6 MAT[{i}][{j}]=");
+                for x in mb.as_ref().iter().take(20) {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
+        std::eprintln!("VERIFY6 f={f}");
+    }
     let (r, s, rms) = matrix_application_even_basis(
         &b_chall.p,
         &b_chall.q,
@@ -791,22 +839,42 @@ pub fn compute_commitment_curve_verify(
 
     // Lift both x-only bases to consistent Jacobian points; the chain seeds the
     // gluing kernel from T1, T2 only, so t1_minus_t2 is a placeholder.
-    let (p1, q1) = lift_basis(b_chall, e_chall).ok()?;
-    let (p2, q2) = lift_basis(b_aux, e_aux).ok()?;
+    let (p1, q1) = match lift_basis(b_chall, e_chall) {
+        Ok(x) => x,
+        Err(e) => {
+            std::eprintln!("VERIFY8 FAIL: lift_basis(b_chall) {e:?}");
+            return None;
+        }
+    };
+    let (p2, q2) = match lift_basis(b_aux, e_aux) {
+        Ok(x) => x,
+        Err(e) => {
+            std::eprintln!("VERIFY8 FAIL: lift_basis(b_aux) {e:?}");
+            return None;
+        }
+    };
     let ker = ThetaKernelCouplePoints::new(
         CoupleJacobianPoint::new(p1, p2),
         CoupleJacobianPoint::new(q1, q2),
         CoupleJacobianPoint::infinity(),
     );
     let e12 = CoupleCurve::new(*e_chall, *e_aux);
-    let e34 = theta_chain_compute_and_eval_verify(
+    let e34 = match theta_chain_compute_and_eval_verify(
         u32::try_from(pow_dim2_deg_resp).ok()?,
         &e12,
         &ker,
         true,
         &[],
         &mut [],
-    )?;
+    ) {
+        Some(x) => x,
+        None => {
+            std::eprintln!(
+                "VERIFY8 FAIL: theta_chain_compute_and_eval_verify (pow={pow_dim2_deg_resp})"
+            );
+            return None;
+        }
+    };
     // E_com is always the first factor by the (2^n,2^n)-isogeny formulae.
     Some(e34.e1)
 }
@@ -879,6 +947,7 @@ pub fn protocols_verify(sig_bytes: &[u8], pk_bytes: &[u8], message: &[u8]) -> bo
 
     // 1. Canonical basis-change matrix.
     if !check_canonical_basis_change_matrix(&sig) {
+        std::eprintln!("VERIFY FAIL: 1 canonical_basis_change_matrix");
         return false;
     }
     // 2. Length of the dim-2 isogeny; reject too-long / length-1 responses.
@@ -888,6 +957,7 @@ pub fn protocols_verify(sig_bytes: &[u8], pk_bytes: &[u8], message: &[u8]) -> bo
     };
     let pow = response - i64::from(sig.two_resp_length) - i64::from(sig.backtracking);
     if pow < 0 || pow == 1 {
+        std::eprintln!("VERIFY FAIL: 2 pow={pow}");
         return false;
     }
     let pow = match usize::try_from(pow) {
@@ -896,6 +966,7 @@ pub fn protocols_verify(sig_bytes: &[u8], pk_bytes: &[u8], message: &[u8]) -> bo
     };
     // 3-4. Public and auxiliary curves must be valid Montgomery curves.
     if !ec_curve_verify_a(&pk.curve_a) || !ec_curve_verify_a(&sig.e_aux_a) {
+        std::eprintln!("VERIFY FAIL: 3-4 curve validity");
         return false;
     }
     let e_pk = MontgomeryCurve::new(pk.curve_a);
@@ -903,11 +974,36 @@ pub fn protocols_verify(sig_bytes: &[u8], pk_bytes: &[u8], message: &[u8]) -> bo
 
     // 5. Challenge curve.
     let mut e_chall = compute_challenge_verify(&e_pk, &sig, pk.hint_pk);
+    {
+        let mut jb = [0u8; 64];
+        e_chall.j_invariant().to_bytes_le(&mut jb);
+        std::eprint!("VERIFY j(e_chall)=");
+        for b in jb {
+            std::eprint!("{b:02x}");
+        }
+        std::eprintln!(
+            " (C target b725cea1…); backtrack={} two_resp={}",
+            sig.backtracking,
+            sig.two_resp_length
+        );
+    }
     // 6. Canonical challenge + auxiliary bases (matrix applied to challenge).
     let (mut b_chall, b_aux) = match challenge_and_aux_basis_verify(&e_chall, &e_aux, &sig, pow) {
         Some(x) => x,
-        None => return false,
+        None => {
+            std::eprintln!("VERIFY FAIL: 6 challenge_and_aux_basis");
+            return false;
+        }
     };
+    {
+        let mut b = [0u8; 64];
+        b_chall.p.affine_x().to_bytes_le(&mut b);
+        std::eprint!("VERIFY6OUT BCH_P=");
+        for x in b {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+    }
     // 7. Optional short 2^r response isogeny.
     if sig.two_resp_length > 0 {
         match two_response_isogeny_verify(&e_chall, &b_chall, &sig, pow) {
@@ -915,16 +1011,50 @@ pub fn protocols_verify(sig_bytes: &[u8], pk_bytes: &[u8], message: &[u8]) -> bo
                 e_chall = e2;
                 b_chall = b2;
             }
-            None => return false,
+            None => {
+                std::eprintln!("VERIFY FAIL: 7 two_response_isogeny");
+                return false;
+            }
         }
+    }
+    {
+        let mut b = [0u8; 64];
+        for (nm, p) in [
+            ("BCH_P", &b_chall.p),
+            ("BCH_Q", &b_chall.q),
+            ("BAUX_P", &b_aux.p),
+            ("BAUX_Q", &b_aux.q),
+        ] {
+            p.affine_x().to_bytes_le(&mut b);
+            std::eprint!("VERIFY8IN {nm}=");
+            for x in b {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+        let mut ja = [0u8; 64];
+        e_chall.j_invariant().to_bytes_le(&mut ja);
+        std::eprint!("VERIFY8IN j(e_chall_after7)=");
+        for x in ja {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!(" pow={pow}");
     }
     // 8. Commitment curve via the dim-2 isogeny.
     let e_com = match compute_commitment_curve_verify(&b_chall, &b_aux, &e_chall, &e_aux, pow) {
         Some(c) => c,
-        None => return false,
+        None => {
+            std::eprintln!("VERIFY FAIL: 8 commitment_curve");
+            return false;
+        }
     };
     // 9-10. Recompute the challenge and compare.
-    hash_to_challenge(&pk.curve_a, &e_com.a, message) == sig.chall_coeff
+    let recomputed = hash_to_challenge(&pk.curve_a, &e_com.a, message);
+    let ok = recomputed == sig.chall_coeff;
+    if !ok {
+        std::eprintln!("VERIFY FAIL: 9-10 hash_to_challenge mismatch");
+    }
+    ok
 }
 
 /// Sign — the short `2^r` response isogeny (`two_resp_length > 0`). Port of C

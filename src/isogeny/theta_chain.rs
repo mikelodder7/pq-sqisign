@@ -386,7 +386,7 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
         }
         // set up the first codomain's theta structure (C-ref theta_precomputation)
         #[cfg(feature = "kat")]
-        if std::env::var("PQSQ_DUMP_AC").is_ok() {
+        if self.split_rng.is_some() && std::env::var("PQSQ_DUMP_AC").is_ok() {
             let n = gc.codomain;
             // NORMALIZE projectively by .x (theta-null is projective; raw compare
             // is scale-ambiguous). Output (y/x, z/x, w/x).
@@ -398,6 +398,14 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
             {
                 c.to_bytes_le(&mut b);
                 std::eprint!("OURS_TN glueN.{i} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+            for (nm, c) in [("X", n.x), ("Y", n.y), ("Z", n.z), ("W", n.w)] {
+                c.to_bytes_le(&mut b);
+                std::eprint!("OURS_GLUERAW_{nm} ");
                 for x in b {
                     std::eprint!("{x:02x}");
                 }
@@ -440,6 +448,23 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
         for j in 0..self.num_p {
             self.pts[j] = theta_isogeny_eval(&st, &self.pts[j]);
         }
+        #[cfg(feature = "kat")]
+        if self.split_rng.is_some() && std::env::var("PQSQ_DUMP_AC").is_ok() {
+            let n = st.codomain_null;
+            let xi = n.x.invert().unwrap_or(crate::gf::fp2::Fp2::zero());
+            let mut b = [0u8; 64];
+            for (k, c) in [n.y.mul(&xi), n.z.mul(&xi), n.w.mul(&xi)]
+                .iter()
+                .enumerate()
+            {
+                c.to_bytes_le(&mut b);
+                std::eprint!("OURS_STEP{_i}.{k} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
         // Store the codomain null. Doubling constants are computed when the
         // null is non-degenerate (needed for the NEXT step's descent); the
         // FINAL step's codomain is a product (has a zero coordinate) so
@@ -467,7 +492,7 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
             return;
         }
         #[cfg(feature = "kat")]
-        if std::env::var("PQSQ_DUMP_AC").is_ok() {
+        if self.split_rng.is_some() && std::env::var("PQSQ_DUMP_AC").is_ok() {
             let n = self.variety().theta_null;
             let mut b = [0u8; 64];
             let xi = n.x.invert().unwrap_or(crate::gf::fp2::Fp2::zero());
@@ -498,7 +523,7 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
             self.pts[j] = theta_isogeny_eval(&st, &self.pts[j]);
         }
         #[cfg(feature = "kat")]
-        if std::env::var("PQSQ_DUMP_AC").is_ok() {
+        if self.split_rng.is_some() && std::env::var("PQSQ_DUMP_AC").is_ok() {
             let n = st.codomain_null;
             let xi = n.x.invert().unwrap_or(crate::gf::fp2::Fp2::zero());
             let mut b = [0u8; 64];
@@ -537,7 +562,7 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
             self.pts[j] = theta_isogeny_eval(&st, &self.pts[j]);
         }
         #[cfg(feature = "kat")]
-        if std::env::var("PQSQ_DUMP_AC").is_ok() {
+        if self.split_rng.is_some() && std::env::var("PQSQ_DUMP_AC").is_ok() {
             let n = st.codomain_null;
             let xi = n.x.invert().unwrap_or(crate::gf::fp2::Fp2::zero());
             let mut b = [0u8; 64];

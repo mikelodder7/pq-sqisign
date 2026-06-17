@@ -1230,4 +1230,122 @@ mod tests {
         assert_eq!(content, n(1));
         assert_eq!(primitive, coords);
     }
+
+    /// S350 BYTE-EXACT ORACLE: the C reference `quat_lideal_create` output for
+    /// the FIRST keygen secret ideal under the lvl1 KAT DRBG (seed 0), captured
+    /// by instrumenting `the-sqisign` `normeq.c` (CDUMP). Feeds the SAME γ and N
+    /// into our `quat_lideal_create` and asserts the canonical (HNF) basis,
+    /// denom, and norm match C byte-for-byte. If this fails, our HNF
+    /// canonicalization diverges from C's `quat_lattice_add`/`quat_lattice_hnf`
+    /// — the true keygen pk[0..64] root cause (the dpe LLL is already byte-exact,
+    /// proven by `quat_lll_core_matches_c_oracle_*`). γ reaches ~1272 bits and
+    /// the `quat_lattice_add` determinant ~γ⁴, so WL=96 (6144 bits) holds it.
+    #[test]
+    fn quat_lideal_create_matches_c_oracle_kat0() {
+        use crate::quaternion::Quaternion;
+        use crypto_bigint::{Int, Uint};
+        const WL: usize = 96;
+
+        // Signed hex → Int<WL> (zero-padded big-endian).
+        fn hxw(s: &str) -> Int<WL> {
+            let neg = s.as_bytes()[0] == b'-';
+            let body = if neg { &s[1..] } else { s };
+            let h = if body.len() % 2 == 1 {
+                format!("0{body}")
+            } else {
+                body.to_string()
+            };
+            let nbytes = h.len() / 2;
+            let mut buf = [0u8; WL * 8];
+            for i in 0..nbytes {
+                buf[WL * 8 - nbytes + i] = u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap();
+            }
+            let v = *Uint::<WL>::from_be_slice(&buf).as_int();
+            if neg { v.wrapping_neg() } else { v }
+        }
+        fn hxu(s: &str) -> Uint<WL> {
+            let h = if s.len() % 2 == 1 {
+                format!("0{s}")
+            } else {
+                s.to_string()
+            };
+            let nbytes = h.len() / 2;
+            let mut buf = [0u8; WL * 8];
+            for i in 0..nbytes {
+                buf[WL * 8 - nbytes + i] = u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap();
+            }
+            Uint::<WL>::from_be_slice(&buf)
+        }
+
+        // C γ (gen, standard (1,i,j,ij) coords), gen_denom = 1, N = SEC_DEGREE.
+        let gamma = Quaternion::<WL>::new(
+            hxw(
+                "-71a7c19a1764deaa7b009c92e16b72e2c292cd8e5def16d97a2a739947f8d1c70ea1aa747c01fcbf12b053e73224299ad6bb51e1ab64b5f91b118cea21810d4a843281f094ec74e66e0dd48711efa2a7592227615cd7133dc76c331e8714f193a76185892bf13b410cb61a302f379df98f8f48ba5358de219dfc9f4e705226282828861e2f18fe18b519928a69eafd48fc8f7bae31f1143ad325b4651a51e4",
+            ),
+            hxw(
+                "-105c3d6b64d538d5215ef67ab7d781fd0e43225857bef3fa6899ec9822a12b4d67e749226c6919061f8b82dca21b01f25a2aa8d877f857ca4b7f5cf1d1c7079bfaface99db0403393c84f717aa41dd4359efee80d9f65e9a0419dfb7c84ee81637721aaee115e802d5953c2d991fc49f953c3db95d403eeeee749ee1f8af498c83d3f00884c218ebf1f07a73619b15f76a2c9751e25a0166ca7709e35594da",
+            ),
+            hxw(
+                "4ca03266db42fb65408e6889d7eb0a3b566c400a1f253cdfe2e9d404cf10cbb83b4a30686d142ffc7b7670576a70ba74015e89747471f2ea7d0cd1d74209f176e116c27226e33092a854c960e6fe86f52b282afe0a3725cbee2fa1ac4858b13cb8451b1e1a062eb8a4a7239594a68eb07b6312d19611db536f62de7c97c337f9",
+            ),
+            hxw(
+                "-6381b8e97e11a9daa869e75ca9ae5c9fc1c52f6011bc411683d50120859873da778e061d87fc78a4d93d36ae790b4136d51036bba8c0a26b66b78af3b63ffaff7257eaa5947c4676a0903afd8324e818b2087fa45906f413c1a9e84943d8932f7110a13ce8b0aa3e7c2e8d0b1a1e31c415282a2eda0d87cc4602e30f3f2d0d9",
+            ),
+        );
+        let gen_denom = Int::<WL>::from_i64(1);
+        let norm_n = hxu(
+            "10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004b",
+        );
+        let p = crate::params::lvl1::prime().resize::<WL>();
+
+        let (basis, denom, ideal_norm) = quat_lideal_create::<WL>(&gamma, &gen_denom, &norm_n, &p);
+
+        // C canonical basis (column-major [row][col]), denom 2.
+        let c_basis: [[Int<WL>; 4]; 4] = [
+            [
+                hxw(
+                    "200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000096",
+                ),
+                hxw("0"),
+                hxw(
+                    "1687ff65ad3acae767bc282bc38e059fe5596f303032ef89615601250aa9acafea9e87b06e4844f43b0d82e58f3a85c53e01cdc756d40858f19550e9396642e80",
+                ),
+                hxw(
+                    "166360752f138e7dfdae0eeee063281fd7095b4d0fe5fd455b238b877788863766346231bc8879c85dd1164d79c2388d452652d6c1ed925d0f58adb23577131d1",
+                ),
+            ],
+            [
+                hxw("0"),
+                hxw(
+                    "200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000096",
+                ),
+                hxw(
+                    "99c9f8ad0ec71820251f1111f9cd7e028f6a4b2f01a02baa4dc7478887779c899cb9dce43778637a22ee9b2863dc772bad9ad293e126da2f0a7524dca88ecec5",
+                ),
+                hxw(
+                    "1687ff65ad3acae767bc282bc38e059fe5596f303032ef89615601250aa9acafea9e87b06e4844f43b0d82e58f3a85c53e01cdc756d40858f19550e9396642e80",
+                ),
+            ],
+            [hxw("0"), hxw("0"), hxw("1"), hxw("0")],
+            [hxw("0"), hxw("0"), hxw("0"), hxw("1")],
+        ];
+
+        for r in 0..4 {
+            for c in 0..4 {
+                if basis[r][c] != c_basis[r][c] {
+                    std::eprintln!(
+                        "MISMATCH basis[{r}][{c}]:\n  ours = {:x}\n  C    = {:x}",
+                        basis[r][c],
+                        c_basis[r][c]
+                    );
+                }
+            }
+        }
+        assert_eq!(denom, Int::<WL>::from_i64(2), "denom must match C (2)");
+        assert_eq!(ideal_norm, norm_n, "ideal norm must match C (N)");
+        assert_eq!(
+            basis, c_basis,
+            "quat_lideal_create basis must match C byte-for-byte"
+        );
+    }
 }

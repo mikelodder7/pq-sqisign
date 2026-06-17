@@ -419,6 +419,14 @@ pub fn quat_lideal_prime_norm_reduced_equivalent<
 
     let denom_u = denom.abs();
     let (reduced, gram) = lideal_reduce_basis::<N>(basis, &denom_u, norm, p)?;
+    // KEYGEN BYTE-EXACT (S349 C-oracle bisect): for the KAT[0] secret ideal,
+    // our `reduced` shares the real- and j-coordinate entries with C's `red`
+    // (e.g. red[0][0]=0x1d8003b4f6a19d62…, red[2][0]=0x1347be71…) but DIFFERS in
+    // the i- and k-coordinates (a signed permutation). C `quat_lideal_reduce_basis`
+    // (dpe-float `quat_lll_core`) emits a specific reduced basis; ours is a
+    // sign/perm variant → a unit-equivalent α → unit-rotated secret ideal →
+    // same j(E_A) but a different Montgomery MODEL (the item-8 pk mismatch).
+    // FIX = match C's LLL reduced-basis sign/ordering convention exactly.
     let (alpha, q) = prime_norm_box_search::<N, R>(
         &reduced,
         &gram,
@@ -1270,6 +1278,356 @@ mod tests {
             index,
             q.wrapping_mul(&q),
             "SEC_DEGREE keygen spine ideal index must equal q²",
+        );
+    }
+
+    /// S350 BYTE-EXACT ORACLE (link 3): feed the C-byte-exact KAT[0] secret
+    /// ideal basis (from `quat_lideal_create_matches_c_oracle_kat0`, denom 2,
+    /// norm SEC_DEGREE) through our `lideal_reduce_basis` and assert the reduced
+    /// basis `red` AND the reduce Gram match the C reference `quat_lideal_reduce_basis`
+    /// byte-for-byte (captured via `the-sqisign` `lll_applications.c` CDUMP2).
+    /// If this passes, the keygen pk divergence is NOT in the quaternion
+    /// reduce path (create + reduce both byte-exact) — it is in the box-search
+    /// α selection / RNG. If it fails, the first differing entry pins the
+    /// `lideal_reduce_basis` gram/division/LLL-seed bug.
+    #[test]
+    fn lideal_reduce_basis_matches_c_oracle_kat0() {
+        use crypto_bigint::{Int, Uint};
+        const WL: usize = 32;
+
+        fn hxw(s: &str) -> Int<WL> {
+            let neg = s.as_bytes()[0] == b'-';
+            let body = if neg { &s[1..] } else { s };
+            let h = if body.len() % 2 == 1 {
+                format!("0{body}")
+            } else {
+                body.to_string()
+            };
+            let nbytes = h.len() / 2;
+            let mut buf = [0u8; WL * 8];
+            for i in 0..nbytes {
+                buf[WL * 8 - nbytes + i] = u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap();
+            }
+            let v = *Uint::<WL>::from_be_slice(&buf).as_int();
+            if neg { v.wrapping_neg() } else { v }
+        }
+        fn hxu(s: &str) -> Uint<WL> {
+            let h = if s.len() % 2 == 1 {
+                format!("0{s}")
+            } else {
+                s.to_string()
+            };
+            let nbytes = h.len() / 2;
+            let mut buf = [0u8; WL * 8];
+            for i in 0..nbytes {
+                buf[WL * 8 - nbytes + i] = u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap();
+            }
+            Uint::<WL>::from_be_slice(&buf)
+        }
+
+        // C secret-ideal basis (byte-exact, proven), column-major [row][col].
+        let two_n = "200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000096";
+        let basis: [[Int<WL>; 4]; 4] = [
+            [
+                hxw(two_n),
+                hxw("0"),
+                hxw(
+                    "1687ff65ad3acae767bc282bc38e059fe5596f303032ef89615601250aa9acafea9e87b06e4844f43b0d82e58f3a85c53e01cdc756d40858f19550e9396642e80",
+                ),
+                hxw(
+                    "166360752f138e7dfdae0eeee063281fd7095b4d0fe5fd455b238b877788863766346231bc8879c85dd1164d79c2388d452652d6c1ed925d0f58adb23577131d1",
+                ),
+            ],
+            [
+                hxw("0"),
+                hxw(two_n),
+                hxw(
+                    "99c9f8ad0ec71820251f1111f9cd7e028f6a4b2f01a02baa4dc7478887779c899cb9dce43778637a22ee9b2863dc772bad9ad293e126da2f0a7524dca88ecec5",
+                ),
+                hxw(
+                    "1687ff65ad3acae767bc282bc38e059fe5596f303032ef89615601250aa9acafea9e87b06e4844f43b0d82e58f3a85c53e01cdc756d40858f19550e9396642e80",
+                ),
+            ],
+            [hxw("0"), hxw("0"), hxw("1"), hxw("0")],
+            [hxw("0"), hxw("0"), hxw("0"), hxw("1")],
+        ];
+        let denom = hxu("2");
+        let norm = hxu(
+            "10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004b",
+        );
+        let p = crate::params::lvl1::prime().resize::<WL>();
+
+        let (red, gram) = lideal_reduce_basis::<WL>(&basis, &denom, &norm, &p)
+            .expect("reduce_basis must succeed on a genuine ideal");
+
+        let c_red: [[Int<WL>; 4]; 4] = [
+            [
+                hxw(
+                    "1d8003b4f6a19d62f621051e0818563242f1f179c83e104e4dbcfa742e831bdb866fe2b621b2ea4a",
+                ),
+                hxw(
+                    "-540d2873ad84cd5d08155bf49dae271ae398b9394387af56fcb99930c49cb4c9e18de50183999527",
+                ),
+                hxw(
+                    "-6ec32430597131530e1de08c87a4540d12c705ae9d0619f8c7343a53a85069f046576d75ded3d899",
+                ),
+                hxw(
+                    "-5cfbdf6c0330be6593925ae7278667fad59e894f8a3c140b1a3cb069e56437624bf104a3387855b1",
+                ),
+            ],
+            [
+                hxw(
+                    "-540d2873ad84cd5d08155bf49dae271ae398b9394387af56fcb99930c49cb4c9e18de50183999527",
+                ),
+                hxw(
+                    "-1d8003b4f6a19d62f621051e0818563242f1f179c83e104e4dbcfa742e831bdb866fe2b621b2ea4a",
+                ),
+                hxw(
+                    "5cfbdf6c0330be6593925ae7278667fad59e894f8a3c140b1a3cb069e56437624bf104a3387855b1",
+                ),
+                hxw(
+                    "-6ec32430597131530e1de08c87a4540d12c705ae9d0619f8c7343a53a85069f046576d75ded3d899",
+                ),
+            ],
+            [
+                hxw("1347be7177d9a48df7530e4d153793c921aa3989150d2b3b7"),
+                hxw("-14b3c3b640620844b0672932238c00d4c50c7ed83d554f80c"),
+                hxw("2ab683b5c3ba1321118667330102ee367c8053593236525bb"),
+                hxw("117f0c960028438a689adba1cb10cb5f4fcfa5fc24daba377"),
+            ],
+            [
+                hxw("-14b3c3b640620844b0672932238c00d4c50c7ed83d554f80c"),
+                hxw("-1347be7177d9a48df7530e4d153793c921aa3989150d2b3b7"),
+                hxw("-117f0c960028438a689adba1cb10cb5f4fcfa5fc24daba377"),
+                hxw("2ab683b5c3ba1321118667330102ee367c8053593236525bb"),
+            ],
+        ];
+        let c_gram: [[Int<WL>; 4]; 4] = [
+            [
+                hxw("2ea07002adabb7888bf92fe9ad9a635c"),
+                hxw("0"),
+                hxw("0"),
+                hxw("0"),
+            ],
+            [
+                hxw("0"),
+                hxw("2ea07002adabb7888bf92fe9ad9a635c"),
+                hxw("0"),
+                hxw("0"),
+            ],
+            [
+                hxw("-28448e7f01f18ff561d65bbc8de5942c"),
+                hxw("1df031a2af3b06d439d7219bc3157310"),
+                hxw("7b4edc922e3bc7eaf79a64df730fc6b8"),
+                hxw("0"),
+            ],
+            [
+                hxw("1df031a2af3b06d439d7219bc3157310"),
+                hxw("28448e7f01f18ff561d65bbc8de5942c"),
+                hxw("0"),
+                hxw("7b4edc922e3bc7eaf79a64df730fc6b8"),
+            ],
+        ];
+
+        for r in 0..4 {
+            for c in 0..4 {
+                if red[r][c] != c_red[r][c] {
+                    std::eprintln!(
+                        "RED MISMATCH [{r}][{c}]:\n  ours={:x}\n  C   ={:x}",
+                        red[r][c],
+                        c_red[r][c]
+                    );
+                }
+                if gram[r][c] != c_gram[r][c] {
+                    std::eprintln!(
+                        "GRAM MISMATCH [{r}][{c}]:\n  ours={:x}\n  C   ={:x}",
+                        gram[r][c],
+                        c_gram[r][c]
+                    );
+                }
+            }
+        }
+        assert_eq!(gram, c_gram, "reduce Gram must match C byte-for-byte");
+        assert_eq!(red, c_red, "reduced basis must match C byte-for-byte");
+    }
+
+    /// S350 BYTE-EXACT ORACLE (link 4 — the assembly): with the C-byte-exact
+    /// reduced basis `red` and the C-selected box-search coord α=[51,32,48,-23]
+    /// (q=0x1879c1cc…419, ctr=116), replicate the `quat_lideal_prime_norm_reduced_equivalent`
+    /// tail — α=red·coord, conjugate, right-multiply the original ideal, HNF,
+    /// reduce_denom — and assert the equivalent ideal `J` matches the C reference
+    /// `quat_lideal_mul` output byte-for-byte (CDUMP3). PASS ⟹ the ENTIRE
+    /// quaternion keygen front (create → reduce → box-search → J assembly) is
+    /// byte-exact with C, so the keygen pk[0..64] divergence is downstream in
+    /// the ideal→isogeny SPINE (same j(E_A), different Montgomery model). FAIL
+    /// ⟹ the first differing J entry pins a conj/mul/HNF/reduce_denom bug.
+    #[test]
+    fn equivalent_ideal_assembly_matches_c_oracle_kat0() {
+        use crate::quaternion::Quaternion;
+        use crate::quaternion::hnf::{hnf_mod_core, quat_lattice_reduce_denom};
+        use crate::quaternion::ideal::det_4x4;
+        use crypto_bigint::{Int, Uint};
+        const WL: usize = 80;
+
+        fn hxw(s: &str) -> Int<WL> {
+            let neg = s.as_bytes()[0] == b'-';
+            let body = if neg { &s[1..] } else { s };
+            let h = if body.len() % 2 == 1 {
+                format!("0{body}")
+            } else {
+                body.to_string()
+            };
+            let nbytes = h.len() / 2;
+            let mut buf = [0u8; WL * 8];
+            for i in 0..nbytes {
+                buf[WL * 8 - nbytes + i] = u8::from_str_radix(&h[2 * i..2 * i + 2], 16).unwrap();
+            }
+            let v = *Uint::<WL>::from_be_slice(&buf).as_int();
+            if neg { v.wrapping_neg() } else { v }
+        }
+
+        // C reduced basis `red` (byte-exact, from CDUMP2).
+        let red: [[Int<WL>; 4]; 4] = [
+            [
+                hxw(
+                    "1d8003b4f6a19d62f621051e0818563242f1f179c83e104e4dbcfa742e831bdb866fe2b621b2ea4a",
+                ),
+                hxw(
+                    "-540d2873ad84cd5d08155bf49dae271ae398b9394387af56fcb99930c49cb4c9e18de50183999527",
+                ),
+                hxw(
+                    "-6ec32430597131530e1de08c87a4540d12c705ae9d0619f8c7343a53a85069f046576d75ded3d899",
+                ),
+                hxw(
+                    "-5cfbdf6c0330be6593925ae7278667fad59e894f8a3c140b1a3cb069e56437624bf104a3387855b1",
+                ),
+            ],
+            [
+                hxw(
+                    "-540d2873ad84cd5d08155bf49dae271ae398b9394387af56fcb99930c49cb4c9e18de50183999527",
+                ),
+                hxw(
+                    "-1d8003b4f6a19d62f621051e0818563242f1f179c83e104e4dbcfa742e831bdb866fe2b621b2ea4a",
+                ),
+                hxw(
+                    "5cfbdf6c0330be6593925ae7278667fad59e894f8a3c140b1a3cb069e56437624bf104a3387855b1",
+                ),
+                hxw(
+                    "-6ec32430597131530e1de08c87a4540d12c705ae9d0619f8c7343a53a85069f046576d75ded3d899",
+                ),
+            ],
+            [
+                hxw("1347be7177d9a48df7530e4d153793c921aa3989150d2b3b7"),
+                hxw("-14b3c3b640620844b0672932238c00d4c50c7ed83d554f80c"),
+                hxw("2ab683b5c3ba1321118667330102ee367c8053593236525bb"),
+                hxw("117f0c960028438a689adba1cb10cb5f4fcfa5fc24daba377"),
+            ],
+            [
+                hxw("-14b3c3b640620844b0672932238c00d4c50c7ed83d554f80c"),
+                hxw("-1347be7177d9a48df7530e4d153793c921aa3989150d2b3b7"),
+                hxw("-117f0c960028438a689adba1cb10cb5f4fcfa5fc24daba377"),
+                hxw("2ab683b5c3ba1321118667330102ee367c8053593236525bb"),
+            ],
+        ];
+        // Original secret ideal I (byte-exact, denom 2).
+        let two_n = "200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000096";
+        let basis: [[Int<WL>; 4]; 4] = [
+            [
+                hxw(two_n),
+                hxw("0"),
+                hxw(
+                    "1687ff65ad3acae767bc282bc38e059fe5596f303032ef89615601250aa9acafea9e87b06e4844f43b0d82e58f3a85c53e01cdc756d40858f19550e9396642e80",
+                ),
+                hxw(
+                    "166360752f138e7dfdae0eeee063281fd7095b4d0fe5fd455b238b877788863766346231bc8879c85dd1164d79c2388d452652d6c1ed925d0f58adb23577131d1",
+                ),
+            ],
+            [
+                hxw("0"),
+                hxw(two_n),
+                hxw(
+                    "99c9f8ad0ec71820251f1111f9cd7e028f6a4b2f01a02baa4dc7478887779c899cb9dce43778637a22ee9b2863dc772bad9ad293e126da2f0a7524dca88ecec5",
+                ),
+                hxw(
+                    "1687ff65ad3acae767bc282bc38e059fe5596f303032ef89615601250aa9acafea9e87b06e4844f43b0d82e58f3a85c53e01cdc756d40858f19550e9396642e80",
+                ),
+            ],
+            [hxw("0"), hxw("0"), hxw("1"), hxw("0")],
+            [hxw("0"), hxw("0"), hxw("0"), hxw("1")],
+        ];
+        let denom = hxw("2");
+        let norm_n = {
+            let v = hxw(
+                "10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004b",
+            );
+            // norm as Uint for uint_as_nonneg_int path: rebuild via abs.
+            v
+        };
+        let p = crate::params::lvl1::prime().resize::<WL>();
+
+        // α = red · coord (the box-search element), coord = C's selection.
+        let coord = [hxw("33"), hxw("20"), hxw("30"), hxw("-17")];
+        let alpha = mat4_eval::<WL>(&red, &coord);
+
+        // ᾱ = conj(α); J = HNF(I · ᾱ) / reduce_denom, denom = denom²·N.
+        let alpha_bar = Quaternion::<WL>::new(
+            alpha[0],
+            alpha[1].wrapping_neg(),
+            alpha[2].wrapping_neg(),
+            alpha[3].wrapping_neg(),
+        );
+        let mut prod = [[Int::<WL>::from_i64(0); 4]; 4];
+        for j in 0..4 {
+            let col = Quaternion::<WL>::new(basis[0][j], basis[1][j], basis[2][j], basis[3][j]);
+            let pr = col.mul(&alpha_bar, &p);
+            prod[0][j] = pr.a;
+            prod[1][j] = pr.b;
+            prod[2][j] = pr.c;
+            prod[3][j] = pr.d;
+        }
+        let alpha_denom = denom.wrapping_mul(&norm_n);
+        let prod_denom = denom.wrapping_mul(&alpha_denom);
+        let modulus = det_4x4::<WL>(&prod).abs();
+        let gens: [[Int<WL>; 4]; 4] = [
+            [prod[0][0], prod[1][0], prod[2][0], prod[3][0]],
+            [prod[0][1], prod[1][1], prod[2][1], prod[3][1]],
+            [prod[0][2], prod[1][2], prod[2][2], prod[3][2]],
+            [prod[0][3], prod[1][3], prod[2][3], prod[3][3]],
+        ];
+        let hnf = hnf_mod_core::<WL>(&gens, &modulus);
+        let (j_basis, j_denom) = quat_lattice_reduce_denom::<WL>(&hnf, &prod_denom);
+
+        let c_j: [[Int<WL>; 4]; 4] = [
+            [
+                hxw("30f38398cd2922eb760a48ab7b62c632832"),
+                hxw("0"),
+                hxw("2f3a5e8a52b1c10381c8d7720ccaa750d6c"),
+                hxw("4e85e98cabf8e644f51e68a21d6a01be23"),
+            ],
+            [
+                hxw("0"),
+                hxw("30f38398cd2922eb760a48ab7b62c632832"),
+                hxw("2c0b25000269948726b86221598c2616a0f"),
+                hxw("2f3a5e8a52b1c10381c8d7720ccaa750d6c"),
+            ],
+            [hxw("0"), hxw("0"), hxw("1"), hxw("0")],
+            [hxw("0"), hxw("0"), hxw("0"), hxw("1")],
+        ];
+        for r in 0..4 {
+            for c in 0..4 {
+                if j_basis[r][c] != c_j[r][c] {
+                    std::eprintln!(
+                        "J MISMATCH [{r}][{c}]:\n  ours={:x}\n  C   ={:x}",
+                        j_basis[r][c],
+                        c_j[r][c]
+                    );
+                }
+            }
+        }
+        assert_eq!(j_denom, hxw("2"), "J denom must match C (2)");
+        assert_eq!(
+            j_basis, c_j,
+            "equivalent ideal J must match C byte-for-byte"
         );
     }
 }

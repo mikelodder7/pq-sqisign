@@ -214,10 +214,30 @@ pub(crate) fn compute_response_quat_element<const L: usize, R: rand_core::Crypto
     max_trials: usize,
     rng: &mut R,
 ) -> Option<([Int<L>; 4], Uint<L>, Uint<L>)> {
-    use crate::quaternion::ideal_mul::lideal_intersect;
+    use crate::quaternion::ideal_mul::lideal_intersect_lattice;
 
-    // chall_secret = lideal_chall_two ∩ secret_ideal.
-    let chall_secret = lideal_intersect::<L>(lideal_chall_two, secret_ideal, p).ok()?;
+    // chall_secret = lideal_chall_two ∩ secret_ideal — the TRUE lattice
+    // intersection (C `quat_lideal_inter` = dual(dual(I)+dual(J))), NOT the
+    // coprime "I·J" product shortcut: the challenge and secret ideals have
+    // incompatible right orders, so the product ≠ the set-intersection.
+    let chall_secret = match lideal_intersect_lattice::<L, L>(lideal_chall_two, secret_ideal) {
+        Ok(cs) => cs,
+        Err(_) => {
+            #[cfg(feature = "kat")]
+            std::eprintln!(
+                "DIAG resp: chall_secret intersect failed (chall.cached bits={} secret.cached bits={})",
+                lideal_chall_two.cached_norm.bits_vartime(),
+                secret_ideal.cached_norm.bits_vartime(),
+            );
+            return None;
+        }
+    };
+    #[cfg(feature = "kat")]
+    std::eprintln!(
+        "DIAG resp: chall_secret ok cached bits={} is_sq={}",
+        chall_secret.cached_norm.bits_vartime(),
+        chall_secret.reduced_norm_vartime().is_some(),
+    );
     // Hom-lattice = chall_secret ∩ conjugate(commitment).
     let conj_commit = lattice_conjugate::<L>(&lideal_commit.basis);
     let (hom_b, hom_d) = lattice_intersect::<L>(
@@ -228,15 +248,38 @@ pub(crate) fn compute_response_quat_element<const L: usize, R: rand_core::Crypto
     );
     // lattice_content = N(chall_secret) · N(commitment).
     let n_cs = chall_secret.reduced_norm_vartime()?;
-    let n_com = lideal_commit.reduced_norm_vartime()?;
+    let Some(n_com) = lideal_commit.reduced_norm_vartime() else {
+        #[cfg(feature = "kat")]
+        std::eprintln!(
+            "DIAG resp: n_com reduced_norm None (commit.cached bits={})",
+            lideal_commit.cached_norm.bits_vartime()
+        );
+        return None;
+    };
     let lattice_content = n_cs.wrapping_mul(&n_com);
     // radius = (2^response_bits − 1) · lattice_content.
     let radius = Uint::<L>::ONE
         .shl_vartime(response_bits)
         .wrapping_sub(&Uint::<L>::ONE)
         .wrapping_mul(&lattice_content);
-    let (resp, resp_d) =
-        lattice_sample_from_ball::<L, R>(&hom_b, &hom_d, &radius, p, max_trials, rng)?;
+    #[cfg(feature = "kat")]
+    {
+        let n_hom = crate::isogeny::clapotis::lattice_reduced_norm::<L, L>(&hom_b, &hom_d);
+        std::eprintln!(
+            "DIAG resp: n_cs bits={} n_com bits={} hom_N={:?} radius bits={}",
+            n_cs.bits_vartime(),
+            n_com.bits_vartime(),
+            n_hom.map(|n| n.bits_vartime()),
+            radius.bits_vartime(),
+        );
+    }
+    let Some((resp, resp_d)) =
+        lattice_sample_from_ball::<L, R>(&hom_b, &hom_d, &radius, p, max_trials, rng)
+    else {
+        #[cfg(feature = "kat")]
+        std::eprintln!("DIAG resp: sample_from_ball None");
+        return None;
+    };
     Some((resp, resp_d, lattice_content))
 }
 

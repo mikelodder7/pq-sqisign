@@ -99,6 +99,25 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
     let d1 = abs_uint(&r.d1);
     let _d2 = abs_uint(&r.d2);
 
+    #[cfg(feature = "kat")]
+    if keygen && std::env::var("PQSQ_DUMP_AC").is_ok() {
+        std::eprintln!(
+            "OURS_UV exp_gcd={} exp={} v2u={} v2v={} bitsu={} bitsv={} bitsd1={} bitsd2={}",
+            exp_gcd,
+            exp,
+            u_abs.trailing_zeros(),
+            v_abs.trailing_zeros(),
+            u_abs.bits_vartime(),
+            v_abs.bits_vartime(),
+            d1.bits_vartime(),
+            _d2.bits_vartime()
+        );
+        std::eprintln!("OURS_UV_U={u_abs:x}");
+        std::eprintln!("OURS_UV_V={v_abs:x}");
+        std::eprintln!("OURS_UV_D1={d1:x}");
+        std::eprintln!("OURS_UV_D2={_d2:x}");
+    }
+
     // 4. φ_u and φ_v: push the E0[2^F] basis (E2-factor = O).
     let (bp, bq, bpmq) = basis_e0_lvl1();
     let inf = MontgomeryPoint::<Fp1Element>::infinity();
@@ -211,9 +230,8 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
         std::eprintln!("OURS_EXP {exp}");
     }
 
-    // 6. Assemble the couple kernel (T1m2 is a placeholder — the chain
-    //    seeds the gluing kernel from T1, T2 only), double to order 2^exp,
-    //    and walk the randomized chain pushing bas_u.
+    // 6. Assemble the couple kernel (T1m2 placeholder; chain gluing seeds from
+    //    T1,T2), double to order 2^exp, walk the randomized chain pushing bas_u.
     let (p1, q1) = lift_basis(&EcBasis::new(bas_u.0, bas_u.1, bas_u.2), &fu.e1).ok()?;
     let (p2, q2) = lift_basis(&EcBasis::new(t2p, t2q, t2pmq), &fv.e1).ok()?;
     let e01 = CoupleCurve::new(fu.e1, fv.e1);
@@ -223,6 +241,24 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
         CoupleJacobianPoint::infinity(),
     )
     .double_iter(F - exp, &e01);
+
+    #[cfg(feature = "kat")]
+    if keygen && std::env::var("PQSQ_DUMP_AC").is_ok() {
+        let mut b = [0u8; 64];
+        for (nm, jp) in [
+            ("t1.p1", ker.t1.p1),
+            ("t1.p2", ker.t1.p2),
+            ("t2.p1", ker.t2.p1),
+            ("t2.p2", ker.t2.p2),
+        ] {
+            jp.to_affine().x.to_bytes_le(&mut b);
+            std::eprint!("OURS_KERX {nm} ");
+            for x in b {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+    }
 
     let eval_chain = push_basis(bas_u.0, bas_u.1, bas_u.2);
     let mut out_chain = [CoupleMontgomeryPoint::infinity(); 3];
@@ -879,26 +915,75 @@ pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
         ) == Uint::<L>::ONE,
     );
     // 2. Intersect with lideal_com_resp.
-    let aux_resp_com = match lideal_intersect_lattice::<L>(lideal_com_resp, &aux) {
+    let aux_resp_com = match lideal_intersect_lattice::<L, 64>(lideal_com_resp, &aux) {
         Ok(x) => x,
         Err(_) => {
             std::eprintln!("DIAG aux: intersect failed");
             return None;
         }
     };
-    std::eprintln!(
-        "DIAG aux: N(aux_resp_com) bits={}",
-        aux_resp_com.cached_norm.bits_vartime(),
-    );
-    // 3. Clapotis spine → (E_aux, B_aux).
-    let r = ideal_to_isogeny_clapotis(
+    {
+        // Closure check at WIDE width — the L=16 `contains` adjugate (~2^1155
+        // for N~2^385 ideals) overflows Int<16> and false-negatives.
+        use crate::quaternion::lattice::widen_int_lattice;
+        use crate::quaternion::o0_mul::multiply_o0_basis;
+        const CW: usize = 48;
+        let p_cw = crate::params::lvl1::prime().resize::<CW>();
+        let widen = |id: &LeftIdeal<L>| -> LeftIdeal<CW> {
+            let mut b = [[Int::<CW>::from_i64(0); 4]; 4];
+            for (brow, srow) in b.iter_mut().zip(id.basis.iter()) {
+                for (be, se) in brow.iter_mut().zip(srow.iter()) {
+                    *be = widen_int_lattice::<L, CW>(se);
+                }
+            }
+            LeftIdeal::<CW>::with_denom_and_norm(
+                b,
+                id.denom.resize::<CW>(),
+                id.cached_norm.resize::<CW>(),
+            )
+        };
+        let closed = |id: &LeftIdeal<CW>| -> bool {
+            let o0 = LeftIdeal::<CW>::full_order();
+            for e in &o0.basis {
+                for g in &id.basis {
+                    if !id.contains(&multiply_o0_basis::<CW>(e, g, &p_cw)) {
+                        return false;
+                    }
+                }
+            }
+            true
+        };
+        std::eprintln!(
+            "DIAG aux: N(aux_resp_com) bits={} com_resp closed@48={} aux_resp_com closed@48={}",
+            aux_resp_com.cached_norm.bits_vartime(),
+            closed(&widen(lideal_com_resp)),
+            closed(&widen(&aux_resp_com)),
+        );
+    }
+    // 3. Clapotis spine → (E_aux, B_aux). Try the PROVEN idx0 path first
+    // (the (0,0) decomposition the commit uses; keygen=false), falling back to
+    // the general alternate-orders evaluator. The general combine_indexed
+    // (0,0) path's randomized (2,2)-split fails on these aux ideals.
+    let r = ideal_to_isogeny_clapotis_idx0(
         &aux_resp_com,
         &p16,
         witnesses,
         sample_bound,
         max_trials,
+        false,
         rng,
-    );
+    )
+    .or_else(|| {
+        std::eprintln!("DIAG aux: idx0 failed, trying general");
+        ideal_to_isogeny_clapotis(
+            &aux_resp_com,
+            &p16,
+            witnesses,
+            sample_bound,
+            max_trials,
+            rng,
+        )
+    });
     if r.is_none() {
         std::eprintln!("DIAG aux: spine failed");
     }
@@ -1651,6 +1736,14 @@ mod tests {
         let (j, _q) =
             keygen_byte_exact_secret_ideal::<WN, _>(&sec, &p48, 8192, 64, &wit48, &mut rng)
                 .expect("byte-exact keygen front must produce a prime-norm ideal");
+
+        // C-ORACLE BISECT (S349): our reduced secret ideal has the SAME prime
+        // norm q (0x1879C1CC66949175BB052455BDB16319419) and SAME |det|=(2q)² as
+        // C's, and standard-coords basis rows 1-3 match C BYTE-FOR-BYTE, but
+        // row0 differs (the q-coefficient sits on i for us vs j for C) ⇒ a
+        // unit-equivalent but DIFFERENT lattice → different Montgomery model of
+        // E_A. The divergence is in the prime-norm-reduce α/J selection, not the
+        // spine. (See keygen byte-exact notes.)
 
         // Narrow J<48> → LeftIdeal<16> for the spine (J basis ~2^250 fits Int16).
         let mut b16 = [[Int::<L>::from_i64(0); 4]; 4];

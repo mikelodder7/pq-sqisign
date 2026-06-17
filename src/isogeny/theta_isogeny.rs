@@ -402,6 +402,41 @@ pub(crate) fn theta_isogeny_compute_4<F: BaseField>(
     // Step 2: compute the two square roots of products.
     let sqaabb = sqrt_of_product(&tt2.x, &tt2.y)?;
     let sqaacc = sqrt_of_product(&tt2.x, &tt2.z)?;
+    #[cfg(feature = "kat")]
+    if !hadamard_bool_1 && !hadamard_bool_2 && std::env::var("PQSQ_DUMP_AC").is_ok() {
+        let mut b = [0u8; 64];
+        for (nm, c) in [
+            ("NULLIN_X", &domain.theta_null.x),
+            ("NULLIN_Y", &domain.theta_null.y),
+            ("NULLIN_Z", &domain.theta_null.z),
+            ("NULLIN_W", &domain.theta_null.w),
+        ] {
+            c.to_bytes_le(&mut b);
+            std::eprint!("OURS_{nm} ");
+            for x in b {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+        sqaabb.to_bytes_le(&mut b);
+        std::eprint!("OURS_SQAABB ");
+        for x in b {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+        sqaacc.to_bytes_le(&mut b);
+        std::eprint!("OURS_SQAACC ");
+        for x in b {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+        tt2.x.mul(&tt2.z).to_bytes_le(&mut b);
+        std::eprint!("OURS_AACC_IN ");
+        for x in b {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+    }
 
     // Step 3: codomain theta-null (per C ref lines 760-773). Each
     // intermediate is built up via reuse-then-overwrite in the C body;

@@ -357,17 +357,18 @@ pub fn lideal_intersect<const LIMBS: usize>(
 /// and the sampled aux ideal have incompatible right orders and the product
 /// shortcut silently collapses to `N(aux)` (dropping the `com_resp` factor).
 ///
-/// The dual's adjugate/determinant intermediates (~2^780 at real signing
-/// scale) overflow `Int<LIMBS>`, so the whole computation runs at a wide
-/// internal width (`WIDE`) and the reduced basis is narrowed back to `LIMBS`.
+/// The dual's adjugate/determinant intermediates (~2^780 at the aux scale,
+/// ~2^4700 at the response scale where `chall_secret` entries reach ~2^384)
+/// overflow `Int<LIMBS>`, so the whole computation runs at a caller-chosen wide
+/// width `WIDE` (which MUST be ≥ `LIMBS` and large enough to hold the
+/// dual-of-dual adjugate) and the reduced basis is narrowed back to `LIMBS`.
 /// `cached_norm` is set to `|det(basis)|` (= `N(I∩J)²`, a perfect square),
 /// matching the `LeftIdeal::new` convention.
 #[cfg(feature = "alloc")]
-pub fn lideal_intersect_lattice<const LIMBS: usize>(
+pub fn lideal_intersect_lattice<const LIMBS: usize, const WIDE: usize>(
     i: &LeftIdeal<LIMBS>,
     j: &LeftIdeal<LIMBS>,
 ) -> crate::error::Result<LeftIdeal<LIMBS>> {
-    const WIDE: usize = 64;
     use crate::quaternion::lattice::{narrow_int_lattice, widen_int_lattice};
     let zero_w = Int::<WIDE>::from_i64(0);
     let widen_basis = |b: &[[Int<LIMBS>; 4]; 4]| -> [[Int<WIDE>; 4]; 4] {
@@ -632,7 +633,7 @@ mod tests {
         let p = Uint::<8>::from_u64(7);
         let three_id = Ideal::full_order().scale(3);
         let five_id = Ideal::full_order().scale(5);
-        let inter = lideal_intersect_lattice::<8>(&three_id, &five_id)
+        let inter = lideal_intersect_lattice::<8, 64>(&three_id, &five_id)
             .expect("dual-trick intersection must succeed on coprime inputs");
         assert_eq!(
             inter.cached_norm,

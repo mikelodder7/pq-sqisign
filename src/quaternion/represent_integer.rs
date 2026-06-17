@@ -238,6 +238,7 @@ pub(crate) fn narrow_left_ideal<const WIDE: usize, const RET: usize>(
 
 /// Narrow a `LeftIdeal<WIDE>` to `LeftIdeal<8>`. Thin wrapper over
 /// [`narrow_left_ideal`].
+#[allow(dead_code)] // retained utility; the sign-orchestration caller now builds at WL=48
 pub(crate) fn narrow_left_ideal_to_8<const WIDE: usize>(
     wide: &LeftIdeal<WIDE>,
 ) -> Option<LeftIdeal<8>> {

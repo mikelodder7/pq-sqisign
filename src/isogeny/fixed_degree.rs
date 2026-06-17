@@ -191,6 +191,38 @@ pub(crate) fn fixed_degree_isogeny_and_eval_keygen<R: CryptoRng>(
 
     let bas1 = EcBasis::new(bp, bq, bpmq);
     let bas2 = EcBasis::new(rp, rq, rpmq);
+    #[cfg(feature = "kat")]
+    if std::env::var("PQSQ_DUMP_AC").is_ok() {
+        let mut b = [0u8; 64];
+        std::eprintln!("OURS_BTH length={length} ndbl={ndbl} HD={HD} TEP={TORSION_EVEN_POWER}");
+        a24.to_bytes_le(&mut b);
+        std::eprint!("OURS_BTH a24=");
+        for x in b {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+        for (nm, pt) in [
+            ("B0.P", &bas1.p),
+            ("B0.Q", &bas1.q),
+            ("B0.PmQ", &bas1.p_minus_q),
+            ("Bth.P", &bas2.p),
+            ("Bth.Q", &bas2.q),
+            ("Bth.PmQ", &bas2.p_minus_q),
+        ] {
+            pt.x.to_bytes_le(&mut b);
+            std::eprint!("OURS_BTH {nm}.x ");
+            for x in b {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+            pt.z.to_bytes_le(&mut b);
+            std::eprint!("OURS_BTH {nm}.z ");
+            for x in b {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+    }
     let (p1, q1) = lift_basis(&bas1, &curve).ok()?;
     let (p2, q2) = lift_basis(&bas2, &curve).ok()?;
     let ker = ThetaKernelCouplePoints::new(

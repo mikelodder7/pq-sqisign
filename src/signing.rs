@@ -12,23 +12,6 @@ use crate::verification::SecretKeyData;
 #[cfg(feature = "kat")]
 use rand_core::CryptoRng;
 
-/// Widen a `LeftIdeal<8>` to `LeftIdeal<16>` (the spine width).
-#[cfg(feature = "kat")]
-fn widen_ideal_8_16(id: &LeftIdeal<8>) -> LeftIdeal<16> {
-    use crate::quaternion::lattice::widen_int_lattice;
-    let mut basis = [[crypto_bigint::Int::<16>::from_i64(0); 4]; 4];
-    for (row16, row8) in basis.iter_mut().zip(id.basis.iter()) {
-        for (e16, e8) in row16.iter_mut().zip(row8.iter()) {
-            *e16 = widen_int_lattice::<8, 16>(e8);
-        }
-    }
-    LeftIdeal::<16>::with_denom_and_norm(
-        basis,
-        id.denom.resize::<16>(),
-        id.cached_norm.resize::<16>(),
-    )
-}
-
 /// Widen a `LeftIdeal<16>` to `LeftIdeal<W>` (W ≥ 16) for wide lattice ops.
 #[cfg(feature = "kat")]
 fn widen_ideal_16<const W: usize>(id: &LeftIdeal<16>) -> LeftIdeal<W> {
@@ -78,7 +61,7 @@ pub fn protocols_sign<R: CryptoRng>(
     let sk_curve = MontgomeryCurve::new(sk.curve_a);
     let canonical_basis = ec_curve_to_basis_2f_from_hint(&sk_curve, TEP, sk.hint_pk);
 
-    for _attempt in 0..4 {
+    for _attempt in 0..8 {
         // 1. Commitment.
         let Some((e_com, b_com, lideal_commit)) = commit(&wit_ql, 64, 1 << 14, rng) else {
             std::eprintln!("DIAG sign: commit failed");
@@ -90,11 +73,12 @@ pub fn protocols_sign<R: CryptoRng>(
         // 3. Challenge ideal (pulled back through the secret key matrix).
         let lideal_chall_two =
             compute_challenge_ideal_signature(&sk.mat_bacan_to_ba0_two, &chall_coeff, TEP)?;
-        // 4. Response quaternion. Run the lattice ops at a WIDE width: the
-        // challenge ideal has norm 2^248, so the dual–sum–dual intersection's
-        // dets/denoms reach ~2^2000 and overflow narrow widths (L16 gave a
-        // 2^1022 denom). W=48 (3072 bits) holds them.
-        const W: usize = 48;
+        // 4. Response quaternion. Run the lattice ops at a WIDE width: with the
+        // TRUE dual-trick intersection, chall_secret has norm ~2^384 (entries
+        // ~2^384), and the SECOND intersection's dual-of-dual adjugate reaches
+        // ~2^4700, overflowing W=48 (3072 bits) → a garbage hom-lattice the
+        // sampler can't satisfy. W=96 (6144 bits) holds the dual-of-dual.
+        const W: usize = 96;
         let p_w = crate::params::lvl1::prime().resize::<W>();
         let Some((resp_w, resp_d_w, lc_w)) = compute_response_quat_element::<W, R>(
             &widen_ideal_16::<W>(&sk.secret_ideal),
@@ -131,22 +115,30 @@ pub fn protocols_sign<R: CryptoRng>(
             );
         }
         std::eprintln!("DIAG sign: response ok");
-        // 5. Backtracking.
-        let (backtracking, _remain, prim) =
+        // 5. Backtracking. C ref (sign.c:107-117): backtracking = v2(content of
+        //    make_primitive(resp)); lattice_content /= 2^backtracking. The aux
+        //    (sign.c:144) then uses the FULL resp_quat with the REDUCED
+        //    lattice_content (`remain`). Using `prim` + the un-reduced
+        //    lattice_content makes lattice_content ∤ N_red(prim) (it divides
+        //    N_red(resp) but not N_red(prim) once the content is stripped).
+        let (backtracking, remain, prim) =
             compute_backtracking_signature::<16>(&resp, &lattice_content);
-        // 6. Auxiliary norm + helpers.
+        // 6. Auxiliary norm + helpers (full resp + reduced lattice_content).
         let commit_norm = lideal_commit.reduced_norm_vartime()?;
-        let Ok(helpers) = compute_random_aux_norm_and_helpers::<16>(
-            &prim,
-            &lattice_content,
+        let helpers = match compute_random_aux_norm_and_helpers::<16>(
+            &resp,
+            &remain,
             &commit_norm,
             &p16,
             backtracking,
             RESPONSE_BITS,
             HD,
-        ) else {
-            std::eprintln!("DIAG sign: aux_norm_helpers failed");
-            continue;
+        ) {
+            Ok(h) => h,
+            Err(e) => {
+                std::eprintln!("DIAG sign: aux_norm_helpers failed: {e:?}");
+                continue;
+            }
         };
         let pow = helpers.pow_dim2_deg_resp;
         let two_resp = helpers.two_resp_length;
@@ -157,7 +149,7 @@ pub fn protocols_sign<R: CryptoRng>(
             continue;
         }
         // 7. Auxiliary isogeny.
-        let com_resp16 = widen_ideal_8_16(&helpers.lideal_com_resp);
+        let com_resp16 = helpers.lideal_com_resp;
         let Some((e_aux, b_aux)) = evaluate_random_aux_isogeny_lvl1(
             &helpers.random_aux_norm,
             &com_resp16,
@@ -187,6 +179,7 @@ pub fn protocols_sign<R: CryptoRng>(
         // E_aux = codomain.E2, E_chall = codomain.E1; B_aux = pushed.P2,
         // B_chall = pushed.P1 ("it should always be the first curve").
         let e_aux2 = codomain.e2;
+        let e_chall2_postdim = codomain.e1; // S351: e_chall2 BEFORE small_chain
         let mut e_chall2 = codomain.e1;
         let b_aux2 = EcBasis::new(pushed[0].p2, pushed[1].p2, pushed[2].p2);
         let mut b_chall2 = EcBasis::new(pushed[0].p1, pushed[1].p1, pushed[2].p1);
@@ -203,6 +196,14 @@ pub fn protocols_sign<R: CryptoRng>(
         }
         // 8b. Optional short 2^r response isogeny (two_resp_length > 0).
         if two_resp > 0 {
+            // NOTE (S351): C (sign.c:325) builds the 2^two_resp response ideal
+            // from the FULL resp_quat; using `prim` here is wrong, BUT switching
+            // to `&resp` breaks our kernel (id2iso_ideal_to_kernel_dlogs_even
+            // computes conj(resp)'s action DIRECTLY and full resp has even coords
+            // → non-primitive kernel column → codomain order >2^f). Real fix:
+            // build the ideal O_0·resp + 2^two_resp·O_0 like C. The j(E_chall)
+            // mismatch is UPSTREAM of here (false with both prim and resp), so
+            // keep prim until the dim2/E_chall j-mismatch is resolved.
             let Some((e2, b2)) = crate::verification::compute_small_chain_isogeny_signature(
                 &e_chall2, &b_chall2, &prim, pow, two_resp,
             ) else {
@@ -232,9 +233,11 @@ pub fn protocols_sign<R: CryptoRng>(
             continue;
         };
         std::eprintln!(
-            "DIAG sign: codomain ok j(E_chall)==j(e_chall2)?{:?} ==j(e_aux2)?{:?}",
+            "DIAG sign: codomain ok j(E_chall)==j(e_chall2)?{:?} ==j(e_aux2)?{:?} ==j(e_chall2_postdim,pre-smallchain)?{:?} | j(e_chall2_postdim)==j(e_aux2)?{:?}",
             e_chall.j_invariant() == e_chall2.j_invariant(),
             e_chall.j_invariant() == e_aux2.j_invariant(),
+            e_chall.j_invariant() == e_chall2_postdim.j_invariant(),
+            e_chall2_postdim.j_invariant() == e_aux2.j_invariant(),
         );
         // 10. Assemble + encode the signature.
         let mut sig = SignatureData {

@@ -274,6 +274,26 @@ pub(crate) fn gluing_codomain<F: BaseField>(
     xy_k1_8: &CoupleJacobianPoint<F>,
     xy_k2_8: &CoupleJacobianPoint<F>,
 ) -> Result<GluingCodomain<F>, GluingError> {
+    #[cfg(feature = "kat")]
+    if std::env::var("PQSQ_DUMP_AC").is_ok() {
+        let mut b = [0u8; 64];
+        for (nm, c) in [
+            ("K1P1X", xy_k1_8.p1.x),
+            ("K1P1Y", xy_k1_8.p1.y),
+            ("K1P1Z", xy_k1_8.p1.z),
+            ("K2P1X", xy_k2_8.p1.x),
+            ("K2P1Y", xy_k2_8.p1.y),
+            ("K2P1Z", xy_k2_8.p1.z),
+        ] {
+            c.to_bytes_le(&mut b);
+            std::eprint!("OURS_KJAC_{nm} ");
+            for x in b {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+    }
+
     // Step 1: kernel halving (8-torsion → 4-torsion).
     let k1_4 = xy_k1_8.double(domain);
     let k2_4 = xy_k2_8.double(domain);
@@ -314,6 +334,19 @@ pub(crate) fn gluing_codomain<F: BaseField>(
         ] {
             p.affine_x().to_bytes_le(&mut b);
             std::eprint!("OURS_GL {nm} ");
+            for x in b {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+            // raw xz (scale-bearing) fed to base_change
+            p.x.to_bytes_le(&mut b);
+            std::eprint!("OURS_GLXZ {nm}.x ");
+            for x in b {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+            p.z.to_bytes_le(&mut b);
+            std::eprint!("OURS_GLXZ {nm}.z ");
             for x in b {
                 std::eprint!("{x:02x}");
             }

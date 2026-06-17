@@ -451,7 +451,35 @@ pub(crate) fn splitting_compute_randomized<F: BaseField, R: CryptoRng>(
     zero_index: Option<usize>,
     rng: &mut R,
 ) -> Result<ThetaSplitting<F>, SplittingError> {
+    #[cfg(feature = "kat")]
+    if std::env::var("PQSQ_DUMP_AC").is_ok() {
+        let n = &domain.theta_null;
+        let mut buf = [0u8; 64];
+        for (nm, c) in [("X", n.x), ("Y", n.y), ("Z", n.z), ("W", n.w)] {
+            c.to_bytes_le(&mut buf);
+            std::eprint!("OURS_TNR_{nm} ");
+            for b in buf {
+                std::eprint!("{b:02x}");
+            }
+            std::eprintln!();
+        }
+    }
     let m = splitting_build_matrix(domain, zero_index)?;
+
+    #[cfg(feature = "kat")]
+    if std::env::var("PQSQ_DUMP_AC").is_ok() {
+        let mut buf = [0u8; 64];
+        for r in 0..4 {
+            for c in 0..4 {
+                m.m[r][c].to_bytes_le(&mut buf);
+                std::eprint!("OURS_BM_{r}_{c} ");
+                for b in buf {
+                    std::eprint!("{b:02x}");
+                }
+                std::eprintln!();
+            }
+        }
+    }
 
     // Constant-time pick of NORMALIZATION_TRANSFORMS[secret] (C ref:
     // start at index 0, select index i when i == secret).
@@ -465,6 +493,33 @@ pub(crate) fn splitting_compute_randomized<F: BaseField, R: CryptoRng>(
     let m = base_change_matrix_multiplication(&m_random, &m);
 
     let b_null = crate::isogeny::gluing::apply_isomorphism(&m, &domain.theta_null);
+    #[cfg(feature = "kat")]
+    if std::env::var("PQSQ_DUMP_AC").is_ok() {
+        let mut buf = [0u8; 64];
+        for r in 0..4 {
+            for c in 0..4 {
+                m.m[r][c].to_bytes_le(&mut buf);
+                std::eprint!("OURS_M_{r}_{c} ");
+                for b in buf {
+                    std::eprint!("{b:02x}");
+                }
+                std::eprintln!();
+            }
+        }
+        for (nm, c) in [
+            ("X", b_null.x),
+            ("Y", b_null.y),
+            ("Z", b_null.z),
+            ("W", b_null.w),
+        ] {
+            c.to_bytes_le(&mut buf);
+            std::eprint!("OURS_BNULL_{nm} ");
+            for b in buf {
+                std::eprint!("{b:02x}");
+            }
+            std::eprintln!();
+        }
+    }
     Ok(ThetaSplitting { m, b_null })
 }
 
@@ -516,6 +571,10 @@ fn splitting_build_matrix<F: BaseField>(
             u_cst = u_cst.add(&term);
         }
         let is_zero = u_cst.is_zero();
+        #[cfg(feature = "kat")]
+        if bool::from(is_zero) && std::env::var("PQSQ_DUMP_AC").is_ok() {
+            std::eprintln!("OURS_VANISH={i}");
+        }
         // count += 1 when this characteristic vanishes.
         count += u32::from(bool::from(is_zero));
         // CT-select SPLITTING_TRANSFORMS[i] into M when U_cst == 0.
@@ -1436,5 +1495,191 @@ mod tests {
         assert_eq!(cmp.p2.z, Fp2::<Fp1Element>::zero(), "S146: P_2.Z = 0");
         assert_eq!(cmp.p1.x, small_fp2(6), "S146: P_1.X = 6");
         assert_eq!(cmp.p1.z, Fp2::<Fp1Element>::zero(), "S146: P_1.Z = 0");
+    }
+
+    /// S350: are the split theta-null points (C reference vs ours) the SAME
+    /// projective point? Captured raw 4-coords at the randomized split entry for
+    /// KAT[0] (C `splitting_compute` A->null_point {x,y,z,t} CDUMP6; ours
+    /// `domain.theta_null` {x,y,z,w} OURS_TNR). Proportional ⟺ Cy·Ox==Oy·Cx etc.
+    /// (X≠0 in both). Match ⟹ bug is in the split matrix M / tables; differ ⟹
+    /// the (2,2)-chain walk produced a different theta structure (kernel/gluing).
+    #[test]
+    fn s350_theta_null_proportionality() {
+        use subtle::ConstantTimeEq;
+        fn hx(s: &str) -> Fp2<Fp1Element> {
+            let bytes: Vec<u8> = (0..s.len() / 2)
+                .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
+                .collect();
+            Option::<Fp2<Fp1Element>>::from(Fp2::<Fp1Element>::from_bytes_le(&bytes)).unwrap()
+        }
+        // S351: compute_4 INPUT domain-null (KAT[0], first (0,0) combine step).
+        let cx = hx(
+            "a988f13a4cc111eed5baa2257093e5cf1e89fb1e91e973c23c3d00f714ab6301b14e31c7f8489e8368386804ff4f47f6a6f51c139946319528d04483491d7901",
+        );
+        let cy = hx(
+            "422771e8371e914de9ab65a1bab68ebca18be1e40014a38ada3079a6c590cf002ec36cb3c2001704fd68b1daf3a37f2a00714b4a2b59098f0f2780418e5b0f00",
+        );
+        let cz = hx(
+            "1d5c8047d9b99c1d9fb76a34760981f0aad1fde22bba532fbf9e9fa26fef6e0162bd7b93ce8f8618d5024449b33054e118ada7fe324972aba42755be08f38402",
+        );
+        let ct = hx(
+            "24b6c335dbda7bf6960f9202a5936c31e1a42774d69ade05cb85e9a0c942ed00f0df624535a08e6076c15b35d5e51a1966673ccb20399d03957ddc5db0e59101",
+        );
+        let ox = hx(
+            "5eb33f89ec7c4cc4003c94b48d7190ffd5d6d840b6a88bb62030935d57230800c347fdcf8c0152c301217c45f9c1094e33ed193d98202349af5b6974ac655600",
+        );
+        let oy = hx(
+            "de246422a9ace0457bf03f66049ed6fa25d74d55df0f897991309aa93217590431b4c80e1f6f12cdd60fc8af661586a6be256be26dcbefd8154ca0e841726601",
+        );
+        let oz = hx(
+            "771362c3d6d15defb0266b3e90956fddf5ad80f0e76e880bf45c944c6cb05e013e3bffc0e5e987f75f6dca60cfff0fded76ef6c1fc75c64b4a60636e78e76a04",
+        );
+        let ow = hx(
+            "b7948afba2310b3e8d6ff258e5f0e8128d7d4dfbf195304beda9ffd91719a2004729f687fb4b38f9dda4319dee5bda6b7e677910e91fbc3fc00e2246fa693a00",
+        );
+        let eq =
+            |a: &Fp2<Fp1Element>, b: &Fp2<Fp1Element>, c: &Fp2<Fp1Element>, d: &Fp2<Fp1Element>| {
+                // a/c == b/d  ⟺  a·d == b·c
+                bool::from(a.mul(d).ct_eq(&b.mul(c)))
+            };
+        // Direct pairing (C x,y,z,t ↔ our x,y,z,w):
+        let dy = eq(&cy, &oy, &cx, &ox);
+        let dz = eq(&cz, &oz, &cx, &ox);
+        let dt = eq(&ct, &ow, &cx, &ox);
+        // Swap hypothesis: our z ↔ C t, our w ↔ C z
+        let sz = eq(&ct, &oz, &cx, &ox); // C.T/X == our Z/X
+        let sw = eq(&cz, &ow, &cx, &ox); // C.Z/X == our W/X
+        std::eprintln!("S350 DIRECT: Y={dy} Z={dz} T/W={dt}  |  SWAP(z<->w): zT={sz} wZ={sw}");
+
+        // S351 cont.9: is the φ_u eval output bas_u PROPORTIONAL to C (same
+        // point, scale-only) for P and Q? eq(Cx,Ox,Cz,Oz) = Cx/Cz==Ox/Oz (affine).
+        let cpx = hx(
+            "d51fd75b39666260d2d24f75fcd0d6e9d8fae9e921df637528dbc8895e228601a8756c7e76a390f4f07af73fd929693ad8c1a246b03d54760e99a60ac816d403",
+        );
+        let cpz = hx(
+            "530fafbfa73ca9f94fdd91253504043ec9dff051d1281dbb4ed46aa1f1cbed0223036984ec00e35ee9b95dae24f9efb30ec4a76bc748a14ac0d038d0bb569903",
+        );
+        let opx = hx(
+            "b6913df58a6cfcf0bdd044a9b2328d5dc6694c95b31a1512eac308d62949bb0107f0d5bd616fdc4f0df1c2c378d04546558dbcab892fada13af91d97ab679903",
+        );
+        let opz = hx(
+            "a15b9fbc5bf6dac88803eda1be5cfd42ca7b29b2d56d1a15f0ed0aab7aded803715757215f8645de796516885e98e0c7c6b6549ec6adfcbfddf0f62a3a251803",
+        );
+        let cqx = hx(
+            "283a9bdee2f55ca09009a922cdc6cea5fdeec0c43be179ef520e42d53e82be025dd0e9c2a35d3c0c4234ad10f1c3c9152596257f78c3c07eabeebe19080cee00",
+        );
+        let cqz = hx(
+            "ab814663b3d306809db3746328cd6705c903f38de0b6597513d548d02c2f9d02988d0d0130b415b4ba6dbee1c3fdf45ed6c4446971c331b5a53e9c344ba82c03",
+        );
+        let oqx = hx(
+            "b46041f373bf01d9f4b3db701c50961a05188ab42b07fd682d838501fc3f25039e8955322d1b4a2ed1433063b2a6907f3e2c30de7553f85e729256995c263800",
+        );
+        let oqz = hx(
+            "10e0b4aeb02745aeeee3f205a1a1a7dfc91f99746427d5251902fd1298b3000273c9d19320f98385515fb9b791bb6e29a1bb6cd6d0774ec40417b53bfa154003",
+        );
+        let p_prop = eq(&cpx, &opx, &cpz, &opz);
+        let q_prop = eq(&cqx, &oqx, &cqz, &oqz);
+        std::eprintln!("S351 phi_u bas_u proportional to C: P={p_prop} Q={q_prop}");
+        // Is the scale ρ GLOBAL (same for P and Q)? ρ_P==ρ_Q ⟺ our_P/C_P == our_Q/C_Q.
+        let global_x = eq(&opx, &oqx, &cpx, &cqx); // opx/cpx == oqx/cqx
+        let global_z = eq(&opz, &oqz, &cpz, &cqz);
+        // Cross-check ρ from x equals ρ from z (a true scalar ρ scales both): opx/cpx==opz/cpz
+        let p_rho_xz = eq(&opx, &opz, &cpx, &cpz);
+        std::eprintln!(
+            "S351 phi_u scale: global(P~Q) x={global_x} z={global_z}; P ρ_x==ρ_z = {p_rho_xz}"
+        );
+        // Measure ρ = our_P.x / C_P.x  (and from z) — is it a recognizable constant?
+        let rho_x = opx.mul(&cpx.invert().unwrap());
+        let rho_z = opz.mul(&cpz.invert().unwrap());
+        let mut rb = [0u8; 64];
+        rho_x.to_bytes_le(&mut rb);
+        std::eprint!("S351 rho_x=");
+        for b in rb {
+            std::eprint!("{b:02x}");
+        }
+        std::eprintln!();
+        rho_z.to_bytes_le(&mut rb);
+        std::eprint!("S351 rho_z=");
+        for b in rb {
+            std::eprint!("{b:02x}");
+        }
+        std::eprintln!();
+        std::eprintln!(
+            "S351 rho_x==rho_z (true scalar): {}",
+            bool::from(rho_x.ct_eq(&rho_z))
+        );
+        // φ_u codomain CURVE model: does C's A/C == our Fu.E1.a (affine A/C)?
+        let c_fua = hx(
+            "9758d3065a5c84b878e6b17ea6d626c0f243202a6c5afd2c807d2d59ec786a00d053685a621d89af99fde64a0d51cae23b953314b47cb2e35af1f2f2b1d03404",
+        );
+        let c_fuc = hx(
+            "fd9a17bede44f903bd9bcc8200dd15bcd28c9ae88c8563e99ca3974c4d2e51005ffaf130f872f35c1a3d14ff0283be712735e6145f94e2042e104b3957f9c400",
+        );
+        let ours_fua = hx(
+            "7ead7271922ac66283efcaa66c5a751438baad9f00c69ece1e04ab8407a3ab0026fd8a2f6d0cd2a8b55b2048c4757cbe306d15340db716a1d2ca599a5b0dee01",
+        );
+        let c_fu_affine = c_fua.mul(&c_fuc.invert().unwrap());
+        std::eprintln!(
+            "S351 phi_u CURVE A/C matches C: {}",
+            bool::from(c_fu_affine.ct_eq(&ours_fua))
+        );
+        // Innermost: B0 (E0 basis, control) + Bth (θ-applied) — proportional to C? (same point)
+        let c_b0px = hx(
+            "e8102ca2da6848b5cbb93a47015e3b71d933dfeddfc97043222ea15fe05721046a1322fa6417129532f541f787ec492d34be1797816b17197877f124fb8bb001",
+        );
+        let c_b0pz = hx(
+            "a06a0e7028de949ec4195d9ba97b1f4f2ec28f0d29fb710f832aaa1e894e520100582ae66c8ac76ccedf12d878a1d19a212f20bb8a16b3f40d8516fb68dc7902",
+        );
+        let o_b0px = hx(
+            "5d0d8182f7df5ac6d5e19b884d47a928027ee9b9b889685a0da25682c3a1cc00c1773797dffea4395c02c36655ad3136c26f0657bbb0a7beb8704e84c0d8d103",
+        );
+        let o_b0pz = hx(
+            "749bb5393ab5dddfca4f4e7460d88d98056af7ecd0a6a883146d13a092d96701434051c8bbba10a2168ed246e72c8ea009a90fe9ebd7c466748df2629d9a8701",
+        );
+        let c_bthpx = hx(
+            "c718d3e68af5bd4c56d687fcf8cb0a1401227c037a39b8be3a3262a722c95501a9c52aa17666fb15f2bfbf9a9567df3c1bf48b0a3c2dc16395791971f7a5d103",
+        );
+        let c_bthpz = hx(
+            "571556d616bfc682507efd1fb9c089ceabb228dba15dc88a06f249262c1d1600e1b56a8c1af37c6346d10db04d6348363b26486b80dd0b72832da698eb0dcc01",
+        );
+        let o_bthpx = hx(
+            "7704750fa3603a56fc73f45b5a7fe62e67ab031ba8cdc173603e22cb2b832d04cd83107e8eafa3eaccca2bafff3bd50f2864f2a745a8b1c17c8fa9b11ceadd01",
+        );
+        let o_bthpz = hx(
+            "aeec249576e132853b4841ff9c5b383bc01dcfe4f1f4b0de48f013d7521cad01516bbfb297d9a76d0bc7e9cdc9bf67c7d2c20966b4f1d755f9af6197abe6bd04",
+        );
+        let b0_prop = eq(&c_b0px, &o_b0px, &c_b0pz, &o_b0pz);
+        let bth_prop = eq(&c_bthpx, &o_bthpx, &c_bthpz, &o_bthpz);
+        std::eprintln!("S351 innermost: B0.P proportional={b0_prop} Bth.P proportional={bth_prop}");
+        // BOTTOM: our un-doubled E0 basis vs C's basis_even (C is at z=1).
+        let (bp0, bq0, _bpmq0) = crate::isogeny::endomorphism::basis_e0_lvl1();
+        let mut bb = [0u8; 64];
+        bp0.x.to_bytes_le(&mut bb);
+        std::eprint!("S351 OUR_PRE_PX=");
+        for x in bb {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+        bp0.z.to_bytes_le(&mut bb);
+        std::eprint!("S351 OUR_PRE_PZ=");
+        for x in bb {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+        bq0.x.to_bytes_le(&mut bb);
+        std::eprint!("S351 OUR_PRE_QX=");
+        for x in bb {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+        // C: PRE_PX=7800b4ae…, PRE_PZ=01 (z=1), PRE_QX=1feb9355…
+        let c_pre_px = hx(
+            "7800b4ae5ed919218ba7bf591a99be44c41662a6c304cc8324b182ca7f879b0175d2f9c33d13048e74924251aeddcfb22fe96798aa0a155242e0ea49db2a4404",
+        );
+        std::eprintln!(
+            "S351 OUR bp0.x==C PRE_PX: {}",
+            bool::from(bp0.x.ct_eq(&c_pre_px))
+        );
+        // Just report — don't fail the loop on the diagnostic.
     }
 }

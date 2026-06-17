@@ -133,6 +133,27 @@ fn kat_records_have_unique_seeds() {
 // below should be enabled. It is the actual KAT-pass verdict for the
 // whole scheme. Until then it is gated `#[ignore]` so suites stay green.
 
+/// S351: verify a C-generated KAT signature with OUR verify, isolating
+/// verify + E_chall-recompute from our sign. `sm = sig || msg` (NIST), so
+/// `sig = sm[..SIG_BYTES]`. If this PASSES, our verify is correct and any
+/// sign↔verify-roundtrip failure is in our SIGN; if it FAILS, our verify
+/// (challenge recompute) is the bug.
+#[test]
+#[ignore = "S351 sign-verify diagnosis"]
+fn kat_lvl1_verify_only() {
+    let records = parse_kat(KAT_LVL1);
+    let r = &records[0];
+    let sig = &r.sm[..Level1::SIG_BYTES];
+    match pq_sqisign::verify::<Level1>(&r.msg, sig, &r.pk) {
+        Ok(()) => std::eprintln!(
+            "S351 KAT verify[0]: ACCEPT (our verify is correct → bug is in our SIGN)"
+        ),
+        Err(e) => std::eprintln!(
+            "S351 KAT verify[0]: REJECT {e:?} (our verify/E_chall-recompute is the bug)"
+        ),
+    }
+}
+
 #[test]
 #[ignore = "pending isogeny pipeline (KAT byte-exact compliance arrives in future sessions)"]
 fn kat_lvl1_signs_and_verifies() {

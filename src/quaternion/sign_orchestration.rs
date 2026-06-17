@@ -25,7 +25,6 @@ use crate::quaternion::ideal::LeftIdeal;
 use crate::quaternion::o0_mul::{
     left_ideal_from_element_and_integer_o0, o0_conjugate, reduced_norm_o0_basis,
 };
-use crate::quaternion::represent_integer::narrow_left_ideal_to_8;
 
 /// 2-adic valuation `v_2(x)` of a `Uint<LIMBS>` — count trailing zero
 /// bits across the limb array. Returns `64 · LIMBS` when `x == 0`.
@@ -193,7 +192,7 @@ pub struct AuxNormHelpers<const LIMBS: usize> {
     /// Built via [`super::o0_mul::left_ideal_from_element_and_integer_o0`]
     /// with `γ = conj(resp_quat)` (O_0-basis) and
     /// `n = n(lideal_commit) · degree_odd_resp`.
-    pub lideal_com_resp: LeftIdeal<8>,
+    pub lideal_com_resp: LeftIdeal<LIMBS>,
 
     /// The conjugated `resp_quat` (the C reference conjugates in place
     /// via `quat_alg_conj`). Returned here so the caller can replace its
@@ -360,13 +359,31 @@ pub fn compute_random_aux_norm_and_helpers<const LIMBS: usize>(
         .ok_or(Error::Internal(
             "compute_random_aux_norm_and_helpers: lideal_commit_norm * degree_odd_resp overflows Uint<LIMBS>",
         ))?;
-    let wide_ideal =
-        left_ideal_from_element_and_integer_o0::<LIMBS>(&conjugated_resp_quat, &ideal_norm, p);
-    let lideal_com_resp = narrow_left_ideal_to_8::<LIMBS>(&wide_ideal).ok_or(
-        Error::Internal(
-            "compute_random_aux_norm_and_helpers: lideal_com_resp exceeds Uint<8> ceiling — precision contract violated",
-        ),
-    )?;
+    // Build lideal_com_resp at a WIDE internal width, then narrow the basis to
+    // LIMBS. N(com_resp) ~ 2^260, so `left_ideal_from_element_and_integer_o0`'s
+    // HNF/quaternion-product intermediates (γ·O_0 entries ~ p·γ ~ 2^515, and
+    // the det N² ~ 2^520) overflow even Int<LIMBS=16> (1024 bits) → a
+    // NON-left-closed ideal that the downstream aux intersection + Clapotis
+    // spine mis-evaluate (the (2,2)-isogeny fails to split). WL=48 (3072 bits)
+    // holds the intermediates; the narrowed LIMBS basis (entries ≤ N) is then
+    // left-closed. (Golden rule: judge ideal validity by left-closure, never
+    // reduced_norm, at this scale.)
+    const WL: usize = 48;
+    let conj_wl: [Int<WL>; 4] = [
+        crate::quaternion::lattice::widen_int_lattice::<LIMBS, WL>(&conjugated_resp_quat[0]),
+        crate::quaternion::lattice::widen_int_lattice::<LIMBS, WL>(&conjugated_resp_quat[1]),
+        crate::quaternion::lattice::widen_int_lattice::<LIMBS, WL>(&conjugated_resp_quat[2]),
+        crate::quaternion::lattice::widen_int_lattice::<LIMBS, WL>(&conjugated_resp_quat[3]),
+    ];
+    let norm_wl = ideal_norm.resize::<WL>();
+    let p_wl = p.resize::<WL>();
+    let wide_ideal = left_ideal_from_element_and_integer_o0::<WL>(&conj_wl, &norm_wl, &p_wl);
+    let lideal_com_resp =
+        crate::quaternion::represent_integer::narrow_left_ideal::<WL, LIMBS>(&wide_ideal).ok_or(
+            Error::Internal(
+                "compute_random_aux_norm_and_helpers: lideal_com_resp basis exceeds Int<LIMBS> after WL build",
+            ),
+        )?;
 
     // Step 7: pow_dim2_deg_resp = response_bits − two_resp_length − backtracking.
     // Underflow is a real error (response budget violated by caller).
@@ -944,7 +961,7 @@ mod tests {
             4,
         )
         .expect("L3 monomorphization must succeed");
-        assert_eq!(r3.lideal_com_resp.cached_norm, Uint::<8>::from_u64(5));
+        assert_eq!(r3.lideal_com_resp.cached_norm, Uint::<12>::from_u64(5));
 
         let resp_quat_l5 = [
             Int::<16>::from_i64(4),
@@ -962,7 +979,7 @@ mod tests {
             4,
         )
         .expect("L5 monomorphization must succeed");
-        assert_eq!(r5.lideal_com_resp.cached_norm, Uint::<8>::from_u64(5));
+        assert_eq!(r5.lideal_com_resp.cached_norm, Uint::<16>::from_u64(5));
     }
 
     // ── evaluate_random_aux_isogeny_signature body tests (S190) ────────

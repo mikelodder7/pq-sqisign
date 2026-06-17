@@ -191,11 +191,22 @@ pub(crate) fn xdblmul<F: BaseField>(
     let mut diff2a = r2;
     let mut diff2b = *pq;
 
+    // C `xDBLMUL` uses the `xDBL_E0` variant when `A == 0` (E0), which yields a
+    // DIFFERENT projective representative (2× per step) than `xDBL_A24`. `A == 0`
+    // ⟺ `a24 = (A+2)/4 = 1/2` ⟺ `2·a24 = 1`. The curve is public, so this branch
+    // is not secret-dependent. Matching the variant is required for byte-exact
+    // E0 biscalar outputs.
+    let is_e0 = a24.double() == Fp2::<F>::one();
+
     for i in (0..kbits).rev() {
         let h = r[2 * i] + r[2 * i + 1]; // {0,1,2}
         let mut t0 = select_point(&r0, &r1, Choice::from(h & 1));
         t0 = select_point(&t0, &r2, Choice::from(h >> 1));
-        t0 = t0.x_double(a24);
+        t0 = if is_e0 {
+            t0.x_double_e0()
+        } else {
+            t0.x_double(a24)
+        };
 
         let cr1 = Choice::from(r[2 * i + 1] & 1);
         let t1 = select_point(&r0, &r1, cr1);
@@ -272,8 +283,13 @@ pub(crate) fn clear_cofactor_for_maximal_even_order<F: BaseField>(
     const ODD_COFACTOR: u8 = 5; // p_cofactor_for_2f, lvl1
     debug_assert!(f <= TORSION_EVEN_POWER);
     let a24 = curve.a24();
-    // [5]·P clears the odd cofactor (order now divides 2^248).
-    let p_cleared = p.ladder(&[ODD_COFACTOR], &a24);
+    // [5]·P clears the odd cofactor (order now divides 2^248). C `ec_mul` uses
+    // kbits = bitlength(cofactor); the exact bitlength (3 for 5) is REQUIRED so
+    // the projective representative matches C — leading-zero ladder iterations
+    // would change the representative and break the representative-fragile
+    // `difference_point` in the verify basis recompute.
+    let cof_bits = (8 - ODD_COFACTOR.leading_zeros()) as usize;
+    let p_cleared = p.ladder_nbits(&[ODD_COFACTOR], cof_bits, &a24);
     // Double down to exact order 2^f.
     let n_dbl = u32::try_from(TORSION_EVEN_POWER - f).expect("f <= TORSION_EVEN_POWER ⇒ fits u32");
     curve.to_a24().x_double_n(&p_cleared, n_dbl)
@@ -432,7 +448,28 @@ pub(crate) fn difference_point<F: BaseField>(
     // Solve the quadratic: PQ.x = Bxz + sqrt(Bxz² − Bxx·Bzz), PQ.z = Bzz.
     let disc = bxz.square().sub(&bxx.mul(&bzz));
     let s = disc.sqrt().into_option().unwrap_or_else(Fp2::<F>::zero);
-    MontgomeryPoint::new(bxz.add(&s), bzz)
+    let out = MontgomeryPoint::new(bxz.add(&s), bzz);
+    #[cfg(feature = "alloc")]
+    if std::env::var("PQSQ_DUMP_DP").is_ok() {
+        let mut b = [0u8; 64];
+        for (nm, v) in [
+            ("px", &p.x),
+            ("pz", &p.z),
+            ("qx", &q.x),
+            ("qz", &q.z),
+            ("outx", &out.x),
+            ("outz", &out.z),
+        ] {
+            v.to_bytes_le(&mut b);
+            std::eprint!("DP {nm}=");
+            for x in &b[..16] {
+                std::eprint!("{x:02x}");
+            }
+            std::eprint!(" ");
+        }
+        std::eprintln!();
+    }
+    out
 }
 
 /// Entangled basis for `E0` (`A = 0`), where the QR/NQR x-selectors do not
@@ -543,6 +580,55 @@ mod tests {
     use crate::params::lvl1::Fp1Element;
     use alloc::vec::Vec;
     use subtle::ConstantTimeEq;
+
+    #[test]
+    fn s351_difference_point_c_chall_inputs() {
+        use crate::ec::montgomery::MontgomeryPoint;
+        fn hx(s: &str) -> Fp2<Fp1Element> {
+            let bytes: Vec<u8> = (0..s.len() / 2)
+                .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
+                .collect();
+            Option::<Fp2<Fp1Element>>::from(Fp2::<Fp1Element>::from_bytes_le(&bytes)).unwrap()
+        }
+        let px = hx(
+            "97b229f9754fcc53970db466a7988dc02a7b3a426bdc87a8fafd87bab6257f04ad7c7220f0c8ef9fef2ad52a97f00f5c0636a305e398c791ee6f7358edd9df01",
+        );
+        let pz = hx(
+            "c9c8064d1e05c7d0aefd3db85abf9e34c0f0a9add3d75018e07e31e2a0118f01418e03693ee0b5f53728a6dfeecdde199a5a84a939a34c7a0e803d4bd2394601",
+        );
+        let qx = hx(
+            "b808a0e08781251fb5379526b669c06bf4d122fb6babd0c335c63525cca71c0245242431d34f53ac0d1d8f01edc26f7531a13c2484baf5750147e15b72b8e904",
+        );
+        let qz = hx(
+            "dbb47030a789eab9eab6f2a7a54a5de03a731a70fcb93674836b00e26c7ec501d173f4b22ee5f1483e6f0ee9dbef1747de860cf180112e5f47dfc74312c35002",
+        );
+        let a = hx(
+            "bedbf209197818f0bb9c18010649dfdb933e635ae1f120cdf24173f3a03576029ed7bdcf70629b9390507d5bf3cef1ffecd2836f8dd526e5fe9170e787fee002",
+        );
+        let c_outx = hx(
+            "2002d7490c9d4023caa6c55d91d84d035f5d0a4e5797ee7bb2267717ab6ec6042d939faca1344ee3ba15f91e969c4f8c24c43395254c3625e244f1e9e9881502",
+        );
+        let c_outz = hx(
+            "89311bfe5557cd95d257efe38b8ed8c8bde3208bd600acee4c4f8a332ad98b0038846c757b817966683dfd93b4a02a1a70ee1d15b675ffae5742875d6519eb01",
+        );
+        let p = MontgomeryPoint::new(px, pz);
+        let q = MontgomeryPoint::new(qx, qz);
+        let out = difference_point(&p, &q, &a);
+        let affine_match = bool::from(out.x.mul(&c_outz).ct_eq(&c_outx.mul(&out.z)));
+        std::eprintln!(
+            "S351 DP(C-inputs): affine_match={affine_match} full_x={} full_z={}",
+            out.x == c_outx,
+            out.z == c_outz
+        );
+        // Robustness: scale p by λ=2, q by μ=3 (same affine points), recompute.
+        let two = Fp2::<Fp1Element>::one().double();
+        let three = two.add(&Fp2::<Fp1Element>::one());
+        let p2 = MontgomeryPoint::new(px.mul(&two), pz.mul(&two));
+        let q3 = MontgomeryPoint::new(qx.mul(&three), qz.mul(&three));
+        let out2 = difference_point(&p2, &q3, &a);
+        let robust = bool::from(out2.x.mul(&out.z).ct_eq(&out.x.mul(&out2.z)));
+        std::eprintln!("S351 DP robustness (λ=2,μ=3): affine_same_as_unscaled={robust}");
+    }
 
     #[test]
     fn is_on_curve_distinguishes_e0_and_twist() {
