@@ -10,7 +10,6 @@
 //! order scalars (`U256` at lvl1), and the field element is `Fp1Element`. The
 //! rest of the verify subsystem (`ec::biscalar` basis routines) is pinned the
 //! same way.
-#![allow(dead_code)]
 
 use crate::error::{Error, Result};
 use crate::gf::fp::BaseField;
@@ -362,7 +361,7 @@ fn weil_jac(
 /// `E[2^f]` (both bases of order exactly `2^f`): `b1.P = [M00]·b2.P + [M10]·b2.Q`
 /// and `b1.Q = [M01]·b2.P + [M11]·b2.Q` (all mod `2^f`). The transpose-column
 /// layout matches C `change_of_basis_matrix_tate` so that
-/// [`crate::isogeny::endomorphism::matrix_application_even_basis`] applied with
+/// `matrix_application_even_basis` applied with
 /// `M` reconstructs `b1` from `b2`.
 ///
 /// Computed from Weil pairings (the matrix is pairing-independent, so this
@@ -847,7 +846,8 @@ pub fn protocols_verify(sig_bytes: &[u8], pk_bytes: &[u8], message: &[u8]) -> bo
 
     // 1. Canonical basis-change matrix.
     if !check_canonical_basis_change_matrix(&sig) {
-        std::eprintln!("VERIFY FAIL: 1 canonical_basis_change_matrix");
+        #[cfg(feature = "std")]
+        eprintln!("VERIFY FAIL: 1 canonical_basis_change_matrix");
         return false;
     }
     // 2. Length of the dim-2 isogeny; reject too-long / length-1 responses.
@@ -857,7 +857,8 @@ pub fn protocols_verify(sig_bytes: &[u8], pk_bytes: &[u8], message: &[u8]) -> bo
     };
     let pow = response - i64::from(sig.two_resp_length) - i64::from(sig.backtracking);
     if pow < 0 || pow == 1 {
-        std::eprintln!("VERIFY FAIL: 2 pow={pow}");
+        #[cfg(feature = "std")]
+        eprintln!("VERIFY FAIL: 2 pow={pow}");
         return false;
     }
     let pow = match usize::try_from(pow) {
@@ -866,7 +867,8 @@ pub fn protocols_verify(sig_bytes: &[u8], pk_bytes: &[u8], message: &[u8]) -> bo
     };
     // 3-4. Public and auxiliary curves must be valid Montgomery curves.
     if !ec_curve_verify_a(&pk.curve_a) || !ec_curve_verify_a(&sig.e_aux_a) {
-        std::eprintln!("VERIFY FAIL: 3-4 curve validity");
+        #[cfg(feature = "std")]
+        eprintln!("VERIFY FAIL: 3-4 curve validity");
         return false;
     }
     let e_pk = MontgomeryCurve::new(pk.curve_a);

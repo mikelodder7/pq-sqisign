@@ -70,16 +70,14 @@ impl<F: BaseField> AbelianVarietyPrecomputed<F> {
     /// Method-form alias of [`theta_precomputation`] — same body,
     /// same result. Use whichever spelling reads cleaner at the
     /// call site.
-    #[allow(dead_code)]
-    pub(crate) fn new(theta_null: &ThetaPoint2D<F>) -> Self {
+    pub fn new(theta_null: &ThetaPoint2D<F>) -> Self {
         theta_precomputation(theta_null)
     }
 
     /// Double a theta-coord point on this variety.
     ///
     /// Method-form alias of [`double_point`].
-    #[allow(dead_code)]
-    pub(crate) fn double_point(&self, p: &ThetaPoint2D<F>) -> ThetaPoint2D<F> {
+    pub fn double_point(&self, p: &ThetaPoint2D<F>) -> ThetaPoint2D<F> {
         double_point(self, p)
     }
 
@@ -87,8 +85,7 @@ impl<F: BaseField> AbelianVarietyPrecomputed<F> {
     /// returns `p` unchanged.
     ///
     /// Method-form alias of [`double_iter`].
-    #[allow(dead_code)]
-    pub(crate) fn double_iter(&self, p: &ThetaPoint2D<F>, exp: usize) -> ThetaPoint2D<F> {
+    pub fn double_iter(&self, p: &ThetaPoint2D<F>, exp: usize) -> ThetaPoint2D<F> {
         double_iter(self, p, exp)
     }
 }
@@ -125,7 +122,6 @@ impl<F: BaseField> AbelianVarietyPrecomputed<F> {
 /// [`AbelianVarietyPrecomputed::new`] is the method-form alias of this
 /// free function — same body, same result. Pick whichever spelling
 /// reads cleaner at the call site.
-#[allow(dead_code)]
 pub(crate) fn theta_precomputation<F: BaseField>(
     theta_null: &ThetaPoint2D<F>,
 ) -> AbelianVarietyPrecomputed<F> {
@@ -173,7 +169,6 @@ pub(crate) fn theta_precomputation<F: BaseField>(
 /// theta-structure's doubling map.
 ///
 /// Reference: `theta_structure.c:33-56`.
-#[allow(dead_code)]
 pub(crate) fn double_point<F: BaseField>(
     precomp: &AbelianVarietyPrecomputed<F>,
     p: &ThetaPoint2D<F>,
@@ -210,7 +205,6 @@ pub(crate) fn double_point<F: BaseField>(
 /// theta-coord group. `exp = 0` returns `in` unchanged.
 ///
 /// Reference: `theta_structure.c:58-69`.
-#[allow(dead_code)]
 pub(crate) fn double_iter<F: BaseField>(
     precomp: &AbelianVarietyPrecomputed<F>,
     p: &ThetaPoint2D<F>,
@@ -278,17 +272,9 @@ mod tests {
         let precomp = theta_precomputation(&theta_null);
 
         assert_eq!(precomp.dual_block.x, small_fp2(33611), "YZT0 = 33611");
-        assert_eq!(
-            precomp.dual_block.y,
-            neg_fp2(100833),
-            "XZT0 = -100833"
-        );
+        assert_eq!(precomp.dual_block.y, neg_fp2(100833), "XZT0 = -100833");
         assert_eq!(precomp.dual_block.z, neg_fp2(47937), "XYT0 = -47937");
-        assert_eq!(
-            precomp.dual_block.w,
-            small_fp2(153903),
-            "XYZ0 = 153903"
-        );
+        assert_eq!(precomp.dual_block.w, small_fp2(153903), "XYZ0 = 153903");
 
         assert_eq!(precomp.null_block.x, small_fp2(105), "yzt0 = 105");
         assert_eq!(precomp.null_block.y, small_fp2(70), "xzt0 = 70");

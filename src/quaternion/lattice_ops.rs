@@ -4,13 +4,12 @@
 //! Port of the C reference `src/quaternion/ref/generic/lattice.c`
 //! (`quat_lattice_*`). Unlike the C reference — which works in standard
 //! `(1, i, j, k)` coordinates — these operate in the `O_0`-basis coordinates
-//! that the rest of the Rust quaternion module uses ([`LeftIdeal`]'s `basis`),
-//! so conjugation uses [`o0_conjugate`](crate::quaternion::o0_mul::o0_conjugate)
+//! that the rest of the Rust quaternion module uses ([`crate::quaternion::ideal::LeftIdeal`]'s `basis`),
+//! so conjugation uses [`crate::quaternion::o0_mul::o0_conjugate`]
 //! and the reduced-norm Gram form is
-//! [`o0_reduced_norm_gram_matrix`](crate::quaternion::o0_mul::o0_reduced_norm_gram_matrix).
+//! [`crate::quaternion::o0_mul::o0_reduced_norm_gram_matrix`].
 //! The dual/sum/intersection are pure `Z`-module operations and are
 //! coordinate-system independent given a consistent basis.
-#![allow(dead_code)]
 
 use crate::quaternion::extremal_orders::adjugate_with_det;
 use crate::quaternion::o0_mul::o0_conjugate;

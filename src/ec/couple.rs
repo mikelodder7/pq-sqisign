@@ -1602,10 +1602,7 @@ mod tests {
         let r = kernel.double_iter(0, &curves);
         assert_eq!(r.t1, inf, "double_iter(0).t1 = identity");
         assert_eq!(r.t2, inf, "double_iter(0).t2 = identity");
-        assert_eq!(
-            r.t1_minus_t2, inf,
-            "double_iter(0).t1_minus_t2 = identity"
-        );
+        assert_eq!(r.t1_minus_t2, inf, "double_iter(0).t1_minus_t2 = identity");
     }
 
     #[test]
@@ -1634,16 +1631,8 @@ mod tests {
 
         for n in [1u32, 2, 3] {
             let r = kernel.double_iter(n, &curves);
-            assert_eq!(
-                r.t1,
-                t1.double_iter(n, &curves),
-                "t1 matches per-field"
-            );
-            assert_eq!(
-                r.t2,
-                t2.double_iter(n, &curves),
-                "t2 matches per-field"
-            );
+            assert_eq!(r.t1, t1.double_iter(n, &curves), "t1 matches per-field");
+            assert_eq!(r.t2, t2.double_iter(n, &curves), "t2 matches per-field");
             assert_eq!(
                 r.t1_minus_t2,
                 t1m2.double_iter(n, &curves),
@@ -1680,10 +1669,7 @@ mod tests {
     fn couple_curve_is_e0_e0_true_for_e0_e0_at_lvl1() {
         use crate::gf::fp::Fp1Element;
         let cc = CoupleCurve::<Fp1Element>::e0_e0();
-        assert!(
-            bool::from(cc.is_e0_e0()),
-            "e0_e0().is_e0_e0() must be TRUE",
-        );
+        assert!(bool::from(cc.is_e0_e0()), "e0_e0().is_e0_e0() must be TRUE",);
     }
 
     #[test]
@@ -1830,14 +1816,8 @@ mod tests {
         );
         let r = p.ladder(&[0u8], &a24, &a24);
 
-        assert!(
-            bool::from(r.p1.is_infinity()),
-            "0 · P_1 must be infinity",
-        );
-        assert!(
-            bool::from(r.p2.is_infinity()),
-            "0 · P_2 must be infinity",
-        );
+        assert!(bool::from(r.p1.is_infinity()), "0 · P_1 must be infinity",);
+        assert!(bool::from(r.p2.is_infinity()), "0 · P_2 must be infinity",);
     }
 
     /// confirm componentwise ladder matches per-half ladder
@@ -2018,9 +1998,6 @@ mod tests {
 
         assert_eq!(kernel.t1, t1, "kernel.t1 preserved");
         assert_eq!(kernel.t2, t2, "kernel.t2 preserved");
-        assert_eq!(
-            kernel.t1_minus_t2, t1m2,
-            "kernel.t1_minus_t2 preserved"
-        );
+        assert_eq!(kernel.t1_minus_t2, t1m2, "kernel.t1_minus_t2 preserved");
     }
 }

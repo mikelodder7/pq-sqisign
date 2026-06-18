@@ -281,10 +281,7 @@ mod tests {
         let single = TwoIsogeny::new(&kernel);
         let lhs = chain.codomain.a24.mul(&single.codomain.c24);
         let rhs = single.codomain.a24.mul(&chain.codomain.c24);
-        assert_eq!(
-            lhs, rhs,
-            "chain length-1 must match single-step codomain",
-        );
+        assert_eq!(lhs, rhs, "chain length-1 must match single-step codomain",);
         assert_eq!(chain.steps.len(), 1, "chain.steps.len() must equal 1");
     }
 

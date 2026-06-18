@@ -575,7 +575,10 @@ impl<F: BaseField> PublicKey<F> {
 
 #[cfg(feature = "serde")]
 impl<F: BaseField> serde::Serialize for PublicKey<F> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> core::result::Result<S::Ok, S::Error> {
         let mut buf = alloc::vec![0u8; Self::WIRE_BYTES];
         // `encode` cannot fail here (buffer is exactly WIRE_BYTES); map defensively.
         self.encode(&mut buf)
@@ -586,7 +589,9 @@ impl<F: BaseField> serde::Serialize for PublicKey<F> {
 
 #[cfg(feature = "serde")]
 impl<'de, F: BaseField> serde::Deserialize<'de> for PublicKey<F> {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> core::result::Result<Self, D::Error> {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> core::result::Result<Self, D::Error> {
         let bytes = serdect::slice::deserialize_hex_or_bin_vec(deserializer)?;
         Self::decode(&bytes)
             .map_err(|_| <D::Error as serde::de::Error>::custom("invalid public key bytes"))
@@ -595,14 +600,19 @@ impl<'de, F: BaseField> serde::Deserialize<'de> for PublicKey<F> {
 
 #[cfg(feature = "serde")]
 impl<const N: usize> serde::Serialize for SecretKey<N> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> core::result::Result<S::Ok, S::Error> {
         serdect::array::serialize_hex_lower_or_bin(&self.bytes, serializer)
     }
 }
 
 #[cfg(feature = "serde")]
 impl<'de, const N: usize> serde::Deserialize<'de> for SecretKey<N> {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> core::result::Result<Self, D::Error> {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> core::result::Result<Self, D::Error> {
         let mut bytes = [0u8; N];
         serdect::array::deserialize_hex_or_bin(&mut bytes, deserializer)?;
         Ok(Self { bytes })
@@ -611,14 +621,19 @@ impl<'de, const N: usize> serde::Deserialize<'de> for SecretKey<N> {
 
 #[cfg(feature = "serde")]
 impl<const N: usize> serde::Serialize for Signature<N> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> core::result::Result<S::Ok, S::Error> {
         serdect::array::serialize_hex_lower_or_bin(&self.bytes, serializer)
     }
 }
 
 #[cfg(feature = "serde")]
 impl<'de, const N: usize> serde::Deserialize<'de> for Signature<N> {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> core::result::Result<Self, D::Error> {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> core::result::Result<Self, D::Error> {
         let mut bytes = [0u8; N];
         serdect::array::deserialize_hex_or_bin(&mut bytes, deserializer)?;
         Ok(Self { bytes })
@@ -733,11 +748,7 @@ mod tests {
         sk.encode(&mut out).expect("encode must succeed");
         let sk2 = SecretKeyLvl1::decode(&out).expect("decode must succeed");
         assert_eq!(sk, sk2, "SecretKeyLvl1 round-trip must preserve");
-        assert_eq!(
-            sk.as_bytes(),
-            &bytes,
-            "as_bytes must match construction"
-        );
+        assert_eq!(sk.as_bytes(), &bytes, "as_bytes must match construction");
     }
 
     #[test]
@@ -826,11 +837,7 @@ mod tests {
         sig.encode(&mut out).expect("encode must succeed");
         let sig2 = SignatureLvl1::decode(&out).expect("decode must succeed");
         assert_eq!(sig, sig2, "SignatureLvl1 round-trip must preserve");
-        assert_eq!(
-            sig.as_bytes(),
-            &bytes,
-            "as_bytes must match construction"
-        );
+        assert_eq!(sig.as_bytes(), &bytes, "as_bytes must match construction");
     }
 
     #[test]
@@ -1119,13 +1126,9 @@ mod tests {
         let mut rng = make_rng(b"S118-sk-rand-roundtrip");
         let sk = SecretKeyLvl1::random(&mut rng);
         let mut out = [0u8; 353];
-        sk.encode(&mut out)
-            .expect("encode random SK must succeed");
+        sk.encode(&mut out).expect("encode random SK must succeed");
         let sk2 = SecretKeyLvl1::decode(&out).expect("decode must succeed");
-        assert_eq!(
-            sk, sk2,
-            "random SK must round-trip through encode/decode",
-        );
+        assert_eq!(sk, sk2, "random SK must round-trip through encode/decode",);
     }
 
     #[test]
@@ -1209,12 +1212,8 @@ mod tests {
         let mut buf = [0u8; KeyPairLvl1::WIRE_BYTES];
         kp.to_bytes_combined(&mut buf)
             .expect("encode_combined must succeed");
-        let kp2 =
-            KeyPairLvl1::from_bytes_combined(&buf).expect("decode_combined must succeed");
-        assert_eq!(
-            kp, kp2,
-            "KeyPair combined round-trip must preserve at lvl1",
-        );
+        let kp2 = KeyPairLvl1::from_bytes_combined(&buf).expect("decode_combined must succeed");
+        assert_eq!(kp, kp2, "KeyPair combined round-trip must preserve at lvl1",);
     }
 
     #[test]
@@ -1227,12 +1226,9 @@ mod tests {
         let mut buf = [0u8; KeyPairLvl3::WIRE_BYTES];
         kp.to_bytes_combined(&mut buf)
             .expect("encode_combined must succeed at lvl3");
-        let kp2 = KeyPairLvl3::from_bytes_combined(&buf)
-            .expect("decode_combined must succeed at lvl3");
-        assert_eq!(
-            kp, kp2,
-            "KeyPair combined round-trip must preserve at lvl3",
-        );
+        let kp2 =
+            KeyPairLvl3::from_bytes_combined(&buf).expect("decode_combined must succeed at lvl3");
+        assert_eq!(kp, kp2, "KeyPair combined round-trip must preserve at lvl3",);
     }
 
     #[test]
@@ -1245,12 +1241,9 @@ mod tests {
         let mut buf = [0u8; KeyPairLvl5::WIRE_BYTES];
         kp.to_bytes_combined(&mut buf)
             .expect("encode_combined must succeed at lvl5");
-        let kp2 = KeyPairLvl5::from_bytes_combined(&buf)
-            .expect("decode_combined must succeed at lvl5");
-        assert_eq!(
-            kp, kp2,
-            "KeyPair combined round-trip must preserve at lvl5",
-        );
+        let kp2 =
+            KeyPairLvl5::from_bytes_combined(&buf).expect("decode_combined must succeed at lvl5");
+        assert_eq!(kp, kp2, "KeyPair combined round-trip must preserve at lvl5",);
     }
 
     #[test]
@@ -1302,11 +1295,7 @@ mod tests {
         let sk_copy_bytes = sk.bytes;
         let kp = KeyPairLvl1::new(pk, sk);
         assert_eq!(kp.public_key().reserved, 0x42, "pk accessor");
-        assert_eq!(
-            kp.secret_key().as_bytes(),
-            &sk_copy_bytes,
-            "sk accessor",
-        );
+        assert_eq!(kp.secret_key().as_bytes(), &sk_copy_bytes, "sk accessor",);
     }
 
     // ── security hardening: redacted Debug impls ──

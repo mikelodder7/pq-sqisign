@@ -19,7 +19,6 @@ use crypto_bigint::{Int, Uint};
 use crate::quaternion::Quaternion;
 
 /// An alternate extremal maximal order (the C `quat_p_extremal_maximal_order_t`).
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct AltExtremalOrder {
     /// Order lattice basis, std coords, column-major `basis[i][j]`.
@@ -46,7 +45,6 @@ pub struct AltExtremalOrder {
 /// `quat_lattice_O0_set`: `basis[0][0]=2, basis[1][1]=2, basis[2][2]=1,
 /// basis[1][2]=1, basis[3][3]=1, basis[0][3]=1` — i.e. `O_0 = ⟨1, i, (i+j)/2,
 /// (1+ij)/2⟩`.
-#[allow(dead_code)]
 pub fn standard_order_o0_l1() -> AltExtremalOrder {
     let n = |x: i64| Int::<8>::from_i64(x);
     AltExtremalOrder {
@@ -67,7 +65,6 @@ pub fn standard_order_o0_l1() -> AltExtremalOrder {
 }
 
 /// Alternate extremal order 0 (C `EXTREMAL_ORDERS[1]`), q = 5.
-#[allow(dead_code)]
 pub fn alternate_extremal_order_0_l1() -> AltExtremalOrder {
     AltExtremalOrder {
         order_basis: [
@@ -136,7 +133,6 @@ pub fn alternate_extremal_order_0_l1() -> AltExtremalOrder {
 }
 
 /// Alternate extremal order 1 (C `EXTREMAL_ORDERS[2]`), q = 17.
-#[allow(dead_code)]
 pub fn alternate_extremal_order_1_l1() -> AltExtremalOrder {
     AltExtremalOrder {
         order_basis: [
@@ -276,7 +272,6 @@ pub fn alternate_extremal_order_1_l1() -> AltExtremalOrder {
 }
 
 /// Alternate extremal order 2 (C `EXTREMAL_ORDERS[3]`), q = 37.
-#[allow(dead_code)]
 pub fn alternate_extremal_order_2_l1() -> AltExtremalOrder {
     AltExtremalOrder {
         order_basis: [
@@ -417,7 +412,6 @@ pub fn alternate_extremal_order_2_l1() -> AltExtremalOrder {
 }
 
 /// Alternate extremal order 3 (C `EXTREMAL_ORDERS[4]`), q = 41.
-#[allow(dead_code)]
 pub fn alternate_extremal_order_3_l1() -> AltExtremalOrder {
     AltExtremalOrder {
         order_basis: [
@@ -560,7 +554,6 @@ pub fn alternate_extremal_order_3_l1() -> AltExtremalOrder {
 }
 
 /// Alternate extremal order 4 (C `EXTREMAL_ORDERS[5]`), q = 53.
-#[allow(dead_code)]
 pub fn alternate_extremal_order_4_l1() -> AltExtremalOrder {
     AltExtremalOrder {
         order_basis: [
@@ -701,7 +694,6 @@ pub fn alternate_extremal_order_4_l1() -> AltExtremalOrder {
 }
 
 /// Alternate extremal order 5 (C `EXTREMAL_ORDERS[6]`), q = 97.
-#[allow(dead_code)]
 pub fn alternate_extremal_order_5_l1() -> AltExtremalOrder {
     AltExtremalOrder {
         order_basis: [
@@ -997,7 +989,6 @@ pub fn alt_order_coords_of(
 /// Decompose `θ` over an alternate extremal order's basis into a primitive
 /// coordinate vector and its content (gcd) — the C `quat_alg_make_primitive`
 /// over `EXTREMAL_ORDERS[index].order`. Returns `None` if `θ ∉ order`.
-#[allow(dead_code)]
 pub fn make_primitive_over_alt_order(
     order: &AltExtremalOrder,
     theta: &Quaternion<8>,

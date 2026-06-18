@@ -668,10 +668,7 @@ mod tests {
     fn fp2_is_one_false_for_two_at_lvl1() {
         let one_v = Fp2::<Fp1Element>::one();
         let two = one_v.add(&one_v);
-        assert!(
-            !bool::from(two.is_one()),
-            "2 ≠ 1; is_one must be FALSE",
-        );
+        assert!(!bool::from(two.is_one()), "2 ≠ 1; is_one must be FALSE",);
     }
 
     // Fp2::is_neg_one predicate tests.
@@ -710,10 +707,7 @@ mod tests {
         let one_v = Fp2::<Fp1Element>::one();
         let neg_one = one_v.negate();
         let double_neg = neg_one.negate();
-        assert!(
-            bool::from(neg_one.is_neg_one()),
-            "negate(1) is_neg_one",
-        );
+        assert!(bool::from(neg_one.is_neg_one()), "negate(1) is_neg_one",);
         assert!(
             bool::from(double_neg.is_one()),
             "negate(negate(1)) is_one (round-trip)",

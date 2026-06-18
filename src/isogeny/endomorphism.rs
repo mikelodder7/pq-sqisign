@@ -37,7 +37,6 @@ fn fp2_mont(re: [u64; 4], im: [u64; 4]) -> Fp2<Fp1Element> {
 /// VERBATIM from `CURVES_WITH_ENDOMORPHISMS[0].basis_even`
 /// (endomorphism_action.c) — also exposed there as `BASIS_E0_PX`/`BASIS_E0_QX`
 /// (e0_basis.c). All three points are affine (`z = 1`).
-#[allow(dead_code)]
 pub(crate) fn basis_e0_lvl1() -> (
     MontgomeryPoint<Fp1Element>,
     MontgomeryPoint<Fp1Element>,
@@ -112,7 +111,6 @@ pub(crate) fn basis_e0_lvl1() -> (
 // ---------------------------------------------------------------------------
 
 /// `action_i` = action of the quaternion `i` (== `action_gen2`).
-#[allow(dead_code)]
 const ACTION_I: [[[u64; 4]; 2]; 2] = [
     [
         [
@@ -145,7 +143,6 @@ const ACTION_I: [[[u64; 4]; 2]; 2] = [
 ];
 
 /// `action_gen3` = action of the O0 generator `(i + j)/2`.
-#[allow(dead_code)]
 const ACTION_GEN3: [[[u64; 4]; 2]; 2] = [
     [
         [
@@ -178,7 +175,6 @@ const ACTION_GEN3: [[[u64; 4]; 2]; 2] = [
 ];
 
 /// `action_gen4` = action of the O0 generator `(1 + k)/2`.
-#[allow(dead_code)]
 const ACTION_GEN4: [[[u64; 4]; 2]; 2] = [
     [
         [
@@ -230,7 +226,6 @@ fn sub_mod_2f(a: &U256, b: &U256, f: usize) -> U256 {
 /// Port of the C reference `matrix_application_even_basis` (id2iso.c). `a24` is
 /// the affine doubling constant `(A + 2)/4`. Returns `None` if any biladder
 /// fails. `m` entries are taken mod `2^f`.
-#[allow(dead_code)]
 pub(crate) fn matrix_application_even_basis(
     p: &MontgomeryPoint<Fp1Element>,
     q: &MontgomeryPoint<Fp1Element>,
@@ -313,7 +308,6 @@ fn mat2x2_inv_mod_2f(m: &[[U256; 2]; 2], f: usize) -> Option<[[U256; 2]; 2]> {
 /// `2^f`. Built at internal width 24 (the norm-`2^f` ideal's `det_4x4` reaches
 /// ~`2^(4f/... )` and overflows narrow widths), returned at `LeftIdeal<16>`.
 /// Returns `None` if the basis matrix is singular mod `2^f`. lvl1-pinned.
-#[allow(dead_code)]
 pub(crate) fn id2iso_kernel_dlogs_to_ideal_even(
     vec2: &[U256; 2],
     f: usize,
@@ -398,7 +392,6 @@ pub(crate) fn id2iso_kernel_dlogs_to_ideal_even(
 /// `vec = sk.mat_BAcan_to_BA0_two · [1, chall_coeff]` over `E0`'s canonical
 /// basis, whose `id2iso_kernel_dlogs_to_ideal_even` is the (norm-`2^f`) challenge
 /// ideal. lvl1-pinned (`f = TORSION_EVEN_POWER = 248`).
-#[allow(dead_code)]
 pub(crate) fn compute_challenge_ideal_signature(
     mat_bacan_to_ba0_two: &[[U256; 2]; 2],
     chall_coeff: &U256,
@@ -420,7 +413,6 @@ pub(crate) fn compute_challenge_ideal_signature(
 /// `2^f`-torsion (`coeffs0·I + coeffs1·GEN2 + coeffs2·GEN3 + coeffs3·GEN4` where
 /// `coeffs = conj(gen)` in O_0-coords), then read a primitive kernel column mod
 /// `2^f`. Returns `[v0, v1]` with `ker = v0·B0[0] + v1·B0[1]`.
-#[allow(dead_code)]
 pub(crate) fn id2iso_ideal_to_kernel_dlogs_even<const LIMBS: usize>(
     gen_q: &[crypto_bigint::Int<LIMBS>; 4],
     f: usize,
@@ -504,7 +496,6 @@ fn int_to_mod_2f<const L: usize>(x: &crypto_bigint::Int<L>, f: usize) -> U256 {
 /// `GEN2 == ACTION_I` (the O0 generator at index 1 is `i`); `GEN3`/`GEN4` are
 /// `(i+j)/2` and `(1+k)/2`. `a24 = (A+2)/4`. Returns `None` if a biladder
 /// fails.
-#[allow(dead_code)]
 pub(crate) fn endomorphism_application_even_basis<const L: usize>(
     p: &MontgomeryPoint<Fp1Element>,
     q: &MontgomeryPoint<Fp1Element>,
@@ -524,7 +515,6 @@ pub(crate) fn endomorphism_application_even_basis<const L: usize>(
 /// Same as [`endomorphism_application_even_basis`] but takes the endomorphism
 /// already in `O_0`-basis coordinates (the form `RepresentInteger` returns),
 /// skipping the standard→O_0 conversion.
-#[allow(dead_code)]
 pub(crate) fn endomorphism_application_o0_coords<const L: usize>(
     p: &MontgomeryPoint<Fp1Element>,
     q: &MontgomeryPoint<Fp1Element>,

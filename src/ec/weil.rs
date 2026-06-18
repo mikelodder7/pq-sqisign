@@ -29,8 +29,6 @@
 //! SQIsign C reference calls `weil(..., basis.PmQ, ...)`, i.e. it
 //! passes `x(P - Q)`; callers matching the reference should do the same.
 
-#![allow(dead_code)]
-
 use crate::ec::montgomery::{MontgomeryCurve, MontgomeryPoint};
 use crate::gf::fp::BaseField;
 use crate::gf::fp2::Fp2;
@@ -53,28 +51,6 @@ struct PairingParams<F: BaseField> {
     ix_q: Fp2<F>,
     /// `((A + 2) / 4 : 1)`.
     a24: MontgomeryPoint<F>,
-}
-
-/// Cubical addition. With `ix_pq = 1/x(P - Q)` (the differential given
-/// in inverted form), this is the cubical analogue of `xADD`.
-/// Cost: 3M + 2S.
-fn cubical_add<F: BaseField>(
-    p: &MontgomeryPoint<F>,
-    q: &MontgomeryPoint<F>,
-    ix_pq: &Fp2<F>,
-) -> MontgomeryPoint<F> {
-    let t0 = p.x.add(&p.z);
-    let t1 = p.x.sub(&p.z);
-    let t2 = q.x.add(&q.z);
-    let t3 = q.x.sub(&q.z);
-    let t0 = t0.mul(&t3);
-    let t1 = t1.mul(&t2);
-    let t2 = t0.add(&t1);
-    let t3 = t0.sub(&t1);
-    let r_z = t3.square();
-    let t2 = t2.square();
-    let r_x = ix_pq.mul(&t2);
-    MontgomeryPoint::new(r_x, r_z)
 }
 
 /// Combined cubical add and double: given cubical reps of `P`, `Q` and

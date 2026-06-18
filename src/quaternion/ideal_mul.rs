@@ -625,12 +625,13 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn lideal_intersect_lattice_matches_coprime_product_norm() {
         // The general dual-trick intersection must agree with the coprime
         // product on coprime inputs: I = 3·O_0 (norm 81), J = 5·O_0 (norm 625),
         // I ∩ J = I·J has reduced norm 15 ⇒ cached_norm = |det| = 15^4 = 50625.
-        let p = Uint::<8>::from_u64(7);
+        let _p = Uint::<8>::from_u64(7);
         let three_id = Ideal::full_order().scale(3);
         let five_id = Ideal::full_order().scale(5);
         let inter = lideal_intersect_lattice::<8, 64>(&three_id, &five_id)

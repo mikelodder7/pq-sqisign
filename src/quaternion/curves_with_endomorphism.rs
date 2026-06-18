@@ -73,7 +73,6 @@ fn iw(words: [u64; 8]) -> Int<8> {
 }
 
 /// NICE curve 0 (C `CURVES_WITH_ENDOMORPHISMS[1]`).
-#[allow(dead_code)]
 pub fn curve_with_endomorphism_0_l1() -> CurveWithEndomorphism {
     CurveWithEndomorphism {
         curve_a: fp2_be(
@@ -388,7 +387,6 @@ pub fn curve_with_endomorphism_0_l1() -> CurveWithEndomorphism {
 }
 
 /// NICE curve 1 (C `CURVES_WITH_ENDOMORPHISMS[2]`).
-#[allow(dead_code)]
 pub fn curve_with_endomorphism_1_l1() -> CurveWithEndomorphism {
     CurveWithEndomorphism {
         curve_a: fp2_be(
@@ -703,7 +701,6 @@ pub fn curve_with_endomorphism_1_l1() -> CurveWithEndomorphism {
 }
 
 /// NICE curve 2 (C `CURVES_WITH_ENDOMORPHISMS[3]`).
-#[allow(dead_code)]
 pub fn curve_with_endomorphism_2_l1() -> CurveWithEndomorphism {
     CurveWithEndomorphism {
         curve_a: fp2_be(
@@ -1018,7 +1015,6 @@ pub fn curve_with_endomorphism_2_l1() -> CurveWithEndomorphism {
 }
 
 /// NICE curve 3 (C `CURVES_WITH_ENDOMORPHISMS[4]`).
-#[allow(dead_code)]
 pub fn curve_with_endomorphism_3_l1() -> CurveWithEndomorphism {
     CurveWithEndomorphism {
         curve_a: fp2_be(
@@ -1333,7 +1329,6 @@ pub fn curve_with_endomorphism_3_l1() -> CurveWithEndomorphism {
 }
 
 /// NICE curve 4 (C `CURVES_WITH_ENDOMORPHISMS[5]`).
-#[allow(dead_code)]
 pub fn curve_with_endomorphism_4_l1() -> CurveWithEndomorphism {
     CurveWithEndomorphism {
         curve_a: fp2_be(
@@ -1648,7 +1643,6 @@ pub fn curve_with_endomorphism_4_l1() -> CurveWithEndomorphism {
 }
 
 /// NICE curve 5 (C `CURVES_WITH_ENDOMORPHISMS[6]`).
-#[allow(dead_code)]
 pub fn curve_with_endomorphism_5_l1() -> CurveWithEndomorphism {
     CurveWithEndomorphism {
         curve_a: fp2_be(
@@ -1964,7 +1958,6 @@ pub fn curve_with_endomorphism_5_l1() -> CurveWithEndomorphism {
 
 /// The standard curve E0 entry (C `CURVES_WITH_ENDOMORPHISMS[0]`) — used to
 /// validate the extraction (A=0, C=1).
-#[allow(dead_code)]
 pub fn curve_with_endomorphism_e0_l1() -> CurveWithEndomorphism {
     CurveWithEndomorphism {
         curve_a: fp2_be(

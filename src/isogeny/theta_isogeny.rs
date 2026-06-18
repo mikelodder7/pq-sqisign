@@ -113,8 +113,7 @@ impl<F: BaseField> ThetaIsogeny<F> {
     /// Method-form alias of [`theta_isogeny_compute`] — same body,
     /// same result, same `Result<Self, ThetaIsogenyError>` failure
     /// modes (`DegenerateFactor` or `VerifyFailed`).
-    #[allow(dead_code)]
-    pub(crate) fn compute(
+    pub fn compute(
         domain: &AbelianVariety2D<F>,
         t1_8: &ThetaPoint2D<F>,
         t2_8: &ThetaPoint2D<F>,
@@ -131,8 +130,7 @@ impl<F: BaseField> ThetaIsogeny<F> {
     /// `phi.eval(&p)` spelling reads more directly than
     /// `theta_isogeny_eval(&phi, &p)` for chain-walker call sites
     /// that thread the isogeny through many points.
-    #[allow(dead_code)]
-    pub(crate) fn eval(&self, p: &ThetaPoint2D<F>) -> ThetaPoint2D<F> {
+    pub fn eval(&self, p: &ThetaPoint2D<F>) -> ThetaPoint2D<F> {
         theta_isogeny_eval(self, p)
     }
 
@@ -142,8 +140,7 @@ impl<F: BaseField> ThetaIsogeny<F> {
     /// Method-form alias of [`theta_isogeny_compute_4`]. Constructor
     /// for the 4-torsion variant; uses two `Fp2` square roots internally
     /// (returns `Err(SquareRootNotInField)` on QR failure).
-    #[allow(dead_code)]
-    pub(crate) fn compute_4(
+    pub fn compute_4(
         domain: &AbelianVariety2D<F>,
         t1_4: &ThetaPoint2D<F>,
         t2_4: &ThetaPoint2D<F>,
@@ -159,8 +156,7 @@ impl<F: BaseField> ThetaIsogeny<F> {
     /// Method-form alias of [`theta_isogeny_compute_2`]. Uses three
     /// `Fp2` square roots internally (returns
     /// `Err(SquareRootNotInField)` on QR failure).
-    #[allow(dead_code)]
-    pub(crate) fn compute_2(
+    pub fn compute_2(
         domain: &AbelianVariety2D<F>,
         t1_2: &ThetaPoint2D<F>,
         t2_2: &ThetaPoint2D<F>,
@@ -228,7 +224,6 @@ impl<F: BaseField> ThetaIsogeny<F> {
 /// structurally guaranteed coherent (e.g., previously verified upstream).
 ///
 /// Reference: `theta_isogenies.c:618-696`.
-#[allow(dead_code)]
 pub(crate) fn theta_isogeny_compute<F: BaseField>(
     domain: &AbelianVariety2D<F>,
     t1_8: &ThetaPoint2D<F>,
@@ -345,7 +340,6 @@ pub(crate) fn theta_isogeny_compute<F: BaseField>(
 /// scaling) but possibly KAT-incompatible. **Resolution deferred
 /// to chain-integration session** when a C-reference KAT vector
 /// becomes available for direct comparison.
-#[allow(dead_code)]
 fn sqrt_of_product<F: BaseField>(a: &Fp2<F>, b: &Fp2<F>) -> Result<Fp2<F>, ThetaIsogenyError> {
     a.mul(b)
         .sqrt()
@@ -372,7 +366,6 @@ fn sqrt_of_product<F: BaseField>(a: &Fp2<F>, b: &Fp2<F>) -> Result<Fp2<F>, Theta
 /// controls the output convention.
 ///
 /// Reference: `theta_isogenies.c:714-786`.
-#[allow(dead_code)]
 pub(crate) fn theta_isogeny_compute_4<F: BaseField>(
     domain: &AbelianVariety2D<F>,
     t1_4: &ThetaPoint2D<F>,
@@ -506,7 +499,6 @@ pub(crate) fn theta_isogeny_compute_4<F: BaseField>(
 /// `out->T1_8 = *T1_2; out->T2_8 = *T2_2` storage pattern.
 ///
 /// Reference: `theta_isogenies.c:803-853`.
-#[allow(dead_code)]
 pub(crate) fn theta_isogeny_compute_2<F: BaseField>(
     domain: &AbelianVariety2D<F>,
     t1_2: &ThetaPoint2D<F>,
@@ -609,7 +601,6 @@ pub(crate) fn theta_isogeny_compute_2<F: BaseField>(
 /// eval time (i.e., the same `ThetaIsogeny` is used for both).
 ///
 /// Reference: `theta_isogenies.c:theta_isogeny_eval`.
-#[allow(dead_code)]
 pub(crate) fn theta_isogeny_eval<F: BaseField>(
     phi: &ThetaIsogeny<F>,
     p: &ThetaPoint2D<F>,
@@ -868,26 +859,10 @@ mod tests {
 
         let r = theta_isogeny_eval(&phi, &p);
 
-        assert_eq!(
-            r.x,
-            small_fp2(240),
-            "input-hadamard out.x = 120 · 2 = 240"
-        );
-        assert_eq!(
-            r.y,
-            small_fp2(336),
-            "input-hadamard out.y = 112 · 3 = 336"
-        );
-        assert_eq!(
-            r.z,
-            small_fp2(440),
-            "input-hadamard out.z = 88 · 5 = 440"
-        );
-        assert_eq!(
-            r.w,
-            small_fp2(560),
-            "input-hadamard out.w = 80 · 7 = 560"
-        );
+        assert_eq!(r.x, small_fp2(240), "input-hadamard out.x = 120 · 2 = 240");
+        assert_eq!(r.y, small_fp2(336), "input-hadamard out.y = 112 · 3 = 336");
+        assert_eq!(r.z, small_fp2(440), "input-hadamard out.z = 88 · 5 = 440");
+        assert_eq!(r.w, small_fp2(560), "input-hadamard out.w = 80 · 7 = 560");
     }
 
     /// Oracle (true, true): input + output Hadamard both.

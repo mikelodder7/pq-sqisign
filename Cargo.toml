@@ -24,7 +24,9 @@ serde = ["dep:serdect", "dep:serde", "serdect/alloc", "alloc"]
 js = ["dep:getrandom", "getrandom/wasm_js"]
 # Test-only: NIST PQC AES-256-CTR_DRBG for KAT byte-exact reproduction.
 # Pulls in the `aes` dep. Production users provide their own CryptoRng.
-kat = ["dep:aes"]
+kat = ["dep:aes", "sign"]
+# Enables `signature` crate trait impls (Verifier, SignatureEncoding).
+signature = ["dep:signature", "vrfy", "alloc"]
 
 [dependencies]
 aes = { version = "0.9", default-features = false, optional = true }
@@ -37,8 +39,10 @@ hybrid-array = { version = "0.4", features = ["zeroize"] }
 serde = { version = "1", optional = true, default-features = false, features = ["derive"] }
 serdect = { version = "0.4", optional = true, default-features = false }
 getrandom = { version = "0.4", optional = true, default-features = false }
+signature = { version = "2", default-features = false, optional = true }
 
 [dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
 hex = "0.4"
 rand = "0.10"
 rand_chacha = "0.10"
@@ -48,6 +52,12 @@ serde_yaml = "0.9"
 toml = "0.8"
 ciborium = "0.2"
 postcard = { version = "1", features = ["alloc"] }
+
+[[bench]]
+name = "sqisign"
+path = "benches/sqisign.rs"
+harness = false
+required-features = ["kgen", "sign", "vrfy"]
 
 [[test]]
 name = "kat"

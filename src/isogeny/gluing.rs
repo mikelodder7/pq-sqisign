@@ -100,8 +100,7 @@ impl<F: BaseField> GluingCodomain<F> {
     ///
     /// Method-form alias of [`gluing_codomain`]. Same body, same
     /// `Result<Self, GluingError>` failure mode (`InvalidKernel`).
-    #[allow(dead_code)]
-    pub(crate) fn compute(
+    pub fn compute(
         domain: &CoupleCurve<F>,
         xy_k1_8: &CoupleJacobianPoint<F>,
         xy_k2_8: &CoupleJacobianPoint<F>,
@@ -114,8 +113,7 @@ impl<F: BaseField> GluingCodomain<F> {
     /// Method-form alias of [`gluing_eval_point`]. The
     /// `gluing.eval_point(&p)` spelling reads more directly than
     /// `gluing_eval_point(&gluing, &p)` for chain-walker call sites.
-    #[allow(dead_code)]
-    pub(crate) fn eval_point(&self, p: &CoupleJacobianPoint<F>) -> ThetaPoint2D<F> {
+    pub fn eval_point(&self, p: &CoupleJacobianPoint<F>) -> ThetaPoint2D<F> {
         gluing_eval_point(self, p)
     }
 
@@ -125,8 +123,7 @@ impl<F: BaseField> GluingCodomain<F> {
     /// Method-form alias of [`gluing_eval_point_special_case`].
     /// Returns `Err(InvalidKernel)` if the `T.w == 0` invariant
     /// after squared_theta fails.
-    #[allow(dead_code)]
-    pub(crate) fn eval_point_special_case(
+    pub fn eval_point_special_case(
         &self,
         p_xz: &CoupleMontgomeryPoint<F>,
     ) -> Result<ThetaPoint2D<F>, GluingError> {
@@ -138,8 +135,7 @@ impl<F: BaseField> GluingCodomain<F> {
     ///
     /// Method-form alias of [`gluing_eval_basis`]. Trivial 2-call
     /// wrapper internally.
-    #[allow(dead_code)]
-    pub(crate) fn eval_basis(
+    pub fn eval_basis(
         &self,
         xy_t1: &CoupleJacobianPoint<F>,
         xy_t2: &CoupleJacobianPoint<F>,
@@ -185,7 +181,6 @@ impl<F: BaseField> GluingCodomain<F> {
 /// Reference: `theta_isogenies.c:gluing_compute`, the
 /// "Projective factor" / "Compute the two components of phi(K1_8)"
 /// blocks following the isotropy check.
-#[allow(dead_code)]
 pub(crate) fn build_codomain_from_squared_theta<F: BaseField>(
     tt1: &ThetaPoint2D<F>,
     tt2: &ThetaPoint2D<F>,
@@ -253,7 +248,6 @@ pub(crate) fn build_codomain_from_squared_theta<F: BaseField>(
 /// of these failure modes without finer-grained diagnostics.
 ///
 /// Reference: `theta_isogenies.c:gluing_compute`.
-#[allow(dead_code)]
 pub(crate) fn gluing_codomain<F: BaseField>(
     domain: &CoupleCurve<F>,
     xy_k1_8: &CoupleJacobianPoint<F>,
@@ -423,7 +417,6 @@ pub(crate) fn gluing_codomain<F: BaseField>(
 /// constant-time. The bitwise combination preserves CT.
 ///
 /// Reference: `theta_isogenies.c:verify_two_torsion`.
-#[allow(dead_code)]
 pub(crate) fn verify_two_torsion<F: BaseField>(
     k1_2: &CoupleJacobianPoint<F>,
     k2_2: &CoupleJacobianPoint<F>,
@@ -504,7 +497,6 @@ pub(crate) struct TranslationMatrix<F: BaseField> {
 /// independent control flow. Per the S134 architectural analysis,
 /// callers on the secret path (signing, gluing-isogeny construction
 /// over a secret kernel) are expected.
-#[allow(dead_code)]
 pub(crate) fn batch_invert<F: BaseField, const N: usize>(values: &mut [Fp2<F>; N]) -> CtOption<()> {
     // Forward pass: scratch[i] = product of values[0..i].
     // We reuse `values` for the inverses on the backward pass, so
@@ -547,7 +539,6 @@ pub(crate) fn batch_invert<F: BaseField, const N: usize>(values: &mut [Fp2<F>; N
 /// each half of a [`crate::ec::couple::CoupleJacobianPoint`]).
 ///
 /// Reference: `theta_isogenies.c:action_by_translation_z_and_det`.
-#[allow(dead_code)]
 pub(crate) fn action_by_translation_z_and_det<F: BaseField>(
     p4: &MontgomeryPoint<F>,
     p2: &MontgomeryPoint<F>,
@@ -581,7 +572,6 @@ pub(crate) fn action_by_translation_z_and_det<F: BaseField>(
 /// wrong matrices.
 ///
 /// Reference: `theta_isogenies.c:action_by_translation_compute_matrix`.
-#[allow(dead_code)]
 pub(crate) fn action_by_translation_compute_matrix<F: BaseField>(
     p4: &MontgomeryPoint<F>,
     p2: &MontgomeryPoint<F>,
@@ -654,7 +644,6 @@ pub(crate) fn action_by_translation_compute_matrix<F: BaseField>(
 /// unspecified.
 ///
 /// Reference: `theta_isogenies.c:action_by_translation`.
-#[allow(dead_code)]
 pub(crate) fn action_by_translation<F: BaseField>(
     k1_4: &CoupleJacobianPoint<F>,
     k2_4: &CoupleJacobianPoint<F>,
@@ -723,9 +712,9 @@ pub(crate) fn action_by_translation<F: BaseField>(
 /// `pub(crate)` to permit test introspection but no constructor is
 /// exposed.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct BasisChangeMatrix<F: BaseField> {
+pub struct BasisChangeMatrix<F: BaseField> {
     /// Row-major `4 × 4` storage. `m[i][j]` is row `i`, column `j`.
-    pub(crate) m: [[Fp2<F>; 4]; 4],
+    pub m: [[Fp2<F>; 4]; 4],
 }
 
 impl<F: BaseField> BasisChangeMatrix<F> {
@@ -736,8 +725,7 @@ impl<F: BaseField> BasisChangeMatrix<F> {
     /// Useful as the initial accumulator value when composing a
     /// sequence of basis-change matrices along a chain-walker step:
     /// `acc = I; for m in steps { acc = acc.mul(&m); }`.
-    #[allow(dead_code)]
-    pub(crate) fn identity() -> Self {
+    pub fn identity() -> Self {
         let zero = Fp2::<F>::zero();
         let one = Fp2::<F>::one();
         Self {
@@ -757,8 +745,7 @@ impl<F: BaseField> BasisChangeMatrix<F> {
     /// equal to `0`. Entrywise constant-time via `Fp2`'s
     /// `ConstantTimeEq` (the iteration count is fixed at 16 cells,
     /// so the total comparison runs in fixed time).
-    #[allow(dead_code)]
-    pub(crate) fn is_identity(&self) -> Choice {
+    pub fn is_identity(&self) -> Choice {
         let zero = Fp2::<F>::zero();
         let one = Fp2::<F>::one();
         let mut acc = Choice::from(1u8);
@@ -777,8 +764,7 @@ impl<F: BaseField> BasisChangeMatrix<F> {
     /// [`crate::isogeny::splitting::base_change_matrix_multiplication`].
     /// Use whichever spelling reads cleaner at the call site;
     /// `lhs.mul(&rhs)` matches conventional matrix-algebra notation.
-    #[allow(dead_code)]
-    pub(crate) fn mul(&self, other: &Self) -> Self {
+    pub fn mul(&self, other: &Self) -> Self {
         crate::isogeny::splitting::base_change_matrix_multiplication(self, other)
     }
 
@@ -786,12 +772,11 @@ impl<F: BaseField> BasisChangeMatrix<F> {
     ///
     /// Returns `self` when `choice` is `Choice::FALSE`; returns
     /// `other` when `Choice::TRUE`. Entrywise CT via
-    /// [`Fp2::conditional_select`].
+    /// [`subtle::ConditionallySelectable::conditional_select`].
     ///
     /// Method-form alias of
     /// [`crate::isogeny::splitting::select_base_change_matrix`].
-    #[allow(dead_code)]
-    pub(crate) fn select(&self, other: &Self, choice: Choice) -> Self {
+    pub fn select(&self, other: &Self, choice: Choice) -> Self {
         crate::isogeny::splitting::select_base_change_matrix(self, other, choice)
     }
 }
@@ -824,7 +809,6 @@ impl<F: BaseField> BasisChangeMatrix<F> {
 /// Rust `.mul()`/`.add()` in the same order.
 ///
 /// Reference: `theta_isogenies.c:gluing_change_of_basis`.
-#[allow(dead_code)]
 pub(crate) fn gluing_change_of_basis<F: BaseField>(
     gi: &[TranslationMatrix<F>; 4],
 ) -> BasisChangeMatrix<F> {
@@ -925,7 +909,6 @@ pub(crate) fn gluing_change_of_basis<F: BaseField>(
 ///
 /// Reference: `theta_isogenies.c:apply_isomorphism` →
 /// `apply_isomorphism_general`.
-#[allow(dead_code)]
 pub(crate) fn apply_isomorphism<F: BaseField>(
     m: &BasisChangeMatrix<F>,
     p: &ThetaPoint2D<F>,
@@ -962,7 +945,6 @@ pub(crate) fn apply_isomorphism<F: BaseField>(
 /// isomorphism `M`.
 ///
 /// Reference: `theta_isogenies.c:base_change`.
-#[allow(dead_code)]
 pub(crate) fn base_change<F: BaseField>(
     m: &BasisChangeMatrix<F>,
     t: &CoupleMontgomeryPoint<F>,
@@ -1013,7 +995,6 @@ pub(crate) fn base_change<F: BaseField>(
 /// Reference: `theta_isogenies.c:gluing_compute` (the
 /// `if (!(fp2_is_zero(&TT1.t) & fp2_is_zero(&TT2.t)))` block + the
 /// subsequent "Test our projective factors are non zero" block).
-#[allow(dead_code)]
 pub(crate) fn isotropy_check<F: BaseField>(tt1: &ThetaPoint2D<F>, tt2: &ThetaPoint2D<F>) -> Choice {
     // Primary check: both `w` coordinates must be zero (the
     // geometry condition for the codomain to factor as a product).
@@ -1083,7 +1064,6 @@ pub(crate) fn isotropy_check<F: BaseField>(tt1: &ThetaPoint2D<F>, tt2: &ThetaPoi
 /// - `gluing` is a valid output of [`gluing_codomain`].
 ///
 /// Reference: `theta_isogenies.c:gluing_eval_point`.
-#[allow(dead_code)]
 pub(crate) fn gluing_eval_point<F: BaseField>(
     gluing: &GluingCodomain<F>,
     p: &CoupleJacobianPoint<F>,
@@ -1190,7 +1170,6 @@ pub(crate) fn gluing_eval_point<F: BaseField>(
 /// failure-on-malformed-input.
 ///
 /// Reference: `theta_isogenies.c:gluing_eval_point_special_case`.
-#[allow(dead_code)]
 pub(crate) fn gluing_eval_point_special_case<F: BaseField>(
     gluing: &GluingCodomain<F>,
     p_xz: &CoupleMontgomeryPoint<F>,
@@ -1227,7 +1206,6 @@ pub(crate) fn gluing_eval_point_special_case<F: BaseField>(
 /// pushing through the 2^e-torsion basis at gluing time.
 ///
 /// Reference: `theta_isogenies.c:gluing_eval_basis`.
-#[allow(dead_code)]
 pub(crate) fn gluing_eval_basis<F: BaseField>(
     gluing: &GluingCodomain<F>,
     xy_t1: &CoupleJacobianPoint<F>,
@@ -1834,42 +1812,27 @@ mod tests {
         // TT1.x = 0
         let (mut tt1, tt2) = valid_isotropy_pair::<Fp1Element>();
         tt1.x = Fp2::zero();
-        assert!(
-            !bool::from(isotropy_check(&tt1, &tt2)),
-            "TT1.x=0 must fail"
-        );
+        assert!(!bool::from(isotropy_check(&tt1, &tt2)), "TT1.x=0 must fail");
 
         // TT2.x = 0
         let (tt1, mut tt2) = valid_isotropy_pair::<Fp1Element>();
         tt2.x = Fp2::zero();
-        assert!(
-            !bool::from(isotropy_check(&tt1, &tt2)),
-            "TT2.x=0 must fail"
-        );
+        assert!(!bool::from(isotropy_check(&tt1, &tt2)), "TT2.x=0 must fail");
 
         // TT1.y = 0
         let (mut tt1, tt2) = valid_isotropy_pair::<Fp1Element>();
         tt1.y = Fp2::zero();
-        assert!(
-            !bool::from(isotropy_check(&tt1, &tt2)),
-            "TT1.y=0 must fail"
-        );
+        assert!(!bool::from(isotropy_check(&tt1, &tt2)), "TT1.y=0 must fail");
 
         // TT2.z = 0
         let (tt1, mut tt2) = valid_isotropy_pair::<Fp1Element>();
         tt2.z = Fp2::zero();
-        assert!(
-            !bool::from(isotropy_check(&tt1, &tt2)),
-            "TT2.z=0 must fail"
-        );
+        assert!(!bool::from(isotropy_check(&tt1, &tt2)), "TT2.z=0 must fail");
 
         // TT1.z = 0
         let (mut tt1, tt2) = valid_isotropy_pair::<Fp1Element>();
         tt1.z = Fp2::zero();
-        assert!(
-            !bool::from(isotropy_check(&tt1, &tt2)),
-            "TT1.z=0 must fail"
-        );
+        assert!(!bool::from(isotropy_check(&tt1, &tt2)), "TT1.z=0 must fail");
     }
 
     /// Critical asymmetry-preservation test. TT2.y is NOT in
@@ -2091,11 +2054,7 @@ mod tests {
         //   T2.y = 5·17 = 85
         //   T2.z = 7·13 = 91
         //   T2.w = 0
-        assert_eq!(
-            t1.x,
-            small_fp2::<Fp1Element>(98),
-            "T1.x = u1u2 + v1v2"
-        );
+        assert_eq!(t1.x, small_fp2::<Fp1Element>(98), "T1.x = u1u2 + v1v2");
         assert_eq!(t1.y, small_fp2::<Fp1Element>(51), "T1.y = u1·w2");
         assert_eq!(t1.z, small_fp2::<Fp1Element>(77), "T1.z = w1·u2");
         assert_eq!(t1.w, small_fp2::<Fp1Element>(119), "T1.w = w1·w2");
@@ -2246,38 +2205,14 @@ mod tests {
         let solo1 = gluing_eval_point(&gluing, &p1);
         let solo2 = gluing_eval_point(&gluing, &p2);
 
-        assert_eq!(
-            img1.x, solo1.x,
-            "basis output 1.x must match solo eval 1.x"
-        );
-        assert_eq!(
-            img1.y, solo1.y,
-            "basis output 1.y must match solo eval 1.y"
-        );
-        assert_eq!(
-            img1.z, solo1.z,
-            "basis output 1.z must match solo eval 1.z"
-        );
-        assert_eq!(
-            img1.w, solo1.w,
-            "basis output 1.w must match solo eval 1.w"
-        );
-        assert_eq!(
-            img2.x, solo2.x,
-            "basis output 2.x must match solo eval 2.x"
-        );
-        assert_eq!(
-            img2.y, solo2.y,
-            "basis output 2.y must match solo eval 2.y"
-        );
-        assert_eq!(
-            img2.z, solo2.z,
-            "basis output 2.z must match solo eval 2.z"
-        );
-        assert_eq!(
-            img2.w, solo2.w,
-            "basis output 2.w must match solo eval 2.w"
-        );
+        assert_eq!(img1.x, solo1.x, "basis output 1.x must match solo eval 1.x");
+        assert_eq!(img1.y, solo1.y, "basis output 1.y must match solo eval 1.y");
+        assert_eq!(img1.z, solo1.z, "basis output 1.z must match solo eval 1.z");
+        assert_eq!(img1.w, solo1.w, "basis output 1.w must match solo eval 1.w");
+        assert_eq!(img2.x, solo2.x, "basis output 2.x must match solo eval 2.x");
+        assert_eq!(img2.y, solo2.y, "basis output 2.y must match solo eval 2.y");
+        assert_eq!(img2.z, solo2.z, "basis output 2.z must match solo eval 2.z");
+        assert_eq!(img2.w, solo2.w, "basis output 2.w must match solo eval 2.w");
     }
 
     // GluingCodomain method-form alias tests.

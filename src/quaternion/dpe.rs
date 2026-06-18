@@ -104,13 +104,11 @@ fn ldexp(mant: f64, exp: i32) -> f64 {
 
 /// Double-plus-exponent float: value `mant · 2^exp`.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)] // float core; consumed by the LLL port that lands with set_z/get_z.
 pub struct Dpe {
     mant: f64,
     exp: i32,
 }
 
-#[allow(dead_code)]
 impl Dpe {
     /// `dpe_set_d`: from an `f64` (exp 0 then normalize).
     pub fn from_f64(y: f64) -> Self {

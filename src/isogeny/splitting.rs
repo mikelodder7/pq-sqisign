@@ -63,8 +63,7 @@ impl<F: BaseField> ThetaSplitting<F> {
     ///
     /// Method-form alias of [`splitting_compute`]. Constructor for
     /// the splitting state; delegates to [`splitting_compute`].
-    #[allow(dead_code)]
-    pub(crate) fn compute(
+    pub fn compute(
         domain: &AbelianVariety2D<F>,
         zero_index: Option<usize>,
         randomize: bool,
@@ -132,7 +131,6 @@ pub enum ExtractionError {
 /// Abelian surfaces in the (2,2)-theta model.
 ///
 /// Reference: `theta_structure.c:71-78` (`is_product_theta_point`).
-#[allow(dead_code)]
 pub(crate) fn is_product_theta_point<F: BaseField>(p: &ThetaPoint2D<F>) -> Choice {
     p.x.mul(&p.w).ct_eq(&p.y.mul(&p.z))
 }
@@ -166,7 +164,6 @@ pub(crate) fn is_product_theta_point<F: BaseField>(p: &ThetaPoint2D<F>) -> Choic
 /// Returns a [`CoupleCurve<F>`] of the two elliptic curves.
 ///
 /// Reference: `theta_isogenies.c:theta_product_structure_to_elliptic_product`.
-#[allow(dead_code)]
 pub(crate) fn theta_product_structure_to_elliptic_product<F: BaseField>(
     domain: &AbelianVariety2D<F>,
 ) -> Result<CoupleCurve<F>, ExtractionError> {
@@ -249,7 +246,6 @@ pub(crate) fn theta_product_structure_to_elliptic_product<F: BaseField>(
 /// response computation) and have their own CT discipline.
 ///
 /// Reference: `theta_isogenies.c:theta_point_to_montgomery_point`.
-#[allow(dead_code)]
 pub(crate) fn theta_point_to_montgomery_point<F: BaseField>(
     p: &ThetaPoint2D<F>,
     domain: &AbelianVariety2D<F>,
@@ -303,7 +299,6 @@ pub(crate) fn theta_point_to_montgomery_point<F: BaseField>(
 /// `SPLITTING_TRANSFORMS[i]` with the (signing-path) randomization
 /// matrix from `NORMALIZATION_TRANSFORMS`. Mirrors the C reference's
 /// `base_change_matrix_multiplication`.
-#[allow(dead_code)]
 pub(crate) fn base_change_matrix_multiplication<F: BaseField>(
     a: &BasisChangeMatrix<F>,
     b: &BasisChangeMatrix<F>,
@@ -334,7 +329,6 @@ pub(crate) fn base_change_matrix_multiplication<F: BaseField>(
 /// the secret).
 ///
 /// Mirrors the C reference's `select_base_change_matrix`.
-#[allow(dead_code)]
 pub(crate) fn select_base_change_matrix<F: BaseField>(
     a: &BasisChangeMatrix<F>,
     b: &BasisChangeMatrix<F>,
@@ -376,7 +370,6 @@ pub(crate) fn select_base_change_matrix<F: BaseField>(
 /// `NORMALIZATION_TRANSFORMS` block.
 // `t` indexes CHI_EVAL's row AND (XOR-paired) the theta coordinates —
 // enumerate() over one would obscure the C-ref-faithful indexed access.
-#[allow(dead_code)]
 pub(crate) fn splitting_compute<F: BaseField>(
     domain: &AbelianVariety2D<F>,
     zero_index: Option<usize>,
@@ -593,21 +586,15 @@ fn sample_random_index<R: CryptoRng>(rng: &mut R) -> usize {
 /// Index codes into the fp2 constant table `{0, 1, i, -1, -i}` used by
 /// [`SPLITTING_TRANSFORMS`] / [`NORMALIZATION_TRANSFORMS`] entries.
 /// Mirrors the C ref's `FP2_ZERO/ONE/I/MINUS_ONE/MINUS_I` macros.
-#[allow(dead_code)]
 pub(crate) const FP2_CODE_ZERO: u8 = 0;
-#[allow(dead_code)]
 pub(crate) const FP2_CODE_ONE: u8 = 1;
-#[allow(dead_code)]
 pub(crate) const FP2_CODE_I: u8 = 2;
-#[allow(dead_code)]
 pub(crate) const FP2_CODE_MINUS_ONE: u8 = 3;
-#[allow(dead_code)]
 pub(crate) const FP2_CODE_MINUS_I: u8 = 4;
 
 /// Map an `FP2_CODE_*` index to the corresponding `Fp2<F>` constant
 /// `{0, 1, i, -1, -i}`. `i` is the quadratic-extension generator
 /// (`Fp2 { c0: 0, c1: 1 }`); the C ref's `FP2_CONSTANTS[code]`.
-#[allow(dead_code)]
 pub(crate) fn fp2_from_code<F: BaseField>(code: u8) -> Fp2<F> {
     match code {
         FP2_CODE_ZERO => Fp2::<F>::zero(),
@@ -623,7 +610,6 @@ pub(crate) fn fp2_from_code<F: BaseField>(code: u8) -> Fp2<F> {
 /// `[i][0]` selects a `CHI_EVAL` row (the character); `[i][1]` is XOR-ed
 /// into the theta-coordinate index to pick the paired coordinate.
 /// Verbatim from `hd_splitting_transforms.c:15` (level-independent).
-#[allow(dead_code)]
 pub(crate) const EVEN_INDEX: [[u8; 2]; 10] = [
     [0, 0],
     [0, 1],
@@ -642,7 +628,6 @@ pub(crate) const EVEN_INDEX: [[u8; 2]; 10] = [
 /// applied to the coordinate product before accumulating `U_cst`; the C
 /// ref uses `>> 1` on the (+1/−1) value as a CT negate-mask.
 /// Verbatim from `hd_splitting_transforms.c:16` (level-independent).
-#[allow(dead_code)]
 pub(crate) const CHI_EVAL: [[i8; 4]; 4] =
     [[1, 1, 1, 1], [1, -1, 1, -1], [1, 1, -1, -1], [1, -1, -1, 1]];
 
@@ -655,7 +640,6 @@ pub(crate) const CHI_EVAL: [[i8; 4]; 4] =
 /// `hd_splitting_transforms.c:142` (level-independent; brace-group order
 /// is the OUTER `[i]` index — the (row,col) interpretation is resolved
 /// by the apply routine, see `apply_isomorphism`).
-#[allow(dead_code)]
 pub(crate) const SPLITTING_TRANSFORMS: [[[u8; 4]; 4]; 10] = [
     [[1, 2, 1, 2], [1, 4, 3, 2], [1, 2, 3, 4], [3, 2, 3, 2]],
     [[1, 0, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0], [0, 3, 0, 0]],
@@ -675,7 +659,6 @@ pub(crate) const SPLITTING_TRANSFORMS: [[[u8; 4]; 4]; 10] = [
 /// `FP2_CODE_*` encoding as [`SPLITTING_TRANSFORMS`]. Decoded directly
 /// (S245) from the C-ref `hd_splitting_transforms.c` (level-independent).
 /// `[0]` is the identity.
-#[allow(dead_code)]
 pub(crate) const NORMALIZATION_TRANSFORMS: [[[u8; 4]; 4]; 6] = [
     [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
     [[0, 0, 0, 1], [0, 0, 1, 0], [0, 1, 0, 0], [1, 0, 0, 0]],
@@ -690,7 +673,6 @@ pub(crate) const NORMALIZATION_TRANSFORMS: [[[u8; 4]; 4]; 6] = [
 /// mapping each code through [`fp2_from_code`]. Mirrors the C ref's
 /// `set_base_change_matrix_from_precomp` (`res->m[i][j] =
 /// FP2_CONSTANTS[M->m[i][j]]`).
-#[allow(dead_code)]
 pub(crate) fn base_change_from_codes<F: BaseField>(codes: &[[u8; 4]; 4]) -> BasisChangeMatrix<F> {
     let mut m = [[Fp2::<F>::zero(); 4]; 4];
     for (out_row, code_row) in m.iter_mut().zip(codes.iter()) {
@@ -705,6 +687,8 @@ pub(crate) fn base_change_from_codes<F: BaseField>(codes: &[[u8; 4]; 4]) -> Basi
 mod tests {
     use super::*;
     use crate::gf::fp::Fp1Element;
+    #[cfg(all(not(feature = "std"), feature = "alloc"))]
+    use alloc::vec::Vec;
 
     /// Randomized-splitting tests need a `CryptoRng`; the only one in
     /// the tree (`NistPqcRng`) is `#[cfg(feature = "kat")]`, so these
@@ -1225,8 +1209,8 @@ mod tests {
     fn theta_product_structure_extract_recompute_inverts_at_lvl1() {
         let null = ThetaPoint2D::new(small_fp2(1), small_fp2(2), small_fp2(3), small_fp2(6));
         let domain = AbelianVariety2D::new(null, null);
-        let cc = theta_product_structure_to_elliptic_product(&domain)
-            .expect("extraction must succeed");
+        let cc =
+            theta_product_structure_to_elliptic_product(&domain).expect("extraction must succeed");
 
         // For E_2: a_2 · C_2 = A_2 where C_2 = x^4 - y^4, A_2 = -2(x^4 + y^4).
         let x_4 = small_fp2(1);
@@ -1461,6 +1445,7 @@ mod tests {
     /// `domain.theta_null` {x,y,z,w} OURS_TNR). Proportional ⟺ Cy·Ox==Oy·Cx etc.
     /// (X≠0 in both). Match ⟹ bug is in the split matrix M / tables; differ ⟹
     /// the (2,2)-chain walk produced a different theta structure (kernel/gluing).
+    #[cfg(feature = "alloc")]
     #[test]
     fn theta_null_proportionality() {
         use subtle::ConstantTimeEq;

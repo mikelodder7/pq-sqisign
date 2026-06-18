@@ -138,8 +138,11 @@ fn kat_lvl1_verify_only() {
     let records = parse_kat(KAT_LVL1);
     for r in &records {
         let sig = &r.sm[..Level1::SIG_BYTES];
-        pq_sqisign::verify::<Level1>(&r.msg, sig, &r.pk)
-            .unwrap_or_else(|e| panic!("KAT verify[{}] must accept: {e:?}", r.count));
+        assert!(
+            pq_sqisign::verify::<Level1>(&r.msg, sig, &r.pk).is_ok(),
+            "KAT verify[{}] must accept",
+            r.count
+        );
     }
 }
 

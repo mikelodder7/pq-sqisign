@@ -1509,9 +1509,7 @@ mod tests {
             predicate,
             &mut rng_gamma,
         )
-        .expect(
-            "step 1: γ-randomization must produce J with N(J) = q satisfying the predicate",
-        );
+        .expect("step 1: γ-randomization must produce J with N(J) = q satisfying the predicate");
 
         // Verify the predicate post-condition explicitly.
         assert!(

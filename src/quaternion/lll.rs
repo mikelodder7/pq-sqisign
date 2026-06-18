@@ -56,7 +56,6 @@ fn sym(i: usize, j: usize) -> (usize, usize) {
 /// LLL-reduced (δ=0.995, η=0.505) and `g` is its (full, symmetric) Gram
 /// matrix. `g` must enter with a correct LOWER triangle (the algorithm
 /// reads/maintains the lower half and fills the upper half at the end).
-#[allow(dead_code)] // consumed by the wide-input ideal reduction (next session).
 #[allow(clippy::needless_range_loop)] // index-based loops mirror the C operation order.
 pub fn quat_lll_core<const N: usize>(g: &mut [[Int<N>; 4]; 4], basis: &mut [[Int<N>; 4]; 4]) {
     let delta_bar = Dpe::from_f64(DELTABAR);
@@ -316,10 +315,9 @@ pub fn mat4_eval<const N: usize>(mat: &[[Int<N>; 4]; 4], vec: &[Int<N>; 4]) -> [
 /// O_0↔standard / row↔column coordinate conversions between our `LeftIdeal`
 /// representation and the C's are the wiring step (next session).
 ///
-/// Gated on `kat` because the byte-exact interval RNG it consumes lives in
-/// the `kat`-gated `rng` module; it relocates to the production build when
-/// keygen is wired.
-#[cfg(feature = "kat")]
+/// Gated on `alloc` because the byte-exact interval RNG it consumes lives in
+/// [`crate::quaternion::sample`].
+#[cfg(feature = "alloc")]
 #[allow(dead_code, clippy::type_complexity)]
 pub fn prime_norm_box_search<const N: usize, R: rand_core::CryptoRng + ?Sized>(
     reduced: &[[Int<N>; 4]; 4],
@@ -331,7 +329,7 @@ pub fn prime_norm_box_search<const N: usize, R: rand_core::CryptoRng + ?Sized>(
 ) -> Option<([Int<N>; 4], Uint<N>)> {
     use crate::quaternion::lattice::qf_eval_4x4;
     use crate::quaternion::primality::is_probable_prime_with_witnesses;
-    use crate::rng::ibz_rand_interval_minm_m;
+    use crate::quaternion::sample::ibz_rand_interval_minm_m;
 
     let adjusted = denom.wrapping_mul(denom); // adjusted_norm = denom²
     let adj_nz = Option::<NonZero<Uint<N>>>::from(NonZero::new(adjusted))?;
@@ -378,7 +376,7 @@ pub fn prime_norm_box_search<const N: usize, R: rand_core::CryptoRng + ?Sized>(
 ///    prime; `α = reduced · v` in standard coords (the C `α.denom = denom`).
 /// 3. Conjugate `ᾱ = (α₀, −α₁, −α₂, −α₃)`; the C then sets `α.denom = denom·norm`.
 /// 4. Right-multiply: each `J` column = `Iᵢ_column · ᾱ` (the C
-///    `quat_lattice_alg_elem_mul`; [`Quaternion::mul`] == `quat_alg_coord_mul`),
+///    `quat_lattice_alg_elem_mul`; `Quaternion::mul` == `quat_alg_coord_mul`),
 ///    `J.denom = I.denom · α.denom = denom²·norm`, then canonical
 ///    [`hnf_mod_core`](crate::quaternion::hnf::hnf_mod_core) (mod `|det|`) +
 ///    [`quat_lattice_reduce_denom`](crate::quaternion::hnf::quat_lattice_reduce_denom).
@@ -392,8 +390,8 @@ pub fn prime_norm_box_search<const N: usize, R: rand_core::CryptoRng + ?Sized>(
 /// (non-canonical, dpe-faithful) reduced basis the search consumed; true
 /// byte-exactness is finally certified by the end-to-end keygen KAT.
 ///
-/// `kat`-gated because the box search consumes the byte-exact interval RNG.
-#[cfg(feature = "kat")]
+/// `alloc`-gated because the box search consumes the byte-exact interval RNG.
+#[cfg(feature = "alloc")]
 #[allow(
     dead_code,
     clippy::type_complexity,
@@ -491,8 +489,8 @@ pub fn quat_lideal_prime_norm_reduced_equivalent<
 /// the byte-exact sampling of γ at SEC_DEGREE feeding this and the spine's
 /// `sample_random_index`-driven index selection (later sessions).
 ///
-/// `kat`-gated (the reduction's box search consumes the byte-exact RNG).
-#[cfg(feature = "kat")]
+/// `alloc`-gated (the reduction's box search consumes the byte-exact RNG).
+#[cfg(feature = "alloc")]
 #[allow(dead_code, clippy::too_many_arguments)]
 pub fn keygen_prime_norm_left_ideal<const N: usize, R: rand_core::CryptoRng + ?Sized>(
     gen_a: &crate::quaternion::Quaternion<N>,
@@ -567,6 +565,8 @@ pub fn keygen_byte_exact_secret_ideal<const N: usize, R: rand_core::CryptoRng>(
 mod tests {
     use super::*;
     use crate::quaternion::ideal::det_4x4;
+    #[cfg(all(not(feature = "std"), feature = "alloc"))]
+    use alloc::string::ToString;
     use crypto_bigint::Int;
 
     /// Build the Gram matrix `G[a][b] = b(col_a, col_b)` for the SQIsign LLL
@@ -1290,6 +1290,7 @@ mod tests {
     /// reduce path (create + reduce both byte-exact) — it is in the box-search
     /// α selection / RNG. If it fails, the first differing entry pins the
     /// `lideal_reduce_basis` gram/division/LLL-seed bug.
+    #[cfg(feature = "alloc")]
     #[test]
     fn lideal_reduce_basis_matches_c_oracle_kat0() {
         use crypto_bigint::{Int, Uint};
@@ -1461,6 +1462,7 @@ mod tests {
     /// byte-exact with C, so the keygen pk[0..64] divergence is downstream in
     /// the ideal→isogeny SPINE (same j(E_A), different Montgomery model). FAIL
     /// ⟹ the first differing J entry pins a conj/mul/HNF/reduce_denom bug.
+    #[cfg(feature = "alloc")]
     #[test]
     fn equivalent_ideal_assembly_matches_c_oracle_kat0() {
         use crate::quaternion::Quaternion;

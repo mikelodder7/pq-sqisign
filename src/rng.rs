@@ -213,7 +213,6 @@ const _: fn() = || {
 /// loop is NOT constant-time — its iteration count depends on the
 /// draws — but each iteration is independent of any secret, so the
 /// total timing is uncorrelated with the eventual output.
-#[allow(dead_code)]
 pub fn sample_uniform_mod_6<R: rand_core::CryptoRng + ?Sized>(rng: &mut R) -> u8 {
     loop {
         let mut buf = [0u8; 4];
@@ -244,7 +243,6 @@ pub fn sample_uniform_mod_6<R: rand_core::CryptoRng + ?Sized>(rng: &mut R) -> u8
 /// the result is `candidate + a`. Drawing exactly `len_bytes` (not the full
 /// `Uint<N>` width) is the byte-exactness-critical detail — it matches the C
 /// `randombytes(r, len_bytes)` call so DRBG consumption is identical.
-#[allow(dead_code)]
 pub fn ibz_rand_interval<const N: usize, R: rand_core::CryptoRng + ?Sized>(
     rng: &mut R,
     a: &crypto_bigint::Uint<N>,
@@ -283,7 +281,6 @@ pub fn ibz_rand_interval<const N: usize, R: rand_core::CryptoRng + ?Sized>(
 /// C does — sample `[0, 2m]` via [`ibz_rand_interval`], then subtract `m`.
 /// Used by the prime-norm box-search at `m = equiv_bound_coeff = 64` (one
 /// byte drawn per coordinate per attempt, accepted when `<= 128`).
-#[allow(dead_code)]
 pub fn ibz_rand_interval_minm_m<const N: usize, R: rand_core::CryptoRng + ?Sized>(
     rng: &mut R,
     m: u32,
@@ -465,10 +462,7 @@ mod tests {
 
         let mut rng = ChaCha20Rng::from_seed([0x42; 32]);
         let r = sample_uniform_mod_6(&mut rng);
-        assert!(
-            r < 6,
-            "sample_uniform_mod_6 must return value in [0, 5]"
-        );
+        assert!(r < 6, "sample_uniform_mod_6 must return value in [0, 5]");
     }
 
     /// many-sample uniformity smoke. With 1024 samples from a

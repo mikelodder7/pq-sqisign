@@ -54,12 +54,18 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![forbid(unsafe_op_in_unsafe_fn)]
 
-#[cfg(feature = "alloc")]
+#[cfg(all(feature = "alloc", not(feature = "std")))]
+#[macro_use]
+extern crate alloc;
+#[cfg(all(feature = "alloc", feature = "std"))]
 #[allow(unused_extern_crates)]
 extern crate alloc;
 #[cfg(test)]
 #[allow(unused_extern_crates)]
 extern crate std;
+
+#[macro_use]
+mod macros;
 
 pub mod ec;
 pub mod encoding;
@@ -74,13 +80,31 @@ pub mod quaternion;
 /// (they bring their own `CryptoRng`).
 #[cfg(feature = "kat")]
 pub mod rng;
-#[cfg(feature = "kat")]
-pub mod signing;
+#[cfg(feature = "sign")]
+pub(crate) mod signing;
 pub mod verification;
 pub mod wire;
 
+// Typed high-level API (mayo-style).
+#[cfg(all(feature = "sign", feature = "alloc"))]
+pub mod keypair;
+#[cfg(all(feature = "sign", feature = "alloc"))]
+pub mod signing_key;
+#[cfg(feature = "alloc")]
+pub mod sqisignature;
+#[cfg(feature = "alloc")]
+pub mod verifying_key;
+
 pub use crate::error::{Error, Result};
+#[cfg(all(feature = "sign", feature = "alloc"))]
+pub use crate::keypair::KeyPair;
 pub use crate::params::{Level1, Level3, Level5, Params};
+#[cfg(all(feature = "sign", feature = "alloc"))]
+pub use crate::signing_key::SigningKey;
+#[cfg(feature = "alloc")]
+pub use crate::sqisignature::SqiSignature;
+#[cfg(feature = "alloc")]
+pub use crate::verifying_key::VerifyingKey;
 
 /// SQIsign keypair generation, matching `sqisign_keypair` in the reference C API.
 ///
@@ -639,10 +663,7 @@ mod tests {
         let mut buf_b = [0u8; 32];
         chain_a.fill_bytes(&mut buf_a);
         chain_b.fill_bytes(&mut buf_b);
-        assert_ne!(
-            buf_a, buf_b,
-            "sign's derived chain RNG must depend on msg",
-        );
+        assert_ne!(buf_a, buf_b, "sign's derived chain RNG must depend on msg",);
     }
 
     #[cfg(feature = "sign")]

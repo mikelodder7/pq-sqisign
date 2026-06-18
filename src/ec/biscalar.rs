@@ -15,7 +15,6 @@
 //! Consumed by `endomorphism_application_even_basis` (the matrix→basis
 //! application) in a later session; until then only this module's tests
 //! exercise it, so the lib build sees the items as unused.
-#![allow(dead_code)]
 
 use crate::ec::montgomery::MontgomeryPoint;
 use crate::gf::fp::BaseField;
@@ -273,8 +272,7 @@ pub(crate) fn ec_biscalar_mul<F: BaseField>(
 /// (leaving order dividing `2^248`) then double `248 − f` times. A
 /// foundational primitive for `ec_curve_to_basis_2f[_to_hint]` (keygen
 /// `hint_pk` + verify challenge/aux bases).
-#[allow(dead_code)]
-pub(crate) fn clear_cofactor_for_maximal_even_order<F: BaseField>(
+pub fn clear_cofactor_for_maximal_even_order<F: BaseField>(
     p: &MontgomeryPoint<F>,
     curve: &crate::ec::montgomery::MontgomeryCurve<F>,
     f: usize,
@@ -298,8 +296,7 @@ pub(crate) fn clear_cofactor_for_maximal_even_order<F: BaseField>(
 /// Build the base-field element equal to the small non-negative integer `n`
 /// (double-and-add from `one()`). Port of the C reference `fp_set_small`,
 /// used by the entangled-basis NQR-factor search.
-#[allow(dead_code)]
-pub(crate) fn fp_small<F: BaseField>(n: u32) -> F {
+pub fn fp_small<F: BaseField>(n: u32) -> F {
     let mut acc = F::zero();
     let mut base = F::one();
     let mut k = n;
@@ -315,8 +312,7 @@ pub(crate) fn fp_small<F: BaseField>(n: u32) -> F {
 
 /// `y · n` for a small scalar `n` (double-and-add). Port of the C reference
 /// `fp2_mul_small` used by the entangled-basis x(P) selectors.
-#[allow(dead_code)]
-pub(crate) fn fp2_mul_small<F: BaseField>(y: &Fp2<F>, n: u32) -> Fp2<F> {
+pub fn fp2_mul_small<F: BaseField>(y: &Fp2<F>, n: u32) -> Fp2<F> {
     let mut acc = Fp2::<F>::zero();
     let mut base = *y;
     let mut k = n;
@@ -333,8 +329,7 @@ pub(crate) fn fp2_mul_small<F: BaseField>(y: &Fp2<F>, n: u32) -> Fp2<F> {
 /// `Choice::TRUE` iff affine `x` is a valid x-coordinate on the (normalized,
 /// `C = 1`) Montgomery curve `y² = x³ + A x² + x`. Port of C `is_on_curve`
 /// (`basis.c`): returns `is_square(x³ + A·x² + x)`.
-#[allow(dead_code)]
-pub(crate) fn is_on_curve<F: BaseField>(x: &Fp2<F>, curve_a: &Fp2<F>) -> Choice {
+pub fn is_on_curve<F: BaseField>(x: &Fp2<F>, curve_a: &Fp2<F>) -> Choice {
     // ((x + A)·x + 1)·x = x³ + A·x² + x.
     let t0 = x.add(curve_a).mul(x).add(&Fp2::<F>::one()).mul(x);
     t0.is_square()
@@ -346,8 +341,7 @@ pub(crate) fn is_on_curve<F: BaseField>(x: &Fp2<F>, curve_a: &Fp2<F>) -> Choice 
 /// `is_on_curve(x)`. Returns `(x, hint)` where `hint = n` if `n < 128`, else
 /// `0` (the rare "not found in 127 tries" fallback signal). Caller must ensure
 /// `A` is a NQR (C `find_nA_x_coord`).
-#[allow(dead_code)]
-pub(crate) fn find_na_x_coord<F: BaseField>(curve_a: &Fp2<F>, start: u8) -> (Fp2<F>, u8) {
+pub fn find_na_x_coord<F: BaseField>(curve_a: &Fp2<F>, start: u8) -> (Fp2<F>, u8) {
     let mut n: u32 = u32::from(start);
     let mut x = fp2_mul_small(curve_a, n);
     let mut guard = 0u32;
@@ -376,8 +370,7 @@ pub(crate) fn find_na_x_coord<F: BaseField>(curve_a: &Fp2<F>, start: u8) -> (Fp2
 /// (avoids an inversion pre-check). Returns `(x, hint)` where `hint = b` if
 /// `n ≤ 128`, else `0` (the rare "not found" fallback signal). Caller must
 /// ensure `A` is a QR (C `find_nqr_factor`).
-#[allow(dead_code)]
-pub(crate) fn find_nqr_factor<F: BaseField>(curve_a: &Fp2<F>, start: u8) -> (Fp2<F>, u8) {
+pub fn find_nqr_factor<F: BaseField>(curve_a: &Fp2<F>, start: u8) -> (Fp2<F>, u8) {
     let a2 = curve_a.square();
     let mut n: u32 = u32::from(start);
     let mut guard = 0u32;
@@ -422,8 +415,7 @@ pub(crate) fn find_nqr_factor<F: BaseField>(curve_a: &Fp2<F>, start: u8) -> (Fp2
 /// `curve_a` is the affine `A`). The canonical `Fp2::sqrt` sign convention
 /// makes the deterministic root choice match C. Used by `ec_curve_to_basis_2f`
 /// to set `PmQ` (which fixes `Q` above `(0,0)`).
-#[allow(dead_code)]
-pub(crate) fn difference_point<F: BaseField>(
+pub fn difference_point<F: BaseField>(
     p: &MontgomeryPoint<F>,
     q: &MontgomeryPoint<F>,
     curve_a: &Fp2<F>,

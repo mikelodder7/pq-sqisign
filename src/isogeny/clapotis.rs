@@ -3051,11 +3051,14 @@ mod find_uv_tests {
     /// fixture yielded a solution (proving the pipeline works beyond
     /// full_order), without forcing every fixture to succeed.
     #[cfg_attr(feature = "alloc", derive(Debug))]
-    #[allow(dead_code)] // target_used / d1 / d2 are diagnostic-only
     enum PostconditionOutcome {
         /// `find_uv` returned Ok on some target; Bezout AND norm
         /// postcondition both held. Numerical correctness pinned.
-        Verified { target_used: u64, d1: u64, d2: u64 },
+        Verified {
+            _target_used: u64,
+            _d1: u64,
+            _d2: u64,
+        },
         /// No target in the trial range produced a Bezout solution.
         /// Acceptable per-fixture; aggregated to a sweep-level assertion.
         NoSolutionInBox,
@@ -3122,9 +3125,9 @@ mod find_uv_tests {
                 "N(β2.num) must equal β2.denom² · n(I) · d2 (postcondition violated)",
             );
             return PostconditionOutcome::Verified {
-                target_used: target_u,
-                d1: r.d1.to_words()[0],
-                d2: r.d2.to_words()[0],
+                _target_used: target_u,
+                _d1: r.d1.to_words()[0],
+                _d2: r.d2.to_words()[0],
             };
         }
         PostconditionOutcome::NoSolutionInBox
@@ -3171,11 +3174,7 @@ mod find_uv_tests {
         // check inside the helper via reduced_norm_vartime). γ values
         // are chosen for diverse N_red and basis patterns.
         let fixtures: [([Int<8>; 4], u64, &str); 5] = [
-            (
-                [i(1), i(0), i(1), i(0)],
-                3,
-                "γ=1+(i+j)/2, N=3 (anchor)",
-            ),
+            ([i(1), i(0), i(1), i(0)], 3, "γ=1+(i+j)/2, N=3 (anchor)"),
             ([i(1), i(1), i(1), i(0)], 5, "γ=1+i+(i+j)/2, N=5"),
             ([i(1), i(1), i(0), i(1)], 5, "γ=1+i+(1+k)/2, N=5 alternate"),
             ([i(1), i(0), i(2), i(0)], 9, "γ=1+(i+j), N=9 (composite)"),

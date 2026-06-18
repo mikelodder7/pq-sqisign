@@ -616,10 +616,8 @@ pub(crate) fn ideal_to_isogeny_clapotis<R: CryptoRng>(
 /// more real-scale LLL. `witnesses` are the small-prime Miller–Rabin witnesses
 /// the spine's index sampler consumes (width `QL`).
 ///
-/// `kat`-gated: the prime-norm reduction's box search consumes the byte-exact
-/// DRBG (mirrors `quat_lideal_prime_norm_reduced_equivalent`).
-#[cfg(feature = "kat")]
-#[allow(dead_code)] // consumed by sign orchestration (next session) + the kat integration test
+/// `kgen`-gated: used by both keygen and signing commitment steps.
+#[cfg(feature = "kgen")]
 pub(crate) fn commit<R: CryptoRng>(
     witnesses: &[Uint<QL>],
     sample_bound: i64,
@@ -797,7 +795,7 @@ pub(crate) fn compute_dim2_isogeny_challenge<R: CryptoRng>(
 /// (`B_Acan.P = mat00·B_A0.P + mat10·B_A0.Q`). The sign challenge-ideal step
 /// applies it directly to `[1, chall_coeff]` (canonical-basis kernel coords) to
 /// get the kernel coords in the secret-pushed E0 frame.
-#[cfg(feature = "kat")]
+#[cfg(feature = "kgen")]
 #[allow(dead_code, clippy::type_complexity)]
 pub(crate) fn keygen_lvl1<R: CryptoRng>(
     witnesses: &[Uint<QL>],
@@ -833,7 +831,7 @@ pub(crate) fn keygen_lvl1<R: CryptoRng>(
 /// `O_0`-ideal of norm `random_aux_norm` (general path, `is_prime = false`, with
 /// `QUAT_prime_cofactor = 2^251 + 65`), intersect it with `lideal_com_resp`, and
 /// map the result through the Clapotis spine to `(E_aux, B_aux)`. HEAVY. lvl1.
-#[cfg(feature = "kat")]
+#[cfg(feature = "sign")]
 #[allow(dead_code, clippy::too_many_arguments)]
 pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
     random_aux_norm: &Uint<L>,

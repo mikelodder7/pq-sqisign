@@ -208,7 +208,6 @@ pub fn order_times_gen<const LIMBS: usize>(
 ///
 /// **Width note**: the determinants inside `quat_lattice_add` reach
 /// ≈ `(N)^4`; pick `LIMBS` wide enough (≈ 36 limbs at keygen scale).
-#[allow(dead_code)]
 pub fn quat_lideal_create<const LIMBS: usize>(
     gen_a: &Quaternion<LIMBS>,
     gen_denom: &Int<LIMBS>,
@@ -326,7 +325,6 @@ pub fn c_ideal_to_left_ideal<const LIMBS: usize>(
 ///
 /// Variable-time (Euclidean gcd + division) — quaternion-side, per the
 /// SQIsign 2.0 §8 vartime convention. Panics if `θ = 0` (zero content).
-#[allow(dead_code)]
 pub fn quat_make_primitive_o0<const LIMBS: usize>(
     theta: &Quaternion<LIMBS>,
 ) -> ([Int<LIMBS>; 4], Int<LIMBS>) {
@@ -343,7 +341,6 @@ pub fn quat_make_primitive_o0<const LIMBS: usize>(
 /// `O_0`-basis coords, not standard `(1, i, j, k)` coords.
 ///
 /// Variable-time. Panics if all coordinates are zero (zero content).
-#[allow(dead_code)]
 pub fn make_primitive_from_o0_coords<const LIMBS: usize>(
     coords: &[Int<LIMBS>; 4],
 ) -> ([Int<LIMBS>; 4], Int<LIMBS>) {
@@ -691,6 +688,8 @@ pub fn multiply_o0_basis<const LIMBS: usize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(all(not(feature = "std"), feature = "alloc"))]
+    use alloc::string::ToString;
 
     /// Round-trip: our O_0-row-major ideal basis → C standard-column-major
     /// (doubled) → back must be the identity. Also checks the forward map
@@ -1240,6 +1239,7 @@ mod tests {
     /// — the true keygen pk[0..64] root cause (the dpe LLL is already byte-exact,
     /// proven by `quat_lll_core_matches_c_oracle_*`). γ reaches ~1272 bits and
     /// the `quat_lattice_add` determinant ~γ⁴, so WL=96 (6144 bits) holds it.
+    #[cfg(feature = "alloc")]
     #[test]
     fn quat_lideal_create_matches_c_oracle_kat0() {
         use crate::quaternion::Quaternion;

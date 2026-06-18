@@ -40,6 +40,12 @@ pub enum Error {
     /// orchestrator when either the short-vector enumeration returns empty
     /// OR the Bezout pair search rejects every candidate.
     NoBezoutSolution(&'static str),
+    /// A freshly-generated `SigningKey` cannot be serialized to bytes because
+    /// the keygen pipeline does not yet thread the generator quaternion through
+    /// to the output. Keys loaded via `from_bytes` support round-trip encoding.
+    SkSerializationNotSupported,
+    /// Signing failed: no valid signature was produced within the retry budget.
+    SigningFailed,
 }
 
 impl fmt::Display for Error {
@@ -59,6 +65,13 @@ impl fmt::Display for Error {
             Error::Internal(msg) => write!(f, "internal invariant violated: {msg}"),
             Error::Unimplemented(msg) => write!(f, "not yet implemented: {msg}"),
             Error::NoBezoutSolution(msg) => write!(f, "no Bezout solution found: {msg}"),
+            Error::SkSerializationNotSupported => f.write_str(
+                "signing key serialization not supported for generated keys \
+                 (load via from_bytes to enable round-trip)",
+            ),
+            Error::SigningFailed => {
+                f.write_str("signing failed: no valid signature within retry budget")
+            }
         }
     }
 }

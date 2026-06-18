@@ -205,7 +205,6 @@ pub fn hnf_4x4<const LIMBS: usize>(input: &[[Int<LIMBS>; 4]; 4]) -> [[Int<LIMBS>
 /// identity. The HNF kernel relies on `u ≠ 0` so the pivot column is never
 /// annihilated; the exact `(u,v)` beyond that is immaterial because the HNF
 /// output is canonical (any valid Bezout pair drives it to the same form).
-#[allow(dead_code)]
 pub fn xgcd_with_u_not_0<const LIMBS: usize>(
     x: &Int<LIMBS>,
     y: &Int<LIMBS>,
@@ -282,7 +281,6 @@ pub fn int_div_floor<const LIMBS: usize>(a: &Int<LIMBS>, b: &Int<LIMBS>) -> Int<
 /// Plain Euclidean residue of `a` modulo `modulus > 0`, in `[0, modulus)`
 /// (= C `ibz_mod` / GMP `mpz_mod`, non-negative; `0` stays `0`). Used by the
 /// HNF kernel's pivot scalar-mul reduction.
-#[allow(dead_code)]
 pub fn euclid_mod<const LIMBS: usize>(
     a: &Int<LIMBS>,
     modulus: &crypto_bigint::Uint<LIMBS>,
@@ -426,7 +424,6 @@ pub fn hnf_mod_core<const LIMBS: usize>(
 /// Port of the C reference `ibz_mod_not_zero` (`hnf/hnf_internal.c`): the
 /// Euclidean residue of `a` modulo `modulus > 0`, but mapping a residue of
 /// `0` to `modulus` itself. Result is in `[1, modulus]`.
-#[allow(dead_code)]
 pub fn mod_not_zero<const LIMBS: usize>(
     a: &Int<LIMBS>,
     modulus: &crypto_bigint::Uint<LIMBS>,
@@ -454,7 +451,6 @@ pub fn mod_not_zero<const LIMBS: usize>(
 /// residue in `(floor(modulus/2) − modulus, floor(modulus/2)]` ("rather
 /// positive than negative"). Used by the column-HNF kernel's combine/copy
 /// steps.
-#[allow(dead_code)]
 pub fn centered_mod<const LIMBS: usize>(
     a: &Int<LIMBS>,
     modulus: &crypto_bigint::Uint<LIMBS>,

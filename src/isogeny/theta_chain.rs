@@ -35,7 +35,6 @@
 //! Everything here is consumed by the point-executing visitor wired in a later
 //! session; until then only this module's own tests exercise it, so the lib
 //! build sees the items as unused.
-#![allow(dead_code)]
 
 use crate::ec::couple::{
     CoupleCurve, CoupleJacobianPoint, CoupleMontgomeryPoint, ThetaKernelCouplePoints,

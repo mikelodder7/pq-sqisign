@@ -492,10 +492,7 @@ mod tests {
         }
         // Confirm coverage of both branches across the sweep.
         assert!(covered_p3 > 0, "must exercise p ≡ 3 mod 4 fast path");
-        assert!(
-            covered_p1 > 0,
-            "must exercise p ≡ 1 mod 4 iterative path"
-        );
+        assert!(covered_p1 > 0, "must exercise p ≡ 1 mod 4 iterative path");
     }
 
     #[test]

@@ -108,7 +108,9 @@ fn human_readable_is_hex_and_binary_is_raw() {
     );
     let inner = j.trim_matches('"');
     assert!(
-        inner.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        inner
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
         "human-readable encoding must be lowercase hex",
     );
     assert_eq!(
@@ -149,7 +151,11 @@ fn signature_from_and_to_vec_is_wire_compliant() {
 
     // Vec<u8>, &Vec<u8>, Box<[u8]> all delegate to From<&[u8]>.
     let v = want.clone();
-    assert_eq!(SignatureLvl1::from(v.clone()).to_vec(), want, "From<Vec<u8>>");
+    assert_eq!(
+        SignatureLvl1::from(v.clone()).to_vec(),
+        want,
+        "From<Vec<u8>>"
+    );
     assert_eq!(SignatureLvl1::from(&v).to_vec(), want, "From<&Vec<u8>>");
     let boxed: Box<[u8]> = v.into_boxed_slice();
     assert_eq!(SignatureLvl1::from(boxed).to_vec(), want, "From<Box<[u8]>>");
@@ -167,7 +173,11 @@ fn secret_key_from_and_to_vec_is_wire_compliant() {
     assert_eq!(sk.to_vec(), want, "From<&[u8]> + to_vec is wire-identical");
 
     let v = want.clone();
-    assert_eq!(SecretKeyLvl1::from(v.clone()).to_vec(), want, "From<Vec<u8>>");
+    assert_eq!(
+        SecretKeyLvl1::from(v.clone()).to_vec(),
+        want,
+        "From<Vec<u8>>"
+    );
     assert_eq!(SecretKeyLvl1::from(&v).to_vec(), want, "From<&Vec<u8>>");
     let boxed: Box<[u8]> = v.into_boxed_slice();
     assert_eq!(SecretKeyLvl1::from(boxed).to_vec(), want, "From<Box<[u8]>>");
@@ -184,8 +194,16 @@ fn public_key_from_and_to_vec_is_wire_compliant() {
     );
 
     // Valid wire bytes round-trip exactly through every From variant.
-    assert_eq!(PublicKey::<Fp1Element>::from(bytes.as_slice()), pk, "From<&[u8]>");
-    assert_eq!(PublicKey::<Fp1Element>::from(bytes.clone()), pk, "From<Vec<u8>>");
+    assert_eq!(
+        PublicKey::<Fp1Element>::from(bytes.as_slice()),
+        pk,
+        "From<&[u8]>"
+    );
+    assert_eq!(
+        PublicKey::<Fp1Element>::from(bytes.clone()),
+        pk,
+        "From<Vec<u8>>"
+    );
     assert_eq!(PublicKey::<Fp1Element>::from(&bytes), pk, "From<&Vec<u8>>");
     let boxed: Box<[u8]> = bytes.into_boxed_slice();
     assert_eq!(PublicKey::<Fp1Element>::from(boxed), pk, "From<Box<[u8]>>");

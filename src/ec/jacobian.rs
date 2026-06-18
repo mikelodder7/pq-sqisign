@@ -509,7 +509,6 @@ impl<F: BaseField> ConditionallySelectable for JacobianPoint<F> {
 /// [`lift_basis`]).
 ///
 /// Mirrors the C ref's `ec_recover_y` (`src/ec/ref/lvlx/basis.c:6-19`).
-#[allow(dead_code)]
 fn ec_recover_y<F: BaseField>(x_aff: &Fp2<F>, curve_a: &Fp2<F>) -> (Fp2<F>, Choice) {
     let x_sq = x_aff.square();
     let y_sq = x_sq.mul(x_aff).add(&curve_a.mul(&x_sq)).add(x_aff); // x³ + A·x² + x
@@ -610,7 +609,6 @@ pub(crate) fn lift_basis<F: BaseField>(
 }
 
 /// Failure modes for [`lift_basis`].
-#[allow(dead_code)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum LiftError {
     /// `x(P)` does not correspond to an on-curve point (its `y²` is a
@@ -800,21 +798,9 @@ mod tests {
             bool::from(inf.is_infinity()),
             "infinity().is_infinity() must be Choice::TRUE",
         );
-        assert_eq!(
-            inf.x,
-            Fp2::<F>::one(),
-            "infinity x sentinel must be 1"
-        );
-        assert_eq!(
-            inf.y,
-            Fp2::<F>::one(),
-            "infinity y sentinel must be 1"
-        );
-        assert_eq!(
-            inf.z,
-            Fp2::<F>::zero(),
-            "infinity z sentinel must be 0"
-        );
+        assert_eq!(inf.x, Fp2::<F>::one(), "infinity x sentinel must be 1");
+        assert_eq!(inf.y, Fp2::<F>::one(), "infinity y sentinel must be 1");
+        assert_eq!(inf.z, Fp2::<F>::zero(), "infinity z sentinel must be 0");
 
         let mont_inf = MontgomeryPoint::<F>::infinity();
         let lift = JacobianPoint::from_montgomery_xz(&mont_inf, &MontgomeryCurve::<F>::e0().a);

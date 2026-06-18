@@ -46,6 +46,53 @@ pub fn sample_random_quaternion_o0<R: CryptoRng>(rng: &mut R, bound: i64) -> [In
     ]
 }
 
+/// Port of the C reference `ibz_rand_interval(rand, a, b)` — uniform integer
+/// in `[a, b]`, works with any [`CryptoRng`].
+#[cfg(feature = "alloc")]
+pub(crate) fn ibz_rand_interval<const N: usize, R: CryptoRng + ?Sized>(
+    rng: &mut R,
+    a: &crypto_bigint::Uint<N>,
+    b: &crypto_bigint::Uint<N>,
+) -> crypto_bigint::Uint<N> {
+    use crypto_bigint::Uint;
+    let bmina = b.wrapping_sub(a);
+    if bmina == Uint::<N>::ZERO {
+        return *a;
+    }
+    let len_bits = bmina.bits_vartime();
+    let len_bytes = len_bits.div_ceil(8) as usize;
+    let total_bytes = N * 8;
+    let mask = if (len_bits as usize) >= total_bytes * 8 {
+        Uint::<N>::MAX
+    } else {
+        Uint::<N>::ONE
+            .shl_vartime(len_bits)
+            .wrapping_sub(&Uint::<N>::ONE)
+    };
+    let mut buf = alloc::vec::from_elem(0u8, total_bytes);
+    loop {
+        rng.fill_bytes(&mut buf[..len_bytes]);
+        let cand = Uint::<N>::from_le_slice(&buf) & mask;
+        if cand <= bmina {
+            return cand.wrapping_add(a);
+        }
+    }
+}
+
+/// Port of the C reference `ibz_rand_interval_minm_m(rand, m)` — uniform
+/// integer in `[−m, m]` via `ibz_rand_interval([0, 2m]) − m`.
+#[cfg(feature = "alloc")]
+pub(crate) fn ibz_rand_interval_minm_m<const N: usize, R: CryptoRng + ?Sized>(
+    rng: &mut R,
+    m: u32,
+) -> Int<N> {
+    use crypto_bigint::Uint;
+    let two_m = Uint::<N>::from_u64(2 * u64::from(m));
+    let r = ibz_rand_interval::<N, R>(rng, &Uint::<N>::ZERO, &two_m);
+    let m_u = Uint::<N>::from_u64(u64::from(m));
+    r.as_int().wrapping_sub(m_u.as_int())
+}
+
 // Sample tests use `NistPqcRng` for a deterministic, seedable CryptoRng;
 // gated on `kat` so non-test builds drop the dependency.
 #[cfg(all(test, feature = "kat"))]

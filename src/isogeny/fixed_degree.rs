@@ -38,7 +38,6 @@ const QL: usize = 12;
 /// `Some((length, E34))` on success, or `None` if `RepresentInteger`
 /// exhausts its budget, an inversion/lift fails, or the chain does not
 /// produce an isogeny.
-#[allow(dead_code)]
 pub(crate) fn fixed_degree_isogeny_and_eval<R: CryptoRng>(
     u: &Uint<QL>,
     eval_points: &[CoupleMontgomeryPoint<Fp1Element>],
@@ -121,7 +120,6 @@ pub(crate) fn fixed_degree_isogeny_and_eval<R: CryptoRng>(
 ///
 /// The internal theta chain is already the deterministic
 /// [`theta_chain_compute_and_eval`] — the same one C keygen uses.
-#[allow(dead_code)]
 pub(crate) fn fixed_degree_isogeny_and_eval_keygen<R: CryptoRng>(
     u: &Uint<QL>,
     eval_points: &[CoupleMontgomeryPoint<Fp1Element>],

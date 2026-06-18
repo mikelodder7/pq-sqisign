@@ -112,7 +112,6 @@ impl<F: BaseField> ThetaPoint2D<F> {
     /// Returns `Err(NotProductTheta)` if `self` doesn't lie on a
     /// product structure, or `Err(AllZeroPoint)` if `self` is
     /// `(0:0:0:0)` after the alt-coord fallback path.
-    #[allow(dead_code)]
     pub fn to_montgomery_point_on(
         &self,
         domain: &AbelianVariety2D<F>,
@@ -622,7 +621,6 @@ impl<F: BaseField> AbelianVariety2D<F> {
     /// any required null-point coordinate is zero, or
     /// `Err(ZeroChartCoefficient)` if the computed Montgomery chart
     /// coefficient denominators (`x^4 - y^4` or `x^4 - z^4`) vanish.
-    #[allow(dead_code)]
     pub fn to_elliptic_product(
         &self,
     ) -> core::result::Result<
@@ -1219,10 +1217,7 @@ mod tests {
                 .unwrap_or_else(|| Fp2::<F>::new(F::one(), F::one())),
         );
         let result = p.componentwise_mul(&ThetaPoint2D::<F>::identity());
-        assert_eq!(
-            result, p,
-            "componentwise_mul(p, (1,1,1,1)) must equal p",
-        );
+        assert_eq!(result, p, "componentwise_mul(p, (1,1,1,1)) must equal p",);
     }
 
     #[test]
@@ -1944,14 +1939,8 @@ mod tests {
             .expect("theta-null B must be non-degenerate");
         let pick_a = AbelianVariety2D::<F>::conditional_select(&v_a, &v_b, Choice::from(0));
         let pick_b = AbelianVariety2D::<F>::conditional_select(&v_a, &v_b, Choice::from(1));
-        assert_eq!(
-            pick_a, v_a,
-            "conditional_select(a, b, FALSE) must return a",
-        );
-        assert_eq!(
-            pick_b, v_b,
-            "conditional_select(a, b, TRUE) must return b",
-        );
+        assert_eq!(pick_a, v_a, "conditional_select(a, b, FALSE) must return a",);
+        assert_eq!(pick_b, v_b, "conditional_select(a, b, TRUE) must return b",);
     }
 
     #[test]
@@ -2290,8 +2279,7 @@ mod tests {
             let p = ThetaPoint2D::<F>::new(mk(b"rt-x"), mk(b"rt-y"), mk(b"rt-z"), mk(b"rt-w"));
             let mut buf = [0u8; 512]; // big enough for L5's 512-byte encoding
             let n = ThetaPoint2D::<F>::ENCODED_BYTES;
-            p.to_bytes_le(&mut buf[..n])
-                .expect("encode must succeed");
+            p.to_bytes_le(&mut buf[..n]).expect("encode must succeed");
             let p2 = ThetaPoint2D::<F>::from_bytes_le(&buf[..n])
                 .expect("decode must succeed on encoder output");
             assert_eq!(
@@ -2370,8 +2358,7 @@ mod tests {
         let p = ThetaPoint2D::<F>::identity();
         let mut buf = [0u8; 512];
         let n = ThetaPoint2D::<F>::ENCODED_BYTES;
-        p.to_bytes_le(&mut buf[..n])
-            .expect("encode must succeed");
+        p.to_bytes_le(&mut buf[..n]).expect("encode must succeed");
         // Force the high byte of the x.re component to 0xFF.
         // At the canonical encoding, only the highest byte of the
         // last Fp1 element is bounded by the prime; setting it to
@@ -3167,12 +3154,8 @@ mod tests {
                 None => continue,
             };
             // Canonicalise both.
-            let canon_a = v_a
-                .canonicalise()
-                .expect("canonicalise A must succeed");
-            let canon_b = v_b
-                .canonicalise()
-                .expect("canonicalise B must succeed");
+            let canon_a = v_a.canonicalise().expect("canonicalise A must succeed");
+            let canon_b = v_b.canonicalise().expect("canonicalise B must succeed");
             assert_eq!(
                 canon_a, canon_b,
                 "algebraically-equivalent varieties must canonicalise to equal at iteration {i}",

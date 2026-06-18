@@ -235,15 +235,6 @@ pub(crate) fn narrow_left_ideal<const WIDE: usize, const RET: usize>(
     Some(LeftIdeal::with_denom_and_norm(basis, denom, cached_norm))
 }
 
-/// Narrow a `LeftIdeal<WIDE>` to `LeftIdeal<8>`. Thin wrapper over
-/// [`narrow_left_ideal`].
-#[allow(dead_code)] // retained utility; the sign-orchestration caller now builds at WL=48
-pub(crate) fn narrow_left_ideal_to_8<const WIDE: usize>(
-    wide: &LeftIdeal<WIDE>,
-) -> Option<LeftIdeal<8>> {
-    narrow_left_ideal::<WIDE, 8>(wide)
-}
-
 /// Find `β ∈ O_0` with `N_red(β) = target_m`, at `Uint<LIMBS>` precision.
 ///
 /// Returns `Some([v₀, v₁, v₂, v₃])` in O_0-basis coords on success, or
@@ -1034,7 +1025,6 @@ pub fn sampling_random_ideal_o0_given_norm_wide_ret<
 /// coords in `[0, norm)` (Stage-B rerandomization + ideal construction land
 /// next session).
 #[cfg(feature = "kat")]
-#[allow(dead_code)]
 pub fn sample_fast_path_gen<const LIMBS: usize, R: CryptoRng>(
     norm: &Uint<LIMBS>,
     p: &Uint<LIMBS>,
@@ -1104,7 +1094,6 @@ pub fn sample_fast_path_gen<const LIMBS: usize, R: CryptoRng>(
 /// complete RNG-consuming portion of the sampler (3 Stage-A + 4 Stage-B
 /// draws per successful attempt).
 #[cfg(feature = "kat")]
-#[allow(dead_code)]
 pub fn sample_secret_gen<const LIMBS: usize, R: CryptoRng>(
     norm: &Uint<LIMBS>,
     p: &Uint<LIMBS>,

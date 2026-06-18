@@ -3,17 +3,16 @@
 //! modules. Functional (self-consistent), NOT yet byte-exact. `kat`-gated
 //! because the spine (`commit`) and the prime-norm reduction consume the
 //! byte-exact DRBG.
-#![allow(dead_code)]
 
-#[cfg(feature = "kat")]
+#[cfg(feature = "sign")]
 use crate::quaternion::ideal::LeftIdeal;
-#[cfg(feature = "kat")]
+#[cfg(feature = "sign")]
 use crate::verification::SecretKeyData;
-#[cfg(feature = "kat")]
+#[cfg(feature = "sign")]
 use rand_core::CryptoRng;
 
 /// Widen a `LeftIdeal<16>` to `LeftIdeal<W>` (W ≥ 16) for wide lattice ops.
-#[cfg(feature = "kat")]
+#[cfg(feature = "sign")]
 fn widen_ideal_16<const W: usize>(id: &LeftIdeal<16>) -> LeftIdeal<W> {
     use crate::quaternion::lattice::widen_int_lattice;
     let mut basis = [[crypto_bigint::Int::<W>::from_i64(0); 4]; 4];
@@ -28,7 +27,7 @@ fn widen_ideal_16<const W: usize>(id: &LeftIdeal<16>) -> LeftIdeal<W> {
 /// Sign `msg` under the secret key `sk`, producing the 148-byte lvl1 signature.
 /// Port of C `protocols_sign` (`sign.c:479`), common path (`two_resp = 0`).
 /// Returns `None` if no attempt within the retry budget succeeds. HEAVY.
-#[cfg(feature = "kat")]
+#[cfg(feature = "sign")]
 pub fn protocols_sign<R: CryptoRng>(
     sk: &SecretKeyData,
     msg: &[u8],
