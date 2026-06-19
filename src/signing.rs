@@ -70,12 +70,14 @@ pub fn protocols_sign<R: CryptoRng>(
         // 3. Challenge ideal (pulled back through the secret key matrix).
         let lideal_chall_two =
             compute_challenge_ideal_signature(&sk.mat_bacan_to_ba0_two, &chall_coeff, TEP)?;
-        // 4. Response quaternion. Run the lattice ops at a WIDE width: with the
-        // TRUE dual-trick intersection, chall_secret has norm ~2^384 (entries
-        // ~2^384), and the SECOND intersection's dual-of-dual adjugate reaches
-        // ~2^4700, overflowing W=48 (3072 bits) → a garbage hom-lattice the
-        // sampler can't satisfy. W=96 (6144 bits) holds the dual-of-dual.
-        const W: usize = 96;
+        // 4. Response quaternion. The dual-of-dual intersection adjugate is wide
+        // (~2^4700 worst case), so the lattice ops run at a widened limb count.
+        // Empirically the sign↔verify roundtrip needs W ≥ 73 (W=72 fails, W=80
+        // passes); W=80 (5120 bits) is the smallest tested width with margin —
+        // down from the previous conservative W=96. `lattice_intersect` reduces
+        // each intermediate dual to lowest terms (lattice-preserving) to avoid
+        // any further growth. The roundtrip is the end-to-end correctness guard.
+        const W: usize = 80;
         let p_w = crate::params::lvl1::prime().resize::<W>();
         let Some((resp_w, _resp_d_w, lc_w)) = compute_response_quat_element::<W, R>(
             &widen_ideal_16::<W>(&sk.secret_ideal),

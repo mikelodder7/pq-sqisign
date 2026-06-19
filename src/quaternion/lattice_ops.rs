@@ -104,14 +104,29 @@ pub(crate) fn lattice_intersect<const L: usize>(
 ) -> ([[Int<L>; 4]; 4], Uint<L>) {
     use crate::quaternion::hnf::quat_lattice_reduce_denom;
 
+    // Reduce-as-you-go: `lattice_dual` returns the RAW adjugate (entries ~‖B‖³,
+    // denom = det ~‖B‖⁴). For the dual of a norm-N ideal those ~N³ entries share
+    // an ~N² common factor with the denom, so reducing each dual to lowest terms
+    // collapses it back to ~N-sized entries. Without this the un-reduced first
+    // duals feed the sum and the SECOND dual cubes them again → the ~2^4700
+    // dual-of-dual blowup that forced W=96. Reducing here keeps the working width
+    // at "one dual" (~‖B‖⁴) instead of "dual-of-dual" (~‖B‖¹²). `reduce_denom`
+    // is exact division by gcd ⇒ lattice-preserving (identical rational lattice).
+    let reduce = |b: &[[Int<L>; 4]; 4], d: Uint<L>| -> ([[Int<L>; 4]; 4], Uint<L>) {
+        let (rb, rd) = quat_lattice_reduce_denom::<L>(b, d.as_int());
+        (rb, rd.abs())
+    };
+
     let (du1, dn1) = lattice_dual::<L>(b1, d1);
+    let (du1, dn1) = reduce(&du1, dn1);
     let (du2, dn2) = lattice_dual::<L>(b2, d2);
+    let (du2, dn2) = reduce(&du2, dn2);
     let (sum_b, sum_d) = lattice_add::<L>(&du1, &dn1, &du2, &dn2);
     let (res_b, res_d) = lattice_dual::<L>(&sum_b, &sum_d);
     // Reduce the denominator to lowest terms (HNF is optional — the C ref notes
     // "could be removed"; `equals_lattice` and downstream don't require it).
-    let (rb, rd) = quat_lattice_reduce_denom::<L>(&res_b, res_d.as_int());
-    (rb, rd.abs())
+    let (rb, rd) = reduce(&res_b, res_d);
+    (rb, rd)
 }
 
 /// Sample a lattice element with reduced norm ≤ `radius`. Functional analogue

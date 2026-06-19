@@ -39,7 +39,7 @@ hybrid-array = { version = "0.4", features = ["zeroize"] }
 serde = { version = "1", optional = true, default-features = false, features = ["derive"] }
 serdect = { version = "0.4", optional = true, default-features = false }
 getrandom = { version = "0.4", optional = true, default-features = false }
-signature = { version = "2", default-features = false, optional = true }
+signature = { version = "3.0.0", default-features = false, optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
