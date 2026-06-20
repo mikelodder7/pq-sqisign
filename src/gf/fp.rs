@@ -69,6 +69,75 @@ pub trait BaseField:
     fn from_bytes_le(b: &[u8]) -> CtOption<Self>;
 }
 
+/// Hot-path multiply/square, dispatched per concrete field type. Level 1
+/// (4-limb, p = 5·2^248 − 1) routes to the hand-written x86_64 `mulx/adcx/adox`
+/// backend in [`crate::gf::fp1_intrinsics`] when the target supports BMI2+ADX,
+/// falling back to `crypto-bigint` otherwise. Levels 3/5 always use
+/// `crypto-bigint`. The intrinsic result is canonicalized back to `[0, p)` so
+/// it round-trips through `ConstMontyForm` exactly (proven byte-identical by
+/// the `fp1_intrinsics` differential test and the keygen byte-exact KAT);
+/// add/sub stay on `crypto-bigint` since multiply/square dominate field cost.
+pub(crate) trait FpArith: Sized {
+    /// `self * other`.
+    fn fmul(&self, other: &Self) -> Self;
+    /// `self * self`.
+    fn fsqr(&self) -> Self;
+}
+
+impl FpArith for Fp1Element {
+    #[inline]
+    fn fmul(&self, other: &Self) -> Self {
+        #[cfg(all(target_arch = "x86_64", target_feature = "bmi2", target_feature = "adx"))]
+        {
+            let a: [u64; 4] = core::array::from_fn(|i| self.as_montgomery().as_limbs()[i].0);
+            let b: [u64; 4] = core::array::from_fn(|i| other.as_montgomery().as_limbs()[i].0);
+            let r = unsafe { crate::gf::fp1_intrinsics::mul(&a, &b) };
+            let rc = crate::gf::fp1_intrinsics::to_canonical(&r);
+            Self::from_montgomery(Uint::<4>::from_words(rc))
+        }
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2", target_feature = "adx")))]
+        {
+            self * other
+        }
+    }
+    #[inline]
+    fn fsqr(&self) -> Self {
+        #[cfg(all(target_arch = "x86_64", target_feature = "bmi2", target_feature = "adx"))]
+        {
+            let a: [u64; 4] = core::array::from_fn(|i| self.as_montgomery().as_limbs()[i].0);
+            let r = unsafe { crate::gf::fp1_intrinsics::square(&a) };
+            let rc = crate::gf::fp1_intrinsics::to_canonical(&r);
+            Self::from_montgomery(Uint::<4>::from_words(rc))
+        }
+        #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2", target_feature = "adx")))]
+        {
+            ConstMontyForm::<Lvl1Modulus, 4>::square(self)
+        }
+    }
+}
+
+impl FpArith for Fp3Element {
+    #[inline]
+    fn fmul(&self, other: &Self) -> Self {
+        self * other
+    }
+    #[inline]
+    fn fsqr(&self) -> Self {
+        ConstMontyForm::<Lvl3Modulus, 6>::square(self)
+    }
+}
+
+impl FpArith for Fp5Element {
+    #[inline]
+    fn fmul(&self, other: &Self) -> Self {
+        self * other
+    }
+    #[inline]
+    fn fsqr(&self) -> Self {
+        ConstMontyForm::<Lvl5Modulus, 8>::square(self)
+    }
+}
+
 macro_rules! impl_base_field {
     (
         $alias:ident,
@@ -107,11 +176,11 @@ macro_rules! impl_base_field {
             }
             #[inline]
             fn mul(&self, other: &Self) -> Self {
-                self * other
+                <$alias as FpArith>::fmul(self, other)
             }
             #[inline]
             fn square(&self) -> Self {
-                ConstMontyForm::<$modulus, $limbs>::square(self)
+                <$alias as FpArith>::fsqr(self)
             }
             #[inline]
             fn double(&self) -> Self {

@@ -30,7 +30,10 @@ signature = ["dep:signature", "vrfy", "alloc"]
 
 [dependencies]
 aes = { version = "0.9", default-features = false, optional = true }
-crypto-bigint = { version = "0.7", default-features = false, features = ["rand_core", "zeroize", "subtle"] }
+# Pinned to =0.7.3: crypto-bigint 0.7.4 breaks byte-exact keygen (keygen_end_to_end_matches_kat_pk0).
+# A 0.7.3→0.7.4 patch change altered Montgomery/canonical-form behavior the byte-exact KAT depends on.
+# Revisit (and re-test the KAT) before relaxing this pin. See ISA 20260618-sqisign-sign-asm.
+crypto-bigint = { version = "=0.7.3", default-features = false, features = ["rand_core", "zeroize", "subtle"] }
 crypto-primes = { version = "0.7", default-features = false }
 shake = { version = "0.1", default-features = false }
 rand_core = { version = "0.10", default-features = false }

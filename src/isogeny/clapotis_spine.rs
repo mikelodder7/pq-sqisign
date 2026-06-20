@@ -1620,8 +1620,9 @@ mod tests {
     /// first 64 bytes (the `ec_curve_to_bytes` portion). The 65th KAT byte is
     /// the verification `hint_pk` (a separate basis-hint computation we don't
     /// port here), so only pk[0..64] — the cryptographic curve content — is
-    /// compared. Heavy (real-scale dpe-LLL + spine), hence ignored.
-    #[ignore = "end-to-end keygen vs lvl1 KAT pk[0]: blocked on a DEGENERATE find_uv (0,0) (d1=1, u~2^248) for the KAT secret ideal — BOTH find_uv paths agree, so the defect is the byte-exact keygen front / J narrowing, not find_uv or the combine"]
+    /// compared. Byte-exact guard: requires `crypto-bigint = "=0.7.3"` (0.7.4
+    /// regressed a Montgomery/canonical-form detail this KAT depends on — see
+    /// the pin in Cargo.toml). Runs under `--features kat`.
     #[test]
     fn keygen_end_to_end_matches_kat_pk0() {
         use crate::quaternion::ideal::LeftIdeal;
