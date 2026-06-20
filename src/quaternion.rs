@@ -45,6 +45,7 @@
 //! `LIMBS` accordingly.
 
 pub mod algebra;
+pub mod blinding;
 pub mod connecting_ideals;
 pub mod cornacchia;
 pub mod curves_with_endomorphism;

@@ -87,7 +87,11 @@ pub(crate) trait FpArith: Sized {
 impl FpArith for Fp1Element {
     #[inline]
     fn fmul(&self, other: &Self) -> Self {
-        #[cfg(all(target_arch = "x86_64", target_feature = "bmi2", target_feature = "adx"))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "bmi2",
+            target_feature = "adx"
+        ))]
         {
             let a: [u64; 4] = core::array::from_fn(|i| self.as_montgomery().as_limbs()[i].0);
             let b: [u64; 4] = core::array::from_fn(|i| other.as_montgomery().as_limbs()[i].0);
@@ -95,21 +99,33 @@ impl FpArith for Fp1Element {
             let rc = crate::gf::fp1_intrinsics::to_canonical(&r);
             Self::from_montgomery(Uint::<4>::from_words(rc))
         }
-        #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2", target_feature = "adx")))]
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            target_feature = "bmi2",
+            target_feature = "adx"
+        )))]
         {
             self * other
         }
     }
     #[inline]
     fn fsqr(&self) -> Self {
-        #[cfg(all(target_arch = "x86_64", target_feature = "bmi2", target_feature = "adx"))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "bmi2",
+            target_feature = "adx"
+        ))]
         {
             let a: [u64; 4] = core::array::from_fn(|i| self.as_montgomery().as_limbs()[i].0);
             let r = unsafe { crate::gf::fp1_intrinsics::square(&a) };
             let rc = crate::gf::fp1_intrinsics::to_canonical(&r);
             Self::from_montgomery(Uint::<4>::from_words(rc))
         }
-        #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2", target_feature = "adx")))]
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            target_feature = "bmi2",
+            target_feature = "adx"
+        )))]
         {
             ConstMontyForm::<Lvl1Modulus, 4>::square(self)
         }
