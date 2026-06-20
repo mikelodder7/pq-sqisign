@@ -35,6 +35,50 @@ use crypto_bigint::{NonZero, Uint};
 
 use super::sqrt_mod::pow_mod_uint;
 
+/// Odd small primes for the trial-division presieve (3..=251). 2 is omitted —
+/// callers feed odd candidates, and an even composite still falls through to
+/// the BPSW step, which rejects it correctly.
+const SMALL_PRIMES: [u64; 53] = [
+    3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
+    101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193,
+    197, 199, 211, 223, 227, 229, 233, 239, 241, 251,
+];
+
+/// Fast primality test for the norm-finder hot path: a cheap small-prime
+/// presieve followed by value-sized BPSW (`crypto_primes::is_prime`).
+///
+/// **Verdict-identical** to a full primality test (and thus RNG-stream- and
+/// byte-exact-preserving):
+/// - The presieve only rejects `n` divisible by a small prime — composites a
+///   full test would also reject. The `n == p` guard preserves the (here
+///   unreachable, since `n` is always ≫ 251) case where `n` IS a small prime.
+/// - The width buckets resize `n` down to the smallest container that still
+///   holds it losslessly (`n.bits() ≤ bucket·64`), and primality is a property
+///   of the value, not the container — so the verdict is unchanged while the
+///   modexp cost drops ~(LIMBS/bucket)².
+pub fn is_prime_fast<const LIMBS: usize>(n: &Uint<LIMBS>) -> bool {
+    // 1. Trial-division presieve — O(LIMBS) per small prime, ~1000× cheaper
+    //    than BPSW, rejecting ~80% of composites before any modexp.
+    for &p in &SMALL_PRIMES {
+        let pn = NonZero::new(Uint::<LIMBS>::from_u64(p)).expect("small prime is nonzero");
+        if n.rem_vartime(&pn) == Uint::<LIMBS>::ZERO {
+            return *n == Uint::<LIMBS>::from_u64(p);
+        }
+    }
+    // 2. Value-sized BPSW. Buckets cover the structural max (t < ~1280 bits);
+    //    fall back to the full width if a caller ever exceeds 1440 bits.
+    let bits = n.bits_vartime();
+    if bits <= 480 {
+        crypto_primes::is_prime(crypto_primes::Flavor::Any, &n.resize::<8>())
+    } else if bits <= 960 {
+        crypto_primes::is_prime(crypto_primes::Flavor::Any, &n.resize::<16>())
+    } else if bits <= 1440 {
+        crypto_primes::is_prime(crypto_primes::Flavor::Any, &n.resize::<24>())
+    } else {
+        crypto_primes::is_prime(crypto_primes::Flavor::Any, n)
+    }
+}
+
 /// Test whether witness `a` proves `n` composite. Returns `true` if
 /// the witness DOES NOT prove compositeness (i.e. `n` could still be
 /// prime); returns `false` if `a` is a Miller-Rabin compositeness

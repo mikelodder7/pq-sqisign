@@ -76,7 +76,6 @@ use crate::quaternion::o0_mul::{
     left_ideal_from_element_and_integer_o0, multiply_o0_basis, reduced_norm_o0_basis,
     standard_to_o0_basis, uint_as_nonneg_int,
 };
-use crate::quaternion::primality::is_probable_prime_with_witnesses;
 use crate::quaternion::sample::sample_random_quaternion_o0;
 use crate::quaternion::sqrt_mod::tonelli_shanks_uint;
 
@@ -290,8 +289,11 @@ pub fn find_quaternion_in_full_order_with_norm_wide<const LIMBS: usize, R: Crypt
             continue;
         }
 
-        // T probably-prime?
-        if !is_probable_prime_with_witnesses::<LIMBS>(&t, witnesses) {
+        // T probably-prime? Presieve + value-sized BPSW (see is_prime_fast).
+        // Verdict-identical to the witness-MR it replaced (guarded by the
+        // keygen byte-exact KAT). `witnesses` retained in the signature.
+        let _ = witnesses;
+        if !crate::quaternion::primality::is_prime_fast::<LIMBS>(&t) {
             continue;
         }
 
@@ -453,8 +455,10 @@ pub fn represent_integer_over_alt_order<const LIMBS: usize, R: CryptoRng>(
         }
         let cornacchia_target = adjusted.wrapping_sub(&p_inner);
 
-        // T prime?  Then solve x² + q·y² = T.
-        if !is_probable_prime_with_witnesses::<LIMBS>(&cornacchia_target, witnesses) {
+        // T prime?  Then solve x² + q·y² = T. Presieve + value-sized BPSW
+        // (see is_prime_fast; verdict-identical to the witness-MR replaced).
+        let _ = witnesses;
+        if !crate::quaternion::primality::is_prime_fast::<LIMBS>(&cornacchia_target) {
             continue;
         }
         let ct_nz = match NonZero::new(cornacchia_target).into_option() {

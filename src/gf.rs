@@ -15,4 +15,5 @@
 
 pub mod arch;
 pub mod fp;
+pub mod fp1_intrinsics;
 pub mod fp2;
