@@ -18,7 +18,8 @@
 use crate::ec::montgomery::MontgomeryPoint;
 use crate::gf::fp2::Fp2;
 use crate::params::lvl1::Fp1Element;
-use crypto_bigint::U256;
+use crate::params::lvl3::Fp3Element;
+use crypto_bigint::{U256, U384};
 
 /// An `Fp` element from the reference's 4-limb Montgomery (`R = 2^256`) words.
 #[inline]
@@ -92,6 +93,214 @@ pub(crate) fn basis_e0_lvl1() -> (
         MontgomeryPoint::new(qx, one),
         MontgomeryPoint::new(pmqx, one),
     )
+}
+
+// NOTE: the lvl3 constant providers below are staged data, transcribed ahead of
+// the generic-spine work that will consume them. They are exposed as `pub` so
+// they read as public API (reachable) until that lift wires them internally.
+
+/// An `Fp` element from the reference's 6-limb Montgomery (`R = 2^384`) words (lvl3).
+#[inline]
+fn fp_mont3(limbs: [u64; 6]) -> Fp3Element {
+    Fp3Element::from_montgomery(U384::from_words(limbs))
+}
+
+/// An `Fp2 = re + im·i` (lvl3) from two Montgomery-form limb arrays.
+#[inline]
+fn fp2_mont3(re: [u64; 6], im: [u64; 6]) -> Fp2<Fp3Element> {
+    Fp2::new(fp_mont3(re), fp_mont3(im))
+}
+
+/// The canonical `E0[2^376]` x-only torsion basis `(P, Q, P−Q)` at level 3.
+///
+/// VERBATIM from `CURVES_WITH_ENDOMORPHISMS[0].basis_even`
+/// (`src/precomp/ref/lvl3/endomorphism_action.c`); PX/QX are also exposed as
+/// `BASIS_E0_PX`/`BASIS_E0_QX` in `e0_basis.c` (cross-checked equal). All three
+/// points are affine (`z = 1`). The reference stores them in 6-limb BROADWELL
+/// Montgomery form (`R = 2^384`), which equals our `Fp3Element` internal
+/// representation — verified by
+/// `params::lvl3::tests::montgomery_repr_matches_c_broadwell` — so the limbs are
+/// plugged straight in via `ConstMontyForm::from_montgomery`.
+pub fn basis_e0_lvl3() -> (
+    MontgomeryPoint<Fp3Element>,
+    MontgomeryPoint<Fp3Element>,
+    MontgomeryPoint<Fp3Element>,
+) {
+    let one = Fp2::<Fp3Element>::one();
+
+    let px = fp2_mont3(
+        [
+            0x31c4a31adbd9a5c6, 0xe7ad90c51d65d7b2, 0x88ba021701e76d61,
+            0x2cb3cdb2a2e90ddd, 0xdc1b70072d06f585, 0x16eecbda94894ad1,
+        ],
+        [
+            0xf42096161ef8662a, 0xcba5e8ce200d142d, 0x2205c5d40d107d81,
+            0xd00330eccc07a7e7, 0x16d8d4adf934c3fa, 0x6065815b3283164,
+        ],
+    );
+    let qx = fp2_mont3(
+        [
+            0x6f999f727a40c5b, 0x50a8ca71cebbf1da, 0x65cc12a7b6e85c42,
+            0x9151a12f13f8774b, 0x8678d0d647499967, 0x2e23bfb6dd51ff28,
+        ],
+        [
+            0x6bcfee41588c1c62, 0xa9249a07cd644dfe, 0xef21e097d60b5ff8,
+            0xcecabfeab509e310, 0xf010f836ce26d4bd, 0x2a7787556e853bb9,
+        ],
+    );
+    let pmqx = fp2_mont3(
+        [
+            0x1a0f70dccedb8c78, 0x7dec6534b94f5bd1, 0xe508bd760193eeb6,
+            0x10bf4b1c0497322f, 0x2d7e909753d8633c, 0x3722113986808eb1,
+        ],
+        [
+            0x6a46366e4b4b295e, 0xa5a183bada734009, 0x8609a1279ac3fe52,
+            0x269b74a0c7e6f7c5, 0x9cf14a7d5c5199bd, 0x5ce1f24843721b0,
+        ],
+    );
+
+    (
+        MontgomeryPoint::new(px, one),
+        MontgomeryPoint::new(qx, one),
+        MontgomeryPoint::new(pmqx, one),
+    )
+}
+
+#[cfg(test)]
+mod lvl3_basis_tests {
+    use super::*;
+
+    #[test]
+    fn basis_e0_lvl3_is_well_formed() {
+        let (p, q, pmq) = basis_e0_lvl3();
+        let one = Fp2::<Fp3Element>::one();
+
+        // All three points are affine (z normalized to 1) — matches the C
+        // reference storing each basis point with Z = Montgomery-1.
+        assert_eq!(p.z, one, "P.z must be 1");
+        assert_eq!(q.z, one, "Q.z must be 1");
+        assert_eq!(pmq.z, one, "(P-Q).z must be 1");
+
+        // x-coords nonzero and pairwise distinct — catches a dropped limb,
+        // a duplicated point, or two points swapped during transcription.
+        assert!(!bool::from(p.x.is_zero()), "P.x nonzero");
+        assert!(!bool::from(q.x.is_zero()), "Q.x nonzero");
+        assert!(!bool::from(pmq.x.is_zero()), "(P-Q).x nonzero");
+        assert_ne!(p.x, q.x, "P != Q");
+        assert_ne!(p.x, pmq.x, "P != P-Q");
+        assert_ne!(q.x, pmq.x, "Q != P-Q");
+
+        // Independent cross-source check: PX/QX as stored in `e0_basis.c`
+        // (BASIS_E0_PX/QX) — a separate C file from the `basis_even` table the
+        // function transcribes — must agree, guarding against a single-limb typo
+        // in either transcription.
+        let e0_px = fp2_mont3(
+            [
+                0x31c4a31adbd9a5c6, 0xe7ad90c51d65d7b2, 0x88ba021701e76d61,
+                0x2cb3cdb2a2e90ddd, 0xdc1b70072d06f585, 0x16eecbda94894ad1,
+            ],
+            [
+                0xf42096161ef8662a, 0xcba5e8ce200d142d, 0x2205c5d40d107d81,
+                0xd00330eccc07a7e7, 0x16d8d4adf934c3fa, 0x6065815b3283164,
+            ],
+        );
+        let e0_qx = fp2_mont3(
+            [
+                0x6f999f727a40c5b, 0x50a8ca71cebbf1da, 0x65cc12a7b6e85c42,
+                0x9151a12f13f8774b, 0x8678d0d647499967, 0x2e23bfb6dd51ff28,
+            ],
+            [
+                0x6bcfee41588c1c62, 0xa9249a07cd644dfe, 0xef21e097d60b5ff8,
+                0xcecabfeab509e310, 0xf010f836ce26d4bd, 0x2a7787556e853bb9,
+            ],
+        );
+        assert_eq!(p.x, e0_px, "P.x matches e0_basis.c BASIS_E0_PX");
+        assert_eq!(q.x, e0_qx, "Q.x matches e0_basis.c BASIS_E0_QX");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Endomorphism action matrices (lvl3).
+//
+// Same shape and meaning as the lvl1 matrices below, but the integers are
+// reduced mod `2^376` (lvl3 TORSION_EVEN_POWER, F = 376) so each entry is a
+// 6-limb little-endian value. VERBATIM from
+// `src/precomp/ref/lvl3/endomorphism_action.c` CURVES_WITH_ENDOMORPHISMS[0]:
+// the struct field order (from endomorphism_action.h) is
+// `action_i, action_j, action_k, action_gen2, action_gen3, action_gen4`, i.e.
+// the 64-bit GMP `_mp_d` integer arrays 1-4 (action_i), 17-20 (action_gen3),
+// 21-24 (action_gen4). Offset validated against lvl1's known-good values.
+// Exposed as `pub` (reachable) until the generic spine consumes them.
+
+/// `action_i` (lvl3) = action of the quaternion `i` (== `action_gen2`).
+pub const ACTION_I_LVL3: [[[u64; 6]; 2]; 2] = [
+    [
+        [0x3a84778f9c97d1, 0x13daabd666ae39d2, 0x5f9ff8dbb9e7f153, 0x62b9a4f0fcb236f7, 0xe8c5539d36945c07, 0x9ac691f16c7631],
+        [0x76df4a43bac61ac2, 0xd32d1cf84a2de925, 0xdf8bc02f1dc07867, 0x4a9ee07d4f0cf122, 0x357087917ce20a97, 0x6634cc519b1749],
+    ],
+    [
+        [0x9c61a4810234fb0f, 0xe38c3a72cd584bd1, 0xdc99f1020ea3be7b, 0xef915d86b229f180, 0xf66fa9d5883146c4, 0xfc9ebd6c02a451],
+        [0xffc57b887063682f, 0xec2554299951c62d, 0xa060072446180eac, 0x9d465b0f034dc908, 0x173aac62c96ba3f8, 0x65396e0e9389ce],
+    ],
+];
+
+/// `action_gen3` (lvl3) = action of the O0 generator `(i + j)/2`.
+pub const ACTION_GEN3_LVL3: [[[u64; 6]; 2]; 2] = [
+    [
+        [0xe1f64f99ab6f83a3, 0xec7ad9212b61c2e8, 0xe0fdf78e75554f14, 0x107cfb09044bb2bf, 0x9bbe063355f7f365, 0xf125b09c11409c],
+        [0x127f16ca0130dc3d, 0x2e8d3ece57d01c5c, 0x6cab1272eb26c5ae, 0xfeb3321b07c979c7, 0x62c3efa2b33ec99f, 0x4ec959777c7bbe],
+    ],
+    [
+        [0x68d7ec590f9b8f83, 0x2714909b787e8301, 0x60f499508ea5e264, 0xeb9a4d1b392b971d, 0x1f24cbaadd02b9fb, 0x910fc86afb626c],
+        [0x1e09b06654907c5d, 0x138526ded49e3d17, 0x1f0208718aaab0eb, 0xef8304f6fbb44d40, 0x6441f9ccaa080c9a, 0xeda4f63eebf63],
+    ],
+];
+
+/// `action_gen4` (lvl3) = action of the O0 generator `(1 + k)/2`.
+pub const ACTION_GEN4_LVL3: [[[u64; 6]; 2]; 2] = [
+    [
+        [0x75414cc7cecbac5a, 0x4e827606200564a0, 0x292d242e3ce25fda, 0x41454a599b5d6550, 0xa2e0d9b7bb7f3081, 0x365b0a54c45b87],
+        [0xfac7d5b97057947, 0x146a1ce1812188f5, 0x26c39d760c3c70dd, 0xba0b51891aa57c19, 0x3c690b13b47705ad, 0x688e590a97fdde],
+    ],
+    [
+        [0x6ea5a123443b189a, 0x1699b8f44358c3e8, 0xfb6b31bbf36c7f02, 0x290f14ea45c8eea7, 0xc64e175cd0ea9c11, 0x896a655cf9ad0],
+        [0x8abeb338313453a7, 0xb17d89f9dffa9b5f, 0xd6d2dbd1c31da025, 0xbebab5a664a29aaf, 0x5d1f26484480cf7e, 0xc9a4f5ab3ba478],
+    ],
+];
+
+#[cfg(test)]
+mod lvl3_action_tests {
+    use super::*;
+    use crypto_bigint::U384;
+
+    #[test]
+    fn action_i_lvl3_squares_to_minus_identity_mod_2_376() {
+        // ACTION_I is the matrix of multiplication-by-`i` on E0's 2^376-torsion
+        // basis. Since i² = −1 in the quaternion algebra, ACTION_I² ≡ −I
+        // (mod 2^376). This is an INDEPENDENT algebraic check on the transcribed
+        // integers (not a restatement of them): one wrong limb breaks it.
+        let a = [
+            [U384::from_words(ACTION_I_LVL3[0][0]), U384::from_words(ACTION_I_LVL3[0][1])],
+            [U384::from_words(ACTION_I_LVL3[1][0]), U384::from_words(ACTION_I_LVL3[1][1])],
+        ];
+        // mask = 2^376 − 1; note −1 ≡ 2^376 − 1 (mod 2^376).
+        let mask = U384::ONE.shl_vartime(376).wrapping_sub(&U384::ONE);
+        // (A·A)[i][k] mod 2^376. Each product is taken mod 2^384 (wrapping_mul)
+        // then reduced mod 2^376 — valid because 2^376 divides 2^384.
+        let entry = |i: usize, k: usize| -> U384 {
+            let t0 = a[i][0].wrapping_mul(&a[0][k]);
+            let t1 = a[i][1].wrapping_mul(&a[1][k]);
+            t0.wrapping_add(&t1).bitand(&mask)
+        };
+        assert_eq!(entry(0, 0), mask, "(A^2)[0][0] == -1 mod 2^376");
+        assert_eq!(entry(1, 1), mask, "(A^2)[1][1] == -1 mod 2^376");
+        assert_eq!(entry(0, 1), U384::ZERO, "(A^2)[0][1] == 0");
+        assert_eq!(entry(1, 0), U384::ZERO, "(A^2)[1][0] == 0");
+
+        // gen3/gen4 sanity: distinct from each other and from i.
+        assert_ne!(ACTION_GEN3_LVL3, ACTION_GEN4_LVL3, "gen3 != gen4");
+        assert_ne!(ACTION_I_LVL3, ACTION_GEN3_LVL3, "i != gen3");
+    }
 }
 
 // ---------------------------------------------------------------------------

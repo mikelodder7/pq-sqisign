@@ -64,6 +64,184 @@ pub fn standard_order_o0_l1() -> AltExtremalOrder {
     }
 }
 
+/// Standard order `O_0` for **lvl3**. The `O_0` lattice in std `(1,i,j,ij)`
+/// coords is level-independent — denom 2, basis `⟨1, i, (i+j)/2, (1+ij)/2⟩`,
+/// `z = i` (`z² = −1 = −q`), `t = j` (`t² = −p`), `q = 1` — and C
+/// `EXTREMAL_ORDERS[0]` is byte-identical at lvl1 and lvl3 (verified against
+/// `quaternion_data.c`: same denom/basis/z/t/q). lvl3 order data is at most 6
+/// limbs, well within the `Int<8>` storage these providers already use, so lvl3
+/// reuses the shared transcription directly rather than duplicating it.
+pub fn standard_order_o0_lvl3() -> AltExtremalOrder {
+    standard_order_o0_l1()
+}
+
+/// Alternate extremal order 0 for **lvl3** (C `EXTREMAL_ORDERS[1]`), `q = 5`.
+///
+/// Byte-exact from `quaternion_data.c` GMP-64 limbs. Field order: lattice
+/// `{denom, basis}` then `z`, `t` each `{denom, coord}` (denom-first); basis is
+/// row-major (`order_basis[i][j]` = C `basis[i][j]`). Negative entries (C
+/// `_mp_size < 0`) applied via `wrapping_neg`. The denom/basis/z/t mapping was
+/// validated limb-for-limb against `alternate_extremal_order_0_l1`. Checked by
+/// `alternate_extremal_order_0_lvl3_satisfies_z2_q_t2_p`.
+pub fn alternate_extremal_order_0_lvl3() -> AltExtremalOrder {
+    let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
+    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
+    let z0 = Int::<8>::from_i64(0);
+    let one = Int::<8>::from_i64(1);
+    // distinct limb constants (low-to-high, zero-padded to 8):
+    let d = [0x3e5958f3e7edafcc, 0x4a6df2c588d69763, 0x3c317d27f44b3afe, 0, 0, 0, 0, 0];
+    let v = [0x9f2cac79f3f6d7e6, 0x2536f962c46b4bb1, 0x1e18be93fa259d7f, 0, 0, 0, 0, 0];
+    let w = [0x2a21a3eaea912fb7, 0xa2d3de7326b39cd1, 0x266bc96320a1cecc, 0, 0, 0, 0, 0];
+    let big = [0x843690644aa81e5f, 0xdd152fd850ab8fae, 0x3d794238343617a, 0, 0, 0x680000000000000, 0, 0];
+    let s = [0x843690644aa81e5f, 0xdd152fd850ab8fae, 0x3d794238343617a, 0, 0, 0, 0, 0];
+    AltExtremalOrder {
+        order_basis: [
+            [pos(d), z0, pos(v), z0],
+            [z0, pos(w), z0, pos(big)],
+            [z0, z0, pos(v), z0],
+            [z0, one, z0, neg(s)],
+        ],
+        order_denom: pos(d),
+        z: Quaternion::<8>::new(z0, pos(w), z0, one),
+        z_denom: pos(d),
+        t: Quaternion::<8>::new(z0, z0, one, z0),
+        t_denom: one,
+        q: 5,
+    }
+}
+
+/// Alternate extremal order 1 for **lvl3** (C `EXTREMAL_ORDERS[2]`), `q = 13`.
+/// Byte-exact from `quaternion_data.c` (GMP-64); see [`alternate_extremal_order_0_lvl3`]
+/// for the field/basis layout. Checked by `alt_extremal_orders_lvl3_satisfy_z2_q_t2_p`.
+pub fn alternate_extremal_order_1_lvl3() -> AltExtremalOrder {
+    let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
+    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
+    AltExtremalOrder {
+        order_basis: [
+            [pos([0x8dca5bc7b21f0c40, 0xbdddc8b1ca0ac2a2, 0x3cc00a9dc9d5cb7d, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x46e52de3d90f8620, 0xdeeee458e5056151, 0x1e60054ee4eae5be, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
+            [Int::<8>::from_i64(0), pos([0xbd0b4e1e9f6f6801, 0x3849b4c6aa125c5e, 0xb10632272d76d6c7, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xa4cf343c41358400, 0x5ac7c207a4146603, 0x6cf01edd084921b, 0x0, 0x0, 0x280000000000000, 0x0, 0x0])],
+            [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x46e52de3d90f8620, 0xdeeee458e5056151, 0x1e60054ee4eae5be, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
+            [Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0xa4cf343c41358400, 0x5ac7c207a4146603, 0x6cf01edd084921b, 0x0, 0x0, 0x0, 0x0, 0x0])],
+        ],
+        order_denom: pos([0x8dca5bc7b21f0c40, 0xbdddc8b1ca0ac2a2, 0x3cc00a9dc9d5cb7d, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        z: Quaternion::<8>::new(Int::<8>::from_i64(0), pos([0xbd0b4e1e9f6f6801, 0x3849b4c6aa125c5e, 0xb10632272d76d6c7, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])),
+        z_denom: pos([0x8dca5bc7b21f0c40, 0xbdddc8b1ca0ac2a2, 0x3cc00a9dc9d5cb7d, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        t: Quaternion::<8>::new(Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)),
+        t_denom: pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q: 13,
+    }
+}
+
+/// Alternate extremal order 2 for **lvl3** (C `EXTREMAL_ORDERS[3]`), `q = 17`.
+/// Byte-exact from `quaternion_data.c` (GMP-64); see [`alternate_extremal_order_0_lvl3`]
+/// for the field/basis layout. Checked by `alt_extremal_orders_lvl3_satisfy_z2_q_t2_p`.
+pub fn alternate_extremal_order_2_lvl3() -> AltExtremalOrder {
+    let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
+    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
+    AltExtremalOrder {
+        order_basis: [
+            [pos([0x5357db3873285b40, 0x85cf01f331d8465b, 0x3dab6f6dd8dc32b9, 0x2, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xa9abed9c39942da0, 0xc2e780f998ec232d, 0x1ed5b7b6ec6e195c, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
+            [Int::<8>::from_i64(0), neg([0xe28458cc4ddcb7ef, 0xc383dca9b9edc4a7, 0x7663d2bc5a13c3dd, 0x3, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x9489605a925adc07, 0x65fa880f7944475b, 0x78f213f8329ced5a, 0xfffffffffffffffe, 0xffffffffffffffff, 0x207fffffffffffff, 0x0, 0x0])],
+            [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0xa9abed9c39942da0, 0xc2e780f998ec232d, 0x1ed5b7b6ec6e195c, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
+            [Int::<8>::from_i64(0), pos([0x11, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xc2e5c6605ca49c07, 0xa3de3b322b1d94d7, 0x1a11feab2fd367a4, 0x0, 0x0, 0x0, 0x0, 0x0])],
+        ],
+        order_denom: pos([0x5357db3873285b40, 0x85cf01f331d8465b, 0x3dab6f6dd8dc32b9, 0x2, 0x0, 0x0, 0x0, 0x0]),
+        z: Quaternion::<8>::new(Int::<8>::from_i64(0), neg([0xe28458cc4ddcb7ef, 0xc383dca9b9edc4a7, 0x7663d2bc5a13c3dd, 0x3, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x11, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])),
+        z_denom: pos([0x5357db3873285b40, 0x85cf01f331d8465b, 0x3dab6f6dd8dc32b9, 0x2, 0x0, 0x0, 0x0, 0x0]),
+        t: Quaternion::<8>::new(Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)),
+        t_denom: pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q: 17,
+    }
+}
+
+/// Alternate extremal order 3 for **lvl3** (C `EXTREMAL_ORDERS[4]`), `q = 41`.
+/// Byte-exact from `quaternion_data.c` (GMP-64); see [`alternate_extremal_order_0_lvl3`]
+/// for the field/basis layout. Checked by `alt_extremal_orders_lvl3_satisfy_z2_q_t2_p`.
+pub fn alternate_extremal_order_3_lvl3() -> AltExtremalOrder {
+    let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
+    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
+    AltExtremalOrder {
+        order_basis: [
+            [pos([0x7c1cd4b8abc3dfda, 0x79cc21da66b24727, 0xa12d9b8d553de3a3, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xbe0e6a5c55e1efed, 0xbce610ed33592393, 0x5096cdc6aa9ef1d1, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
+            [Int::<8>::from_i64(0), neg([0x2e5272f1ea6fe8e2, 0xfd0e5fe4c137152a, 0xc6bfa3d07a19736, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xa4216ae48a09a15, 0x2f5e26a7534a3772, 0x745ca36539ebce7c, 0x576a2576a2576a25, 0x2576a2576a2576a2, 0x6576a2576a2576a, 0x0, 0x0])],
+            [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0xbe0e6a5c55e1efed, 0xbce610ed33592393, 0x5096cdc6aa9ef1d1, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
+            [Int::<8>::from_i64(0), pos([0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x2c45b03b253350e5, 0x8c73afffaaf10fde, 0x26c7bc0fb3ebfd, 0x0, 0x0, 0x0, 0x0, 0x0])],
+        ],
+        order_denom: pos([0x7c1cd4b8abc3dfda, 0x79cc21da66b24727, 0xa12d9b8d553de3a3, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        z: Quaternion::<8>::new(Int::<8>::from_i64(0), neg([0x2e5272f1ea6fe8e2, 0xfd0e5fe4c137152a, 0xc6bfa3d07a19736, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])),
+        z_denom: pos([0x7c1cd4b8abc3dfda, 0x79cc21da66b24727, 0xa12d9b8d553de3a3, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        t: Quaternion::<8>::new(Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)),
+        t_denom: pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q: 41,
+    }
+}
+
+/// Alternate extremal order 4 for **lvl3** (C `EXTREMAL_ORDERS[5]`), `q = 73`.
+/// Byte-exact from `quaternion_data.c` (GMP-64); see [`alternate_extremal_order_0_lvl3`]
+/// for the field/basis layout. Checked by `alt_extremal_orders_lvl3_satisfy_z2_q_t2_p`.
+pub fn alternate_extremal_order_4_lvl3() -> AltExtremalOrder {
+    let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
+    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
+    AltExtremalOrder {
+        order_basis: [
+            [pos([0x950c56e76067b000, 0xb9901bfb28e60b3d, 0x29aa227371840eb8, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xca862b73b033d800, 0x5cc80dfd9473059e, 0x14d51139b8c2075c, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
+            [Int::<8>::from_i64(0), pos([0xdec96120ef7fffff, 0x2d72e8d7fcb43d80, 0x4bc9cd2aeecc4077, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0xedfb9519122773ba, 0xf0b21a200e80605b, 0xefd6b325a90cb418, 0x8fc7e3f1f8fc7e3e, 0xc7e3f1f8fc7e3f1f, 0x71f8fc7e3f1f8f, 0x0, 0x0])],
+            [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0xca862b73b033d800, 0x5cc80dfd9473059e, 0x14d51139b8c2075c, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
+            [Int::<8>::from_i64(0), neg([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x130f681e08a773ba, 0xf78b4ebed966eee3, 0x245c4090fa9ba4d, 0x0, 0x0, 0x0, 0x0, 0x0])],
+        ],
+        order_denom: pos([0x950c56e76067b000, 0xb9901bfb28e60b3d, 0x29aa227371840eb8, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        z: Quaternion::<8>::new(Int::<8>::from_i64(0), pos([0xdec96120ef7fffff, 0x2d72e8d7fcb43d80, 0x4bc9cd2aeecc4077, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])),
+        z_denom: pos([0x950c56e76067b000, 0xb9901bfb28e60b3d, 0x29aa227371840eb8, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        t: Quaternion::<8>::new(Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)),
+        t_denom: pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q: 73,
+    }
+}
+
+/// Alternate extremal order 5 for **lvl3** (C `EXTREMAL_ORDERS[6]`), `q = 89`.
+/// Byte-exact from `quaternion_data.c` (GMP-64); see [`alternate_extremal_order_0_lvl3`]
+/// for the field/basis layout. Checked by `alt_extremal_orders_lvl3_satisfy_z2_q_t2_p`.
+pub fn alternate_extremal_order_5_lvl3() -> AltExtremalOrder {
+    let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
+    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
+    AltExtremalOrder {
+        order_basis: [
+            [pos([0x97d3c8dc37a07b26, 0x1df20931d6bd7f2f, 0x6ee725914a3e2918, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xcbe9e46e1bd03d93, 0xef90498eb5ebf97, 0x377392c8a51f148c, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
+            [Int::<8>::from_i64(0), pos([0x6a692b8a9faa4fae, 0x301c7892633a436c, 0xac500e41cb54ec62, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x617e87b7eb6630b3, 0x90c8dcf40fa7027c, 0xb7baaf369e3c7e8b, 0x75eebdd7baf75eeb, 0xd7baf75eebdd7baf, 0x2ebdd7baf75eebd, 0x0, 0x0])],
+            [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0xcbe9e46e1bd03d93, 0xef90498eb5ebf97, 0x377392c8a51f148c, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
+            [Int::<8>::from_i64(0), neg([0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x51231b920986b5ab, 0xc0fd4896653b4b2a, 0xf7d20ec06c579e, 0x0, 0x0, 0x0, 0x0, 0x0])],
+        ],
+        order_denom: pos([0x97d3c8dc37a07b26, 0x1df20931d6bd7f2f, 0x6ee725914a3e2918, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        z: Quaternion::<8>::new(Int::<8>::from_i64(0), pos([0x6a692b8a9faa4fae, 0x301c7892633a436c, 0xac500e41cb54ec62, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])),
+        z_denom: pos([0x97d3c8dc37a07b26, 0x1df20931d6bd7f2f, 0x6ee725914a3e2918, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        t: Quaternion::<8>::new(Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)),
+        t_denom: pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q: 89,
+    }
+}
+
+/// Alternate extremal order 6 for **lvl3** (C `EXTREMAL_ORDERS[7]`), `q = 97`.
+/// Byte-exact from `quaternion_data.c` (GMP-64); see [`alternate_extremal_order_0_lvl3`]
+/// for the field/basis layout. Checked by `alt_extremal_orders_lvl3_satisfy_z2_q_t2_p`.
+pub fn alternate_extremal_order_6_lvl3() -> AltExtremalOrder {
+    let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
+    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
+    AltExtremalOrder {
+        order_basis: [
+            [pos([0xf8744b4c6df0a194, 0x84f211bb362ab43e, 0xe5017d4261a2c623, 0x30, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x7c3a25a636f850ca, 0xc27908dd9b155a1f, 0x7280bea130d16311, 0x18, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
+            [Int::<8>::from_i64(0), pos([0x2154245e63ae83f7, 0x1b2d8f96544b883c, 0x118e7bdd8d73cc0c, 0x1df, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0xce46bd84489cbd79, 0x3c5a642ab1949344, 0x4dcb6e1f96f5db04, 0xffffffffffffff6e, 0xffffffffffffffff, 0x207fffffffffffff, 0x0, 0x0])],
+            [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x7c3a25a636f850ca, 0xc27908dd9b155a1f, 0x7280bea130d16311, 0x18, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
+            [Int::<8>::from_i64(0), neg([0x61, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x71a805773fdaa1c9, 0x2a5decf24269f4d3, 0x782c47e56e4141b6, 0x2, 0x0, 0x0, 0x0, 0x0])],
+        ],
+        order_denom: pos([0xf8744b4c6df0a194, 0x84f211bb362ab43e, 0xe5017d4261a2c623, 0x30, 0x0, 0x0, 0x0, 0x0]),
+        z: Quaternion::<8>::new(Int::<8>::from_i64(0), pos([0x2154245e63ae83f7, 0x1b2d8f96544b883c, 0x118e7bdd8d73cc0c, 0x1df, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x61, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])),
+        z_denom: pos([0xf8744b4c6df0a194, 0x84f211bb362ab43e, 0xe5017d4261a2c623, 0x30, 0x0, 0x0, 0x0, 0x0]),
+        t: Quaternion::<8>::new(Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)),
+        t_denom: pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q: 97,
+    }
+}
+
 /// Alternate extremal order 0 (C `EXTREMAL_ORDERS[1]`), q = 5.
 pub fn alternate_extremal_order_0_l1() -> AltExtremalOrder {
     AltExtremalOrder {
@@ -1033,6 +1211,46 @@ mod tests {
                 .wrapping_mul(&o.t_denom.abs())
                 .wrapping_mul(&o.t_denom.abs());
             assert_eq!(nt, pt, "N(t) must equal p·t_denom² (t[{k}])");
+        }
+    }
+
+    /// All 7 lvl3 alternate orders satisfy the defining invariants (`z² = −q`
+    /// trace-zero with `N(z) = q·z_denom²`, `t² = −p` with `N(t) = p·t_denom²`)
+    /// against the lvl3 prime — an INDEPENDENT algebraic check on the transcribed
+    /// limbs. Norm products run at width 16: lvl3 denominators reach ~384 bits,
+    /// so `q·z_denom²` can exceed the 512-bit `Int<8>` range.
+    #[test]
+    fn alt_extremal_orders_lvl3_satisfy_z2_q_t2_p() {
+        let p = crate::params::lvl3::prime().resize::<16>();
+        let orders = [
+            alternate_extremal_order_0_lvl3(),
+            alternate_extremal_order_1_lvl3(),
+            alternate_extremal_order_2_lvl3(),
+            alternate_extremal_order_3_lvl3(),
+            alternate_extremal_order_4_lvl3(),
+            alternate_extremal_order_5_lvl3(),
+            alternate_extremal_order_6_lvl3(),
+        ];
+        let wide = |x: &Quaternion<8>| {
+            Quaternion::<16>::new(
+                x.a.resize::<16>(),
+                x.b.resize::<16>(),
+                x.c.resize::<16>(),
+                x.d.resize::<16>(),
+            )
+        };
+        for (k, o) in orders.iter().enumerate() {
+            assert_eq!(o.z.a, Int::<8>::from_i64(0), "z trace-zero (z[{k}])");
+            let zden = o.z_denom.resize::<16>();
+            let nz = wide(&o.z).norm(&p).abs();
+            let qz = Uint::<16>::from_u64(u64::from(o.q))
+                .wrapping_mul(&zden.abs())
+                .wrapping_mul(&zden.abs());
+            assert_eq!(nz, qz, "N(z)=q·z_denom² (z[{k}])");
+            let tden = o.t_denom.resize::<16>();
+            let nt = wide(&o.t).norm(&p).abs();
+            let pt = p.wrapping_mul(&tden.abs()).wrapping_mul(&tden.abs());
+            assert_eq!(nt, pt, "N(t)=p·t_denom² (t[{k}])");
         }
     }
 

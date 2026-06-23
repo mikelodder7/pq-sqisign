@@ -11,11 +11,12 @@
 //! C index 0 is the standard curve E0). Matrices stored row-major
 //! `[[m00, m01], [m10, m11]]`; field order i, j, k, gen2, gen3, gen4.
 
-use crypto_bigint::{Int, Uint};
+use crypto_bigint::{Int, U384, Uint};
 
 use crate::gf::fp::BaseField;
 use crate::gf::fp2::Fp2;
 use crate::params::lvl1::Fp1Element;
+use crate::params::lvl3::Fp3Element;
 
 /// A NICE starting curve with its endomorphism data (the C
 /// `curve_with_endomorphism_ring_t`): Montgomery `(curve_a : curve_c)`, the 2^F
@@ -70,6 +71,54 @@ fn fp2_be(re: &str, im: &str) -> Fp2<Fp1Element> {
 #[inline]
 fn iw(words: [u64; 8]) -> Int<8> {
     *Uint::<8>::from_words(words).as_int()
+}
+
+/// lvl3 analogue of [`CurveWithEndomorphism`] over `Fp3Element`. The action
+/// matrices stay `Int<8>` (level-independent storage; mod 2^376 fits in ≤6
+/// limbs). Field elements are built directly from the C BROADWELL Montgomery
+/// 6-limb words via `from_montgomery` (equivalent to lvl1's canonical-bytes
+/// path, simpler). A parallel struct (not a genericization of
+/// `CurveWithEndomorphism`) keeps lvl1 untouched; the two merge when the spine
+/// is lifted.
+#[derive(Clone, Debug)]
+pub struct CurveWithEndomorphismLvl3 {
+    /// Montgomery curve coefficient `A` (Fp2).
+    pub curve_a: Fp2<Fp3Element>,
+    /// Montgomery curve coefficient `C` (Fp2, normalized to 1).
+    pub curve_c: Fp2<Fp3Element>,
+    /// 2^F torsion basis point `P`, x-coordinate.
+    pub p_x: Fp2<Fp3Element>,
+    /// 2^F torsion basis point `P`, z-coordinate (projective, normalized to 1).
+    pub p_z: Fp2<Fp3Element>,
+    /// 2^F torsion basis point `Q`, x-coordinate.
+    pub q_x: Fp2<Fp3Element>,
+    /// 2^F torsion basis point `Q`, z-coordinate.
+    pub q_z: Fp2<Fp3Element>,
+    /// 2^F torsion basis point `P − Q`, x-coordinate.
+    pub pmq_x: Fp2<Fp3Element>,
+    /// 2^F torsion basis point `P − Q`, z-coordinate.
+    pub pmq_z: Fp2<Fp3Element>,
+    /// Action of `i` on the basis (mod 2^F), row-major.
+    pub action_i: [[Int<8>; 2]; 2],
+    /// Action of `j` on the basis (mod 2^F), row-major.
+    pub action_j: [[Int<8>; 2]; 2],
+    /// Action of `k` on the basis (mod 2^F), row-major.
+    pub action_k: [[Int<8>; 2]; 2],
+    /// Action of the O₀ generator `gen2` (= `i`) on the basis, row-major.
+    pub action_gen2: [[Int<8>; 2]; 2],
+    /// Action of the O₀ generator `gen3` on the basis, row-major.
+    pub action_gen3: [[Int<8>; 2]; 2],
+    /// Action of the O₀ generator `gen4` on the basis, row-major.
+    pub action_gen4: [[Int<8>; 2]; 2],
+}
+
+/// `Fp2<Fp3Element>` from two C BROADWELL Montgomery 6-limb words (re, im).
+#[inline]
+fn fp2m3(re: [u64; 6], im: [u64; 6]) -> Fp2<Fp3Element> {
+    Fp2::new(
+        Fp3Element::from_montgomery(U384::from_words(re)),
+        Fp3Element::from_montgomery(U384::from_words(im)),
+    )
 }
 
 /// NICE curve 0 (C `CURVES_WITH_ENDOMORPHISMS[1]`).
@@ -2271,9 +2320,241 @@ pub fn curve_with_endomorphism_e0_l1() -> CurveWithEndomorphism {
     }
 }
 
+/// lvl3 `CURVES_WITH_ENDOMORPHISMS[0]` (the E0-with-endomorphism).
+/// Byte-exact from `endomorphism_action.c`: field elements via BROADWELL
+/// Montgomery limbs (`from_montgomery`), action matrices (mod 2^376) row-major.
+/// Checked by `curves_with_endomorphism_lvl3_actions_and_structure`.
+pub fn curve_with_endomorphism_e0_lvl3() -> CurveWithEndomorphismLvl3 {
+    CurveWithEndomorphismLvl3 {
+        curve_a: fp2m3([0x0, 0x0, 0x0, 0x0, 0x0, 0x0], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        curve_c: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        p_x: fp2m3([0x31c4a31adbd9a5c6, 0xe7ad90c51d65d7b2, 0x88ba021701e76d61, 0x2cb3cdb2a2e90ddd, 0xdc1b70072d06f585, 0x16eecbda94894ad1], [0xf42096161ef8662a, 0xcba5e8ce200d142d, 0x2205c5d40d107d81, 0xd00330eccc07a7e7, 0x16d8d4adf934c3fa, 0x6065815b3283164]),
+        p_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q_x: fp2m3([0x6f999f727a40c5b, 0x50a8ca71cebbf1da, 0x65cc12a7b6e85c42, 0x9151a12f13f8774b, 0x8678d0d647499967, 0x2e23bfb6dd51ff28], [0x6bcfee41588c1c62, 0xa9249a07cd644dfe, 0xef21e097d60b5ff8, 0xcecabfeab509e310, 0xf010f836ce26d4bd, 0x2a7787556e853bb9]),
+        q_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        pmq_x: fp2m3([0x1a0f70dccedb8c78, 0x7dec6534b94f5bd1, 0xe508bd760193eeb6, 0x10bf4b1c0497322f, 0x2d7e909753d8633c, 0x3722113986808eb1], [0x6a46366e4b4b295e, 0xa5a183bada734009, 0x8609a1279ac3fe52, 0x269b74a0c7e6f7c5, 0x9cf14a7d5c5199bd, 0x5ce1f24843721b0]),
+        pmq_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        action_i: [[iw([0x3a84778f9c97d1, 0x13daabd666ae39d2, 0x5f9ff8dbb9e7f153, 0x62b9a4f0fcb236f7, 0xe8c5539d36945c07, 0x9ac691f16c7631, 0x0, 0x0]), iw([0x76df4a43bac61ac2, 0xd32d1cf84a2de925, 0xdf8bc02f1dc07867, 0x4a9ee07d4f0cf122, 0x357087917ce20a97, 0x6634cc519b1749, 0x0, 0x0])], [iw([0x9c61a4810234fb0f, 0xe38c3a72cd584bd1, 0xdc99f1020ea3be7b, 0xef915d86b229f180, 0xf66fa9d5883146c4, 0xfc9ebd6c02a451, 0x0, 0x0]), iw([0xffc57b887063682f, 0xec2554299951c62d, 0xa060072446180eac, 0x9d465b0f034dc908, 0x173aac62c96ba3f8, 0x65396e0e9389ce, 0x0, 0x0])]],
+        action_j: [[iw([0xc3b21abbc7426f75, 0xc51b066bf0154bff, 0x625bf64130c2acd6, 0xbe4051210be52e88, 0x4eb6b8c9755b8ac2, 0x4784cf46b60b07, 0x0, 0x0]), iw([0xae1ee350479b9db8, 0x89ed60a465724f92, 0xf9ca64b6b88d12f4, 0xb2c783b8c086026b, 0x901757b3e99b88a8, 0x375de69d5de033, 0x0, 0x0])], [iw([0x354e34311d0223f7, 0x6a9ce6c423a4ba31, 0xe54f419f0ea8064c, 0xe7a33cafc02d3cb9, 0x47d9ed8031d42d32, 0x2580d369f42086, 0x0, 0x0]), iw([0x3c4de54438bd908b, 0x3ae4f9940feab400, 0x9da409becf3d5329, 0x41bfaedef41ad177, 0xb14947368aa4753d, 0xb87b30b949f4f8, 0x0, 0x0])]],
+        action_k: [[iw([0xea82998f9d9758b3, 0x9d04ec0c400ac940, 0x525a485c79c4bfb4, 0x828a94b336bacaa0, 0x45c1b36f76fe6102, 0x6cb614a988b70f, 0x0, 0x0]), iw([0x1f58fab72e0af28e, 0x28d439c3024311ea, 0x4d873aec1878e1ba, 0x7416a312354af832, 0x78d2162768ee0b5b, 0xd11cb2152ffbbc, 0x0, 0x0])], [iw([0xdd4b424688763134, 0x2d3371e886b187d0, 0xf6d66377e6d8fe04, 0x521e29d48b91dd4f, 0x8c9c2eb9a1d53822, 0x112d4cab9f35a1, 0x0, 0x0]), iw([0x157d66706268a74d, 0x62fb13f3bff536bf, 0xada5b7a3863b404b, 0x7d756b4cc945355f, 0xba3e4c9089019efd, 0x9349eb567748f0, 0x0, 0x0])]],
+        action_gen2: [[iw([0x3a84778f9c97d1, 0x13daabd666ae39d2, 0x5f9ff8dbb9e7f153, 0x62b9a4f0fcb236f7, 0xe8c5539d36945c07, 0x9ac691f16c7631, 0x0, 0x0]), iw([0x76df4a43bac61ac2, 0xd32d1cf84a2de925, 0xdf8bc02f1dc07867, 0x4a9ee07d4f0cf122, 0x357087917ce20a97, 0x6634cc519b1749, 0x0, 0x0])], [iw([0x9c61a4810234fb0f, 0xe38c3a72cd584bd1, 0xdc99f1020ea3be7b, 0xef915d86b229f180, 0xf66fa9d5883146c4, 0xfc9ebd6c02a451, 0x0, 0x0]), iw([0xffc57b887063682f, 0xec2554299951c62d, 0xa060072446180eac, 0x9d465b0f034dc908, 0x173aac62c96ba3f8, 0x65396e0e9389ce, 0x0, 0x0])]],
+        action_gen3: [[iw([0xe1f64f99ab6f83a3, 0xec7ad9212b61c2e8, 0xe0fdf78e75554f14, 0x107cfb09044bb2bf, 0x9bbe063355f7f365, 0xf125b09c11409c, 0x0, 0x0]), iw([0x127f16ca0130dc3d, 0x2e8d3ece57d01c5c, 0x6cab1272eb26c5ae, 0xfeb3321b07c979c7, 0x62c3efa2b33ec99f, 0x4ec959777c7bbe, 0x0, 0x0])], [iw([0x68d7ec590f9b8f83, 0x2714909b787e8301, 0x60f499508ea5e264, 0xeb9a4d1b392b971d, 0x1f24cbaadd02b9fb, 0x910fc86afb626c, 0x0, 0x0]), iw([0x1e09b06654907c5d, 0x138526ded49e3d17, 0x1f0208718aaab0eb, 0xef8304f6fbb44d40, 0x6441f9ccaa080c9a, 0xeda4f63eebf63, 0x0, 0x0])]],
+        action_gen4: [[iw([0x75414cc7cecbac5a, 0x4e827606200564a0, 0x292d242e3ce25fda, 0x41454a599b5d6550, 0xa2e0d9b7bb7f3081, 0x365b0a54c45b87, 0x0, 0x0]), iw([0xfac7d5b97057947, 0x146a1ce1812188f5, 0x26c39d760c3c70dd, 0xba0b51891aa57c19, 0x3c690b13b47705ad, 0x688e590a97fdde, 0x0, 0x0])], [iw([0x6ea5a123443b189a, 0x1699b8f44358c3e8, 0xfb6b31bbf36c7f02, 0x290f14ea45c8eea7, 0xc64e175cd0ea9c11, 0x896a655cf9ad0, 0x0, 0x0]), iw([0x8abeb338313453a7, 0xb17d89f9dffa9b5f, 0xd6d2dbd1c31da025, 0xbebab5a664a29aaf, 0x5d1f26484480cf7e, 0xc9a4f5ab3ba478, 0x0, 0x0])]],
+    }
+}
+
+/// lvl3 `CURVES_WITH_ENDOMORPHISMS[1]`.
+/// Byte-exact from `endomorphism_action.c`: field elements via BROADWELL
+/// Montgomery limbs (`from_montgomery`), action matrices (mod 2^376) row-major.
+/// Checked by `curves_with_endomorphism_lvl3_actions_and_structure`.
+pub fn curve_with_endomorphism_0_lvl3() -> CurveWithEndomorphismLvl3 {
+    CurveWithEndomorphismLvl3 {
+        curve_a: fp2m3([0xba9eb8f4c70021e5, 0x91d2a3a30135646f, 0xb1cd13a451e1539, 0x3da4d8755203f19a, 0x766f47fb934720b0, 0xcae81efa4bced00], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        curve_c: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        p_x: fp2m3([0x680ef136fda864e1, 0x8cdb840957d6ab5e, 0x48532297ba38fc28, 0x2d14d16894f2a36b, 0x66b9b440c0376d05, 0x3dec0b9bb181397f], [0x5acdd3af2b3b56f2, 0x56b42a3ecc4b228c, 0xdb7e3197ca743e6d, 0x2771ed7652e9c16, 0xc7feb04077cd1633, 0x24529fc9627de62f]),
+        p_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q_x: fp2m3([0x6a65d5d71f4d09fd, 0x739b0bf03ae31509, 0xe703a561a546a092, 0xb4467eea93d59fd8, 0xcdf733d30b48cc6a, 0x3b52a1fb8c4e43ca], [0xf411ec65b20b42a9, 0x23c98f212994a0ac, 0xefaadbe2672703a, 0x7d264ef99acb0d99, 0x861f5cfd6cb01618, 0x14a4bdd1b4857c58]),
+        q_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        pmq_x: fp2m3([0x79ce160874d088f9, 0xc57c9c9106adc5bc, 0x7cf0d8b099b0aaf3, 0xad75f260670cbf54, 0x69cb9df2de4dc72d, 0x2c4699f8cea02eb4], [0xf872b9c29bbe3d4b, 0x32dff1e734d03679, 0x31e8755742352400, 0x2a2f0c94067b4956, 0x5a81801dffa89b06, 0x172351750c72da67]),
+        pmq_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        action_i: [[iw([0xce2d4d0fa2a8d4f, 0x2c18be5f80797436, 0xe1067ecd35695699, 0x7293cc957d910ea0, 0x9858b900d8125f1d, 0xa1d4ac80ed95a, 0x0, 0x0]), iw([0x93f2f18970271eca, 0x9e7dabbc5a6f1c1f, 0x8db062a80c45a00a, 0xffaa400a413f70cd, 0x69c4cb0ed8a82ae6, 0xada6797a257d9a, 0x0, 0x0])], [iw([0xc6579be5fec58949, 0xc0f703ee2df6ab10, 0xb50c03b3328e1a64, 0xb10308aba23d650a, 0xc702708ab27df6e6, 0x2f99912f005301, 0x0, 0x0]), iw([0xf31d2b2f05d572b1, 0xd3e741a07f868bc9, 0x1ef98132ca96a966, 0x8d6c336a826ef15f, 0x67a746ff27eda0e2, 0xf5e2b537f126a5, 0x0, 0x0])]],
+        action_j: [[iw([0x157d66706268a74d, 0x62fb13f3bff536bf, 0xada5b7a3863b404b, 0x7d756b4cc945355f, 0xba3e4c9089019efd, 0x9349eb567748f0, 0x0, 0x0]), iw([0xe0a70548d1f50d72, 0xd72bc63cfdbcee15, 0xb278c513e7871e45, 0x8be95cedcab507cd, 0x872de9d89711f4a4, 0x2ee34dead00443, 0x0, 0x0])], [iw([0x22b4bdb97789cecc, 0xd2cc8e17794e782f, 0x9299c88192701fb, 0xade1d62b746e22b0, 0x7363d1465e2ac7dd, 0xeed2b35460ca5e, 0x0, 0x0]), iw([0xea82998f9d9758b3, 0x9d04ec0c400ac940, 0x525a485c79c4bfb4, 0x828a94b336bacaa0, 0x45c1b36f76fe6102, 0x6cb614a988b70f, 0x0, 0x0])]],
+        action_k: [[iw([0x20e335fce1201ebb, 0x62f62ef4ff68ba01, 0x804c3f9394c15e93, 0xf6731d315b3dddc5, 0x6f7e242c3d326e47, 0xf70bf463cb764b, 0x0, 0x0]), iw([0xee5068434d0e76c, 0x28674bd55a3843c6, 0x18bff7902ee1d3c5, 0xe0bc7d253924bb64, 0x709150e91355913a, 0xaac02721b26724, 0x0, 0x0])], [iw([0x800758bc45bbbd01, 0x7f9440b0fd7bf5b, 0xcd7b2ba9e5db54ed, 0x9e9b14701314fc98, 0x4cc973c6944c0ca3, 0x468b4045fea757, 0x0, 0x0]), iw([0xdf1cca031edfe145, 0x9d09d10b009745fe, 0x7fb3c06c6b3ea16c, 0x98ce2cea4c2223a, 0x9081dbd3c2cd91b8, 0x8f40b9c3489b4, 0x0, 0x0])]],
+        action_gen2: [[iw([0xce2d4d0fa2a8d4f, 0x2c18be5f80797436, 0xe1067ecd35695699, 0x7293cc957d910ea0, 0x9858b900d8125f1d, 0xa1d4ac80ed95a, 0x0, 0x0]), iw([0x93f2f18970271eca, 0x9e7dabbc5a6f1c1f, 0x8db062a80c45a00a, 0xffaa400a413f70cd, 0x69c4cb0ed8a82ae6, 0xada6797a257d9a, 0x0, 0x0])], [iw([0xc6579be5fec58949, 0xc0f703ee2df6ab10, 0xb50c03b3328e1a64, 0xb10308aba23d650a, 0xc702708ab27df6e6, 0x2f99912f005301, 0x0, 0x0]), iw([0xf31d2b2f05d572b1, 0xd3e741a07f868bc9, 0x1ef98132ca96a966, 0x8d6c336a826ef15f, 0x67a746ff27eda0e2, 0xf5e2b537f126a5, 0x0, 0x0])]],
+        action_gen3: [[iw([0x8abeb338313453a7, 0xb17d89f9dffa9b5f, 0xd6d2dbd1c31da025, 0xbebab5a664a29aaf, 0x5d1f26484480cf7e, 0xc9a4f5ab3ba478, 0x0, 0x0]), iw([0xf05382a468fa86b9, 0xeb95e31e7ede770a, 0xd93c6289f3c38f22, 0x45f4ae76e55a83e6, 0xc396f4ec4b88fa52, 0x9771a6f5680221, 0x0, 0x0])], [iw([0x915a5edcbbc4e766, 0xe966470bbca73c17, 0x494ce440c9380fd, 0xd6f0eb15ba371158, 0x39b1e8a32f1563ee, 0xf76959aa30652f, 0x0, 0x0]), iw([0x75414cc7cecbac5a, 0x4e827606200564a0, 0x292d242e3ce25fda, 0x41454a599b5d6550, 0xa2e0d9b7bb7f3081, 0x365b0a54c45b87, 0x0, 0x0])]],
+        action_gen4: [[iw([0x4accc31535b43e42, 0x941d0e57734e7905, 0x567906529010cc00, 0x593677f069d51e7c, 0x8415dbaedc499815, 0x351b55706d2381, 0x0, 0x0]), iw([0x8d4e311a1f889f23, 0x8bcf0997199f15a2, 0x254b3de8c956c7a0, 0x9cb1604a1a691224, 0x65b85903c6eea8f7, 0xb37d6ea271e8a5, 0x0, 0x0])], [iw([0xba3b39ea9280fad4, 0x2c195ffd1c9cb12b, 0x30c1af34214513bf, 0xb50a653927ea70d8, 0xa5d27fad36383106, 0xfdb4a1b0e6912a, 0x0, 0x0]), iw([0xb5333ceaca4bc1be, 0x6be2f1a88cb186fa, 0xa986f9ad6fef33ff, 0xa6c9880f962ae183, 0x7bea245123b667ea, 0xcae4aa8f92dc7e, 0x0, 0x0])]],
+    }
+}
+
+/// lvl3 `CURVES_WITH_ENDOMORPHISMS[2]`.
+/// Byte-exact from `endomorphism_action.c`: field elements via BROADWELL
+/// Montgomery limbs (`from_montgomery`), action matrices (mod 2^376) row-major.
+/// Checked by `curves_with_endomorphism_lvl3_actions_and_structure`.
+pub fn curve_with_endomorphism_1_lvl3() -> CurveWithEndomorphismLvl3 {
+    CurveWithEndomorphismLvl3 {
+        curve_a: fp2m3([0xbf6615b519d463a6, 0x979e64a9b8da3164, 0x859df5cba9d8b650, 0x22a85a9044452fc7, 0x20dc771ba98ede30, 0x2a32a9c4237ebc68], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        curve_c: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        p_x: fp2m3([0xdc7206eee724d25, 0x77f5854ede44804, 0x9aaf6180f518a8e7, 0x3e545b73d39190e5, 0xc6bb98368946daa6, 0x14aecfbf27ddc25f], [0xaecdf37a805518bc, 0xa35a955d3812112e, 0xc5200ece93ceebb2, 0x342e4cae5700f6d7, 0xd42f9a8136b85f99, 0x1530f3b5f2f0b888]),
+        p_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q_x: fp2m3([0x4d857d0bbd92d56d, 0x4cd6d4ca0ccb8bb1, 0xb726155dff1970e2, 0x6f2875ed99720f5a, 0x52ef8051b64e2587, 0x2f5dd944d70d5ae9], [0xd52f880274722ce2, 0xc68818db968afb9d, 0xaf82a3afb97cdd6e, 0x88b38567276952d2, 0xd631bc55a7eab1d4, 0x2b7455a1b2017311]),
+        q_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        pmq_x: fp2m3([0xdd3bf84065fcc3d5, 0xa2b331df3b6bbe59, 0xcb44fed2bf19569e, 0x58462efc14ebcffc, 0x35b8297fa841620f, 0x17765ea0322606f4], [0xd30579ee7916302c, 0x444f8c9d94369792, 0x429fcbbb2ddbbef6, 0xf89de1606436b201, 0x5bbb77bac0f603b7, 0x30b77a39835c835]),
+        pmq_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        action_i: [[iw([0x17cca5a7a64cb089, 0x932886e8aa34e580, 0xd6e52dbc66ce2d1e, 0xc3418c7aaf97068f, 0x580fe0a34e1c4b41, 0xf8ad38f21e796, 0x0, 0x0]), iw([0xef29cd8cec570ebe, 0x715ca791d391f13a, 0x5a37f950194ce58e, 0x5cce82c8dab6db9e, 0xad4a700339a3197, 0xb05cff91c1cd5b, 0x0, 0x0])], [iw([0xc9a04b2c8fac3b4f, 0xe41b3480e4fa69a2, 0x2f67a965d68b5801, 0x535293a77ac03134, 0x44f33e6200e9612, 0x4de41182f1bca8, 0x0, 0x0]), iw([0xe8335a5859b34f77, 0x6cd7791755cb1a7f, 0x291ad2439931d2e1, 0x3cbe73855068f970, 0xa7f01f5cb1e3b4be, 0xf0752c70de1869, 0x0, 0x0])]],
+        action_j: [[iw([0xea82998f9d9758b3, 0x9d04ec0c400ac940, 0x525a485c79c4bfb4, 0x828a94b336bacaa0, 0x45c1b36f76fe6102, 0x6cb614a988b70f, 0x0, 0x0]), iw([0x1f58fab72e0af28e, 0x28d439c3024311ea, 0x4d873aec1878e1ba, 0x7416a312354af832, 0x78d2162768ee0b5b, 0xd11cb2152ffbbc, 0x0, 0x0])], [iw([0xdd4b424688763134, 0x2d3371e886b187d0, 0xf6d66377e6d8fe04, 0x521e29d48b91dd4f, 0x8c9c2eb9a1d53822, 0x112d4cab9f35a1, 0x0, 0x0]), iw([0x157d66706268a74d, 0x62fb13f3bff536bf, 0xada5b7a3863b404b, 0x7d756b4cc945355f, 0xba3e4c9089019efd, 0x9349eb567748f0, 0x0, 0x0])]],
+        action_k: [[iw([0xb87200313132e463, 0x62c52b881045dbee, 0xa84fb179de5cee3c, 0xbef89a0f355e18e5, 0xaa316d1c35b5783a, 0x8aa0f6ed813024, 0x0, 0x0]), iw([0xd2f9e08bdac2cf24, 0xfa7c95170f1f013a, 0x3e594d0b581ea1c5, 0xa48eee19750697cc, 0x4b1db5a750c2b1b0, 0x85ab65ee682fcd, 0x0, 0x0])], [iw([0x9c91df287be58b69, 0x4f816c507c60f929, 0x3c71274159da714a, 0xa26f14bd79bf223a, 0xef81c74c606dc787, 0x6a55ff032ad1c4, 0x0, 0x0]), iw([0x478dffcececd1b9d, 0x9d3ad477efba2411, 0x57b04e8621a311c3, 0x410765f0caa1e71a, 0x55ce92e3ca4a87c5, 0x755f09127ecfdb, 0x0, 0x0])]],
+        action_gen2: [[iw([0x17cca5a7a64cb089, 0x932886e8aa34e580, 0xd6e52dbc66ce2d1e, 0xc3418c7aaf97068f, 0x580fe0a34e1c4b41, 0xf8ad38f21e796, 0x0, 0x0]), iw([0xef29cd8cec570ebe, 0x715ca791d391f13a, 0x5a37f950194ce58e, 0x5cce82c8dab6db9e, 0xad4a700339a3197, 0xb05cff91c1cd5b, 0x0, 0x0])], [iw([0xc9a04b2c8fac3b4f, 0xe41b3480e4fa69a2, 0x2f67a965d68b5801, 0x535293a77ac03134, 0x44f33e6200e9612, 0x4de41182f1bca8, 0x0, 0x0]), iw([0xe8335a5859b34f77, 0x6cd7791755cb1a7f, 0x291ad2439931d2e1, 0x3cbe73855068f970, 0xa7f01f5cb1e3b4be, 0xf0752c70de1869, 0x0, 0x0])]],
+        action_gen3: [[iw([0x75414cc7cecbac5a, 0x4e827606200564a0, 0x292d242e3ce25fda, 0x41454a599b5d6550, 0xa2e0d9b7bb7f3081, 0x365b0a54c45b87, 0x0, 0x0]), iw([0xfac7d5b97057947, 0x146a1ce1812188f5, 0x26c39d760c3c70dd, 0xba0b51891aa57c19, 0x3c690b13b47705ad, 0x688e590a97fdde, 0x0, 0x0])], [iw([0x6ea5a123443b189a, 0x1699b8f44358c3e8, 0xfb6b31bbf36c7f02, 0x290f14ea45c8eea7, 0xc64e175cd0ea9c11, 0x896a655cf9ad0, 0x0, 0x0]), iw([0x8abeb338313453a7, 0xb17d89f9dffa9b5f, 0xd6d2dbd1c31da025, 0xbebab5a664a29aaf, 0x5d1f26484480cf7e, 0xc9a4f5ab3ba478, 0x0, 0x0])]],
+        action_gen4: [[iw([0x48972dbfa20ad69f, 0x293ee5f9de893199, 0x508f9878b67a826b, 0xa78ca6dcbfc71cd5, 0x9a612bd3f717a5a7, 0x5dba39b7727d35, 0x0, 0x0]), iw([0x9e9f61bb1e36eec1, 0xb5cd8a8e9166e1d8, 0xc5feb7db4281c787, 0xdfb3ad1a7038029b, 0xe9d5ce34a6435d88, 0xbcb80fc15c0fe7, 0x0, 0x0])], [iw([0x5a592b8a00c2b7ff, 0xad199b6452cad318, 0x9d097b28c9b808df, 0xcbb9fb090009e309, 0xaa5707c11376a67, 0xb9fb9e3ffdcdf5, 0x0, 0x0]), iw([0xb768d2405df52961, 0xd6c11a062176ce66, 0xaf70678749857d94, 0x587359234038e32a, 0x659ed42c08e85a58, 0xa245c6488d82ca, 0x0, 0x0])]],
+    }
+}
+
+/// lvl3 `CURVES_WITH_ENDOMORPHISMS[3]`.
+/// Byte-exact from `endomorphism_action.c`: field elements via BROADWELL
+/// Montgomery limbs (`from_montgomery`), action matrices (mod 2^376) row-major.
+/// Checked by `curves_with_endomorphism_lvl3_actions_and_structure`.
+pub fn curve_with_endomorphism_2_lvl3() -> CurveWithEndomorphismLvl3 {
+    CurveWithEndomorphismLvl3 {
+        curve_a: fp2m3([0x18557e63c7256933, 0x143db981edd06205, 0xf8a63fc77a168b89, 0x842cca7c43a623cc, 0xca0a3a6c3ad52f6a, 0xf8317a2655fc2ae], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        curve_c: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        p_x: fp2m3([0x9431907d7ae9de37, 0xf218ae48108270d3, 0xe5d590e8aa539ffd, 0x8ddccfc764a923b3, 0xc5ec1eeed8335e04, 0x195cd3fe000c5fdb], [0x42faf83ab41643c, 0x56bac22079dbafd1, 0x9c70dc0f4a1f1e2, 0x7b34c501b911302d, 0xba10cae8af55cee6, 0x373d5f808f67570e]),
+        p_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q_x: fp2m3([0x4af05e1a92f18e12, 0x28237ba9004cef4, 0x9147573b2dad8697, 0x5fd27d8ffcb0a811, 0xea3970a9983a47ec, 0x3134a920785f7ce3], [0x6c9654c3dd2d70d6, 0x79b8b66bedae497d, 0x83ca43b6f3e2f2ee, 0x754a91618ac649ef, 0x3d63172e32865f2a, 0x29d8ddf74fccec99]),
+        q_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        pmq_x: fp2m3([0x3745374f8f2656fd, 0xb3de82aca4597dfe, 0x64255a8004bf7e57, 0x2ee9c1b8e7f23b54, 0x9823fa748f1b50ff, 0x3a4f50d9f5142b88], [0xbb8b41c483991b05, 0x975c2c831bbb8f70, 0x9b9b0a34ba18a7da, 0x4c6305d824c4842a, 0xd2d7808fa5f0032, 0xad416c54e77bbc5]),
+        pmq_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        action_i: [[iw([0xaeeb451e9164fff, 0x199ab766fa2cc580, 0x47ddaa1b36f2a8a0, 0xc4c1b1ba26f5b34f, 0xf7a21fdfcf8ad4d, 0x942b084cd22a36, 0x0, 0x0]), iw([0xe2aee09f5176f16e, 0xbd66c9bd6925a46d, 0x9ad3e98d51cedd5c, 0xa088bec844766815, 0x1d16f16417336799, 0x843b5b4af3c914, 0x0, 0x0])], [iw([0x9620bc14408822c1, 0xda12008977ec7d53, 0x6092b925380654df, 0x9617341959e3d1b4, 0xb452f00848a99ae6, 0x499c5d35cb9756, 0x0, 0x0]), iw([0xf5114bae16e9b001, 0xe665489905d33a7f, 0xb82255e4c90d575f, 0x3b3e4e45d90a4cb0, 0xf085de02030752b2, 0x6bd4f7b32dd5c9, 0x0, 0x0])]],
+        action_j: [[iw([0xea82998f9d9758b3, 0x9d04ec0c400ac940, 0x525a485c79c4bfb4, 0x828a94b336bacaa0, 0x45c1b36f76fe6102, 0x6cb614a988b70f, 0x0, 0x0]), iw([0x1f58fab72e0af28e, 0x28d439c3024311ea, 0x4d873aec1878e1ba, 0x7416a312354af832, 0x78d2162768ee0b5b, 0xd11cb2152ffbbc, 0x0, 0x0])], [iw([0xdd4b424688763134, 0x2d3371e886b187d0, 0xf6d66377e6d8fe04, 0x521e29d48b91dd4f, 0x8c9c2eb9a1d53822, 0x112d4cab9f35a1, 0x0, 0x0]), iw([0x157d66706268a74d, 0x62fb13f3bff536bf, 0xada5b7a3863b404b, 0x7d756b4cc945355f, 0xba3e4c9089019efd, 0x9349eb567748f0, 0x0, 0x0])]],
+        action_k: [[iw([0xdd24bb2d4195afa5, 0x2ccbf995c678a3ca, 0x1f9b0d06f9ff5c3b, 0x24f228814e3b926d, 0x24cba38d8e9acf4c, 0xde581c28a1e8f2, 0x0, 0x0]), iw([0xb5a8593c9ceacd88, 0xfb85496fc07c79c6, 0xfa59f4f8381c5ac9, 0x67c824c25caab7a3, 0xb89fbe8a758531b3, 0x25c1566cd5a29f, 0x0, 0x0])], [iw([0x73de9200d2979627, 0x2d4599c7f44faa89, 0x976f4168ab2bb1eb, 0x66482f3977771e88, 0x861bb815d5a1c224, 0xbe4123b476f76f, 0x0, 0x0]), iw([0x22db44d2be6a505b, 0xd334066a39875c35, 0xe064f2f90600a3c4, 0xdb0dd77eb1c46d92, 0xdb345c72716530b3, 0x21a7e3d75e170d, 0x0, 0x0])]],
+        action_gen2: [[iw([0xaeeb451e9164fff, 0x199ab766fa2cc580, 0x47ddaa1b36f2a8a0, 0xc4c1b1ba26f5b34f, 0xf7a21fdfcf8ad4d, 0x942b084cd22a36, 0x0, 0x0]), iw([0xe2aee09f5176f16e, 0xbd66c9bd6925a46d, 0x9ad3e98d51cedd5c, 0xa088bec844766815, 0x1d16f16417336799, 0x843b5b4af3c914, 0x0, 0x0])], [iw([0x9620bc14408822c1, 0xda12008977ec7d53, 0x6092b925380654df, 0x9617341959e3d1b4, 0xb452f00848a99ae6, 0x499c5d35cb9756, 0x0, 0x0]), iw([0xf5114bae16e9b001, 0xe665489905d33a7f, 0xb82255e4c90d575f, 0x3b3e4e45d90a4cb0, 0xf085de02030752b2, 0x6bd4f7b32dd5c9, 0x0, 0x0])]],
+        action_gen3: [[iw([0x75414cc7cecbac5a, 0x4e827606200564a0, 0x292d242e3ce25fda, 0x41454a599b5d6550, 0xa2e0d9b7bb7f3081, 0x365b0a54c45b87, 0x0, 0x0]), iw([0xfac7d5b97057947, 0x146a1ce1812188f5, 0x26c39d760c3c70dd, 0xba0b51891aa57c19, 0x3c690b13b47705ad, 0x688e590a97fdde, 0x0, 0x0])], [iw([0x6ea5a123443b189a, 0x1699b8f44358c3e8, 0xfb6b31bbf36c7f02, 0x290f14ea45c8eea7, 0xc64e175cd0ea9c11, 0x896a655cf9ad0, 0x0, 0x0]), iw([0x8abeb338313453a7, 0xb17d89f9dffa9b5f, 0xd6d2dbd1c31da025, 0xbebab5a664a29aaf, 0x5d1f26484480cf7e, 0xc9a4f5ab3ba478, 0x0, 0x0])]],
+        action_gen4: [[iw([0xc215682a55d843c6, 0x118205ceac4c706e, 0x6a11f04f90e38b72, 0x5d3f45b03488c345, 0x8d467b209896556b, 0xbad4287b0ca9e3, 0x0, 0x0]), iw([0xedb9243cf9ad91a5, 0x3592d6d7ce5fc4f5, 0xe2971489dead40df, 0x9e1fda9dee4d55b1, 0xa5856c6bd99a4a5c, 0xc0c1ad438362fc, 0x0, 0x0])], [iw([0x2fc421816191f454, 0x9b1c7bb6c44f66fb, 0xf8f9b1a3ee09099f, 0x4e44595c5151f234, 0x25f69930305ca80a, 0xb8ff4db8128e50, 0x0, 0x0]), iw([0x3dea97d5aa27bc3a, 0xee7dfa3153b38f91, 0x95ee0fb06f1c748d, 0xa2c0ba4fcb773cba, 0x72b984df6769aa94, 0x452bd784f3561c, 0x0, 0x0])]],
+    }
+}
+
+/// lvl3 `CURVES_WITH_ENDOMORPHISMS[4]`.
+/// Byte-exact from `endomorphism_action.c`: field elements via BROADWELL
+/// Montgomery limbs (`from_montgomery`), action matrices (mod 2^376) row-major.
+/// Checked by `curves_with_endomorphism_lvl3_actions_and_structure`.
+pub fn curve_with_endomorphism_3_lvl3() -> CurveWithEndomorphismLvl3 {
+    CurveWithEndomorphismLvl3 {
+        curve_a: fp2m3([0x28694e3b68f0d43, 0x51366f016b2ddafb, 0xf702877cdd499f32, 0x1e76c1c233dc7fdf, 0xa2f122377f37d3dd, 0x45a9554bf022b5b], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        curve_c: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        p_x: fp2m3([0xa974a10f177e5eb4, 0xa498d62a6e5cb5a9, 0x4b71500113b73b2d, 0x23005bb0d0f15dd1, 0xb4ead9919be51d7c, 0x3cbec1d3f8bc3553], [0xe4d523b4a4812286, 0xb3517cb1fef68f4f, 0x249c5dc593d3006f, 0x85b0f93405517f5a, 0x1cb80745a9021e11, 0x6ea59cf06741f08]),
+        p_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q_x: fp2m3([0x3c5b0ec07c453c1, 0xd111c6fcc6e1241d, 0x499c057b378b1c06, 0xe4fe7ba708372f8c, 0x11544707bd34d688, 0x24bd304255147b56], [0x5af62bae8a0305aa, 0x50bd4d2aee36411d, 0xccb1e1e8074c4878, 0xcbc48797a988fd6b, 0x1fd145af7257fa40, 0x2bfffeae2ad9675c]),
+        q_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        pmq_x: fp2m3([0x8c1ac23e99feaae5, 0x46f8287bc803e755, 0xabfae4cbf0cb9bdd, 0x15af46597d07dbd5, 0xd2c53fdb7fc6c6a1, 0x1d6aaf257989f9db], [0x3ccdeb2c62c5a25, 0x9bf0da410d65ae36, 0x5b7e88a85a556a82, 0x16e0c7b0dbb2baff, 0xd6b6f08b4a0bc7f, 0x316bd92be1e460c7]),
+        pmq_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        action_i: [[iw([0xb571a2d59ad4807f, 0x2fdebc369682e39a, 0x49c9209255a980a1, 0xde6774117a754269, 0x7b89af23968975d6, 0x1a276f60e4819b, 0x0, 0x0]), iw([0x49abd2f90218c876, 0xf9814dc41ab33ef7, 0xc5e112c5db9c381a, 0x53699d31c1485b21, 0x1c7dcf6322775706, 0x4bcd50d481e151, 0x0, 0x0])], [iw([0x78cc570898ac2191, 0x4c130168e9c963fa, 0xd629d010e2be19e6, 0xed3e7c2b3b08f3ff, 0xa0f5253b5d94356e, 0x639dac60d4c652, 0x0, 0x0]), iw([0x4a8e5d2a652b7f81, 0xd02143c9697d1c65, 0xb636df6daa567f5e, 0x21988bee858abd96, 0x847650dc69768a29, 0xe5d8909f1b7e64, 0x0, 0x0])]],
+        action_j: [[iw([0x157d66706268a74d, 0x62fb13f3bff536bf, 0xada5b7a3863b404b, 0x7d756b4cc945355f, 0xba3e4c9089019efd, 0x9349eb567748f0, 0x0, 0x0]), iw([0xe0a70548d1f50d72, 0xd72bc63cfdbcee15, 0xb278c513e7871e45, 0x8be95cedcab507cd, 0x872de9d89711f4a4, 0x2ee34dead00443, 0x0, 0x0])], [iw([0x22b4bdb97789cecc, 0xd2cc8e17794e782f, 0x9299c88192701fb, 0xade1d62b746e22b0, 0x7363d1465e2ac7dd, 0xeed2b35460ca5e, 0x0, 0x0]), iw([0xea82998f9d9758b3, 0x9d04ec0c400ac940, 0x525a485c79c4bfb4, 0x828a94b336bacaa0, 0x45c1b36f76fe6102, 0x6cb614a988b70f, 0x0, 0x0])]],
+        action_k: [[iw([0x406d812ac18a313b, 0xb0309f079fca472a, 0x9e992af679248b7b, 0x59c835ee8eb82b81, 0x3265aaf34cc7655, 0x6e969af8b7e58d, 0x0, 0x0]), iw([0xcf39b147fd896610, 0x8470ed644ccf2b02, 0xf0748c781891aaf6, 0xf52bd66cfaed8a4c, 0x46f805cd0b0af1c5, 0xd9451d81de79a3, 0x0, 0x0])], [iw([0x7d0f425c2ce01869, 0xfb41d5621c3e30c8, 0xb2659c8aeccc3951, 0x2cbf3c42d8790829, 0x7fdfee28d9d3b1d2, 0x3ba6d903adccdd, 0x0, 0x0]), iw([0xbf927ed53e75cec5, 0x4fcf60f86035b8d5, 0x6166d50986db7484, 0xa637ca117147d47e, 0xfcd9a550cb3389aa, 0x91696507481a72, 0x0, 0x0])]],
+        action_gen2: [[iw([0xb571a2d59ad4807f, 0x2fdebc369682e39a, 0x49c9209255a980a1, 0xde6774117a754269, 0x7b89af23968975d6, 0x1a276f60e4819b, 0x0, 0x0]), iw([0x49abd2f90218c876, 0xf9814dc41ab33ef7, 0xc5e112c5db9c381a, 0x53699d31c1485b21, 0x1c7dcf6322775706, 0x4bcd50d481e151, 0x0, 0x0])], [iw([0x78cc570898ac2191, 0x4c130168e9c963fa, 0xd629d010e2be19e6, 0xed3e7c2b3b08f3ff, 0xa0f5253b5d94356e, 0x639dac60d4c652, 0x0, 0x0]), iw([0x4a8e5d2a652b7f81, 0xd02143c9697d1c65, 0xb636df6daa567f5e, 0x21988bee858abd96, 0x847650dc69768a29, 0xe5d8909f1b7e64, 0x0, 0x0])]],
+        action_gen3: [[iw([0x8abeb338313453a7, 0xb17d89f9dffa9b5f, 0xd6d2dbd1c31da025, 0xbebab5a664a29aaf, 0x5d1f26484480cf7e, 0xc9a4f5ab3ba478, 0x0, 0x0]), iw([0xf05382a468fa86b9, 0xeb95e31e7ede770a, 0xd93c6289f3c38f22, 0x45f4ae76e55a83e6, 0xc396f4ec4b88fa52, 0x9771a6f5680221, 0x0, 0x0])], [iw([0x915a5edcbbc4e766, 0xe966470bbca73c17, 0x494ce440c9380fd, 0xd6f0eb15ba371158, 0x39b1e8a32f1563ee, 0xf76959aa30652f, 0x0, 0x0]), iw([0x75414cc7cecbac5a, 0x4e827606200564a0, 0x292d242e3ce25fda, 0x41454a599b5d6550, 0xa2e0d9b7bb7f3081, 0x365b0a54c45b87, 0x0, 0x0])]],
+        action_gen4: [[iw([0x26a62ef17abe29a3, 0xb56ff4c854e6a5a5, 0x94edd9ba1aae2bae, 0x6f64c686882c2df5, 0x617c9eee850a29f7, 0x868ebe31085678, 0x0, 0x0]), iw([0xaa2b37298ce6c2a5, 0xaf25e2bebf43b9d2, 0x94c6f85aec8e4ffb, 0xf63f4ad3c64e027, 0x2390de0fa24486ba, 0x33cd4cdd7c11e1, 0x0, 0x0])], [iw([0x9df01eb8a4bf1893, 0x6ba1e4ae17b091b1, 0x82a8c03fd56b35fd, 0x181ef3a330be99cd, 0xed0e03e80518879b, 0x1e29ce2d6c0ff, 0x0, 0x0]), iw([0xd959d10e8541d65d, 0x4a900b37ab195a5a, 0x6b122645e551d451, 0x909b397977d3d20a, 0x9e8361117af5d608, 0x797141cef7a987, 0x0, 0x0])]],
+    }
+}
+
+/// lvl3 `CURVES_WITH_ENDOMORPHISMS[5]`.
+/// Byte-exact from `endomorphism_action.c`: field elements via BROADWELL
+/// Montgomery limbs (`from_montgomery`), action matrices (mod 2^376) row-major.
+/// Checked by `curves_with_endomorphism_lvl3_actions_and_structure`.
+pub fn curve_with_endomorphism_4_lvl3() -> CurveWithEndomorphismLvl3 {
+    CurveWithEndomorphismLvl3 {
+        curve_a: fp2m3([0xee5fca9b63ae3ee1, 0xd112c6b9047833d2, 0x8a36b12b5b2c4ed6, 0xdf5788d193b3e9ec, 0xab89fdcc548e15a, 0x40183f2510195c0d], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        curve_c: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        p_x: fp2m3([0xe3355f6d8c77408, 0x5a0aeef239362ae7, 0xe09daac4413a19c3, 0xeae6c02b69425d62, 0x648fbfda73df6717, 0x38396063dc221c6b], [0x94a7b6564468f85a, 0x22a2d75f1c8025da, 0x94237f9ed1475f50, 0x62976637f8716aae, 0xde86bfb1f0e44b26, 0x25496be8a37f7a6e]),
+        p_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q_x: fp2m3([0xbf20698fbcfb7c32, 0x6da81796003b1e1, 0x359ddeb81069b692, 0x48d73d54aecc6311, 0xb5b745bf6df8e2f, 0x9b3c0b4817c1d83], [0xbf105151d1c92da3, 0x2fe2a566bd95bf5d, 0xa9dbe0177485fe0c, 0x5edace7b2a026a73, 0x3a7ec39f28cdf4f9, 0x20e16c5877d4a0]),
+        q_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        pmq_x: fp2m3([0x28ffb1f165f33834, 0x3215e32c4e06638f, 0x4fd0c5693f1c151c, 0x703c941aa2655c7f, 0x21994e074ac5c998, 0x311e6e15c6d208fc], [0xce28db8c05d4f1fd, 0xadc385aef3f253e4, 0xae664f6c1913f027, 0x4081349c0293a48f, 0xc7a7f3fc573fb6ef, 0x79e0cf124e61a67]),
+        pmq_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        action_i: [[iw([0x13678d5e8a5a5419, 0xab31cf473903ae77, 0x2055ed739219f30c, 0x4d6f70464098cc84, 0xd5ed0224e6415c68, 0xe415c8dfcd977a, 0x0, 0x0]), iw([0x7e1741ba29a592ea, 0x1b0d4b64aeb2033c, 0x15542d2ee57e04be, 0x7d2a4267ea1ee7f7, 0x147ac388d23417cd, 0x4f83bdaa6343e6, 0x0, 0x0])], [iw([0x465e819c5b17a8b7, 0x95391c3b2a1a6fb, 0x75bac3674ed40486, 0xe751e242115fcc01, 0x950a4ec0bf534748, 0x7dec827ea2e08e, 0x0, 0x0]), iw([0xec9872a175a5abe7, 0x54ce30b8c6fc5188, 0xdfaa128c6de60cf3, 0xb2908fb9bf67337b, 0x2a12fddb19bea397, 0x1bea3720326885, 0x0, 0x0])]],
+        action_j: [[iw([0xea82998f9d9758b3, 0x9d04ec0c400ac940, 0x525a485c79c4bfb4, 0x828a94b336bacaa0, 0x45c1b36f76fe6102, 0x6cb614a988b70f, 0x0, 0x0]), iw([0x1f58fab72e0af28e, 0x28d439c3024311ea, 0x4d873aec1878e1ba, 0x7416a312354af832, 0x78d2162768ee0b5b, 0xd11cb2152ffbbc, 0x0, 0x0])], [iw([0xdd4b424688763134, 0x2d3371e886b187d0, 0xf6d66377e6d8fe04, 0x521e29d48b91dd4f, 0x8c9c2eb9a1d53822, 0x112d4cab9f35a1, 0x0, 0x0]), iw([0x157d66706268a74d, 0x62fb13f3bff536bf, 0xada5b7a3863b404b, 0x7d756b4cc945355f, 0xba3e4c9089019efd, 0x9349eb567748f0, 0x0, 0x0])]],
+        action_k: [[iw([0xbcf8e89ee86d0703, 0xe8ec9f65e250675b, 0x192a475111ca2c83, 0x4f40eb89f46af9d8, 0x13f9fff90dcf2a2c, 0x6b9af834824e7, 0x0, 0x0]), iw([0x6598f9c7b5481e40, 0x2ef26cbf25c67e33, 0xf320aef2dd99a630, 0x2f7c454193a704a2, 0x52a924f41a7abf45, 0xb09d37a12ad3b4, 0x0, 0x0])], [iw([0x83d43774228301e1, 0xde59279001fcf33f, 0x65742c1bc942e89d, 0xbb0a9f113a3c55b1, 0xc94cff9d0a696813, 0xa918c6ce6bdede, 0x0, 0x0]), iw([0x430717611792f8fd, 0x1713609a1daf98a4, 0xe6d5b8aeee35d37c, 0xb0bf14760b950627, 0xec060006f230d5d3, 0xf946507cb7db18, 0x0, 0x0])]],
+        action_gen2: [[iw([0x13678d5e8a5a5419, 0xab31cf473903ae77, 0x2055ed739219f30c, 0x4d6f70464098cc84, 0xd5ed0224e6415c68, 0xe415c8dfcd977a, 0x0, 0x0]), iw([0x7e1741ba29a592ea, 0x1b0d4b64aeb2033c, 0x15542d2ee57e04be, 0x7d2a4267ea1ee7f7, 0x147ac388d23417cd, 0x4f83bdaa6343e6, 0x0, 0x0])], [iw([0x465e819c5b17a8b7, 0x95391c3b2a1a6fb, 0x75bac3674ed40486, 0xe751e242115fcc01, 0x950a4ec0bf534748, 0x7dec827ea2e08e, 0x0, 0x0]), iw([0xec9872a175a5abe7, 0x54ce30b8c6fc5188, 0xdfaa128c6de60cf3, 0xb2908fb9bf67337b, 0x2a12fddb19bea397, 0x1bea3720326885, 0x0, 0x0])]],
+        action_gen3: [[iw([0x75414cc7cecbac5a, 0x4e827606200564a0, 0x292d242e3ce25fda, 0x41454a599b5d6550, 0xa2e0d9b7bb7f3081, 0x365b0a54c45b87, 0x0, 0x0]), iw([0xfac7d5b97057947, 0x146a1ce1812188f5, 0x26c39d760c3c70dd, 0xba0b51891aa57c19, 0x3c690b13b47705ad, 0x688e590a97fdde, 0x0, 0x0])], [iw([0x6ea5a123443b189a, 0x1699b8f44358c3e8, 0xfb6b31bbf36c7f02, 0x290f14ea45c8eea7, 0xc64e175cd0ea9c11, 0x896a655cf9ad0, 0x0, 0x0]), iw([0x8abeb338313453a7, 0xb17d89f9dffa9b5f, 0xd6d2dbd1c31da025, 0xbebab5a664a29aaf, 0x5d1f26484480cf7e, 0xc9a4f5ab3ba478, 0x0, 0x0])]],
+        action_gen4: [[iw([0x63b0421546e92d5d, 0x697080aadc918358, 0xe4eac13a266d4e7d, 0x119bdbafbc38504e, 0x7b9098db45d8a3cc, 0x83676de6a3a5b, 0x0, 0x0]), iw([0xc2e220b61ae1db1, 0xf90c8697b16aa7ee, 0xb6015cf8ced57505, 0x57d09fdf27ad6235, 0xb53a94dba6d20ca2, 0x92fe95a3ad8bd2, 0x0, 0x0])], [iw([0xf0abb393f0cfa809, 0xb0ea1833b5bc181a, 0x4f5cb2993088ff0e, 0x9ffdad7b5b865a20, 0x989b8eb4e4c2216, 0x458e8fa798712f, 0x0, 0x0]), iw([0x9c4fbdeab916d2a3, 0x968f7f55236e7ca7, 0x1b153ec5d992b182, 0xee64245043c7afb1, 0x846f6724ba275c33, 0xf7c9892195c5a4, 0x0, 0x0])]],
+    }
+}
+
+/// lvl3 `CURVES_WITH_ENDOMORPHISMS[6]`.
+/// Byte-exact from `endomorphism_action.c`: field elements via BROADWELL
+/// Montgomery limbs (`from_montgomery`), action matrices (mod 2^376) row-major.
+/// Checked by `curves_with_endomorphism_lvl3_actions_and_structure`.
+pub fn curve_with_endomorphism_5_lvl3() -> CurveWithEndomorphismLvl3 {
+    CurveWithEndomorphismLvl3 {
+        curve_a: fp2m3([0x5ecca52c4855dc5e, 0x37fb68aebeb3f970, 0xca892078db0e14f5, 0xf7c5796a440df994, 0xfb9f441628788783, 0x406754c12848cf29], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        curve_c: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        p_x: fp2m3([0xe2a144fdc504fb0f, 0x3bf37f2ef8a7b1c, 0xd7cbee34ae37149, 0x10895bb5c33886d4, 0xf4ae87ac6d728d1b, 0x2a55575b918bbb8a], [0xe8af8cec8d084a9e, 0x1c70c4a83a06d6d4, 0x381e89fd5b58d174, 0x8c980db5dbb35c40, 0xb2541e4965031e07, 0x14256d3807ec2286]),
+        p_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q_x: fp2m3([0x8fdb5d85067871c, 0x3a44554887f7dd16, 0x3eb131a3f50bd50c, 0xd414fe1758d092e2, 0xca69275442e4597, 0x1e5de41307db4cf6], [0x1cd4ead3f41b8c1c, 0x36537a69a768ba20, 0x32c87be8b7580b43, 0xcad2f772715e5e21, 0xd58e6a91a4eea3f3, 0x480945efc6ada5b]),
+        q_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        pmq_x: fp2m3([0x7a6870b9cbcad103, 0x1b14369c02312361, 0x92354d54bde2c604, 0x412cfee1db712a88, 0xef2b7e45ecfa687b, 0x37da58052658fa8e], [0xaebc5d38e8a50eaf, 0x60b8cd78948a689d, 0x834919970ac58471, 0x972f62910e5a2e71, 0x4a3092e6e8314861, 0x5e4940242cc1ce9]),
+        pmq_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        action_i: [[iw([0xca8545c3a939c761, 0x8e017d5be2f16b48, 0x3fa131da1b34b824, 0xe32fc0b8143aaae4, 0x4e56d1422c290843, 0xc524cdc504d55c, 0x0, 0x0]), iw([0x230889036127e87a, 0xc898320912dcfbed, 0x1078446f2ab80715, 0xf92b34a924932808, 0xd4adf8600a3a96f4, 0xe5626b410dc8a9, 0x0, 0x0])], [iw([0xdfff736ecd2ea06f, 0xab167c39e69428f9, 0xe8f648830bc421f5, 0x8d46a9f1f3c3caae, 0x38385d95a8e216e4, 0xde94da34b7a6f1, 0x0, 0x0]), iw([0x357aba3c56c6389f, 0x71fe82a41d0e94b7, 0xc05ece25e4cb47db, 0x1cd03f47ebc5551b, 0xb1a92ebdd3d6f7bc, 0x3adb323afb2aa3, 0x0, 0x0])]],
+        action_j: [[iw([0x157d66706268a74d, 0x62fb13f3bff536bf, 0xada5b7a3863b404b, 0x7d756b4cc945355f, 0xba3e4c9089019efd, 0x9349eb567748f0, 0x0, 0x0]), iw([0xe0a70548d1f50d72, 0xd72bc63cfdbcee15, 0xb278c513e7871e45, 0x8be95cedcab507cd, 0x872de9d89711f4a4, 0x2ee34dead00443, 0x0, 0x0])], [iw([0x22b4bdb97789cecc, 0xd2cc8e17794e782f, 0x9299c88192701fb, 0xade1d62b746e22b0, 0x7363d1465e2ac7dd, 0xeed2b35460ca5e, 0x0, 0x0]), iw([0xea82998f9d9758b3, 0x9d04ec0c400ac940, 0x525a485c79c4bfb4, 0x828a94b336bacaa0, 0x45c1b36f76fe6102, 0x6cb614a988b70f, 0x0, 0x0])]],
+        action_k: [[iw([0x7b39e1f06102ac65, 0xd11b8256ff4d64be, 0x66e7814c7a894645, 0x1f42e691c4d8077a, 0x18d90752547bfdb9, 0xecbed4e6049279, 0x0, 0x0]), iw([0x218d9e18e4773380, 0x59e7b33f4cc5ddc6, 0x92a28f77a1a1b291, 0x5d4840f182af480e, 0xff7acb9e422983b0, 0x1671fc0a782e32, 0x0, 0x0])], [iw([0x2e59774eaa62bb17, 0xbfdb874eebcee440, 0x78aaded2a7ba3afd, 0xa1de5633cfed7568, 0xec25572757964c5e, 0x983f13ce9cac0a, 0x0, 0x0]), iw([0x84c61e0f9efd539b, 0x2ee47da900b29b41, 0x99187eb38576b9ba, 0xe0bd196e3b27f885, 0xe726f8adab840246, 0x13412b19fb6d86, 0x0, 0x0])]],
+        action_gen2: [[iw([0xca8545c3a939c761, 0x8e017d5be2f16b48, 0x3fa131da1b34b824, 0xe32fc0b8143aaae4, 0x4e56d1422c290843, 0xc524cdc504d55c, 0x0, 0x0]), iw([0x230889036127e87a, 0xc898320912dcfbed, 0x1078446f2ab80715, 0xf92b34a924932808, 0xd4adf8600a3a96f4, 0xe5626b410dc8a9, 0x0, 0x0])], [iw([0xdfff736ecd2ea06f, 0xab167c39e69428f9, 0xe8f648830bc421f5, 0x8d46a9f1f3c3caae, 0x38385d95a8e216e4, 0xde94da34b7a6f1, 0x0, 0x0]), iw([0x357aba3c56c6389f, 0x71fe82a41d0e94b7, 0xc05ece25e4cb47db, 0x1cd03f47ebc5551b, 0xb1a92ebdd3d6f7bc, 0x3adb323afb2aa3, 0x0, 0x0])]],
+        action_gen3: [[iw([0x8abeb338313453a7, 0xb17d89f9dffa9b5f, 0xd6d2dbd1c31da025, 0xbebab5a664a29aaf, 0x5d1f26484480cf7e, 0xc9a4f5ab3ba478, 0x0, 0x0]), iw([0xf05382a468fa86b9, 0xeb95e31e7ede770a, 0xd93c6289f3c38f22, 0x45f4ae76e55a83e6, 0xc396f4ec4b88fa52, 0x9771a6f5680221, 0x0, 0x0])], [iw([0x915a5edcbbc4e766, 0xe966470bbca73c17, 0x494ce440c9380fd, 0xd6f0eb15ba371158, 0x39b1e8a32f1563ee, 0xf76959aa30652f, 0x0, 0x0]), iw([0x75414cc7cecbac5a, 0x4e827606200564a0, 0x292d242e3ce25fda, 0x41454a599b5d6550, 0xa2e0d9b7bb7f3081, 0x365b0a54c45b87, 0x0, 0x0])]],
+        action_gen4: [[iw([0x81f8eb7fcfadb919, 0xdd384300f2724d97, 0x3e43189408261b01, 0x7c6341610a847310, 0xadc9e47596250ec4, 0x7eb7e3fa6a05a7, 0x0, 0x0]), iw([0x2e519d21ade41e83, 0xe0a8ac7900d342e5, 0xc941b504fcf232e2, 0x333154858016a0d0, 0xef5f76ec296abd7, 0x56165c8e31ce39, 0x0, 0x0])], [iw([0xf5d9fbdb6e27dd11, 0x7a4c59a9fefd6cb, 0xd0910bc25c3e0fbd, 0x93fa193ec9d06546, 0xbbe3decd27630776, 0x6690706abfcec1, 0x0, 0x0]), iw([0x7e071480305246e7, 0x22c7bcff0d8db268, 0xc1bce76bf7d9e4fe, 0x839cbe9ef57b8cef, 0x52361b8a69daf13b, 0x81481c0595fa58, 0x0, 0x0])]],
+    }
+}
+
+/// lvl3 `CURVES_WITH_ENDOMORPHISMS[7]`.
+/// Byte-exact from `endomorphism_action.c`: field elements via BROADWELL
+/// Montgomery limbs (`from_montgomery`), action matrices (mod 2^376) row-major.
+/// Checked by `curves_with_endomorphism_lvl3_actions_and_structure`.
+pub fn curve_with_endomorphism_6_lvl3() -> CurveWithEndomorphismLvl3 {
+    CurveWithEndomorphismLvl3 {
+        curve_a: fp2m3([0xc9e071a4bd87a6ae, 0xe90d29f59faef5fb, 0x49d591780af14659, 0x3f3a871de6c17f15, 0x61e17d038562e2b9, 0x9956d0f907a166c], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        curve_c: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        p_x: fp2m3([0xe15de0d5527bba11, 0x587525aa588f921f, 0x9bcca0387e23930f, 0xb8505bc3c85706d8, 0x8d87adef1991e2f1, 0x139f18419dc9fe6], [0x58ff9b087d8ddda6, 0x16f1fa12586fe848, 0xaa0e425649642ebe, 0x3b0e6e63b46150f9, 0x27c8c9b09b36fbeb, 0xa2c2572304352cb]),
+        p_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        q_x: fp2m3([0xa63baf07dc035cdf, 0xacb75ac3f65c7f6e, 0xfc3008bc7e7fb5e5, 0xc577347cf30a8b48, 0x644078ca64f9bd18, 0x2d073f6fd0bc015e], [0xad73bc0e04fb9711, 0xafa1ceec05868eda, 0xe723a813953f69dd, 0x1ef83d0dd0451cfc, 0x860ad550982fe5d5, 0xc2eba79d8e9e0e]),
+        q_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        pmq_x: fp2m3([0x383ab3d7d4d99363, 0x912abf97ebadf4a, 0xb7aa57523816758a, 0xfbef5c731a244b34, 0x9b294d2eaac4a4f2, 0x54764bea026fda4], [0x9e0514d095b36acc, 0x9067d3e90aff1e96, 0xf455529f3ddc37f1, 0xc71b162cce0f88bd, 0x8271ee8ef63ca5d2, 0x30898e0adfc4dfaa]),
+        pmq_z: fp2m3([0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00000000000000], [0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        action_i: [[iw([0x986de2a736f400e7, 0x49f77818f464214b, 0x85a09e1773e75ea0, 0xbb287833c33dd1cc, 0x879ed73c69d5ba60, 0xc8eefd09056732, 0x0, 0x0]), iw([0x2effa6dcff6f925e, 0x6829ab24e88cb2a6, 0x850677ac011891eb, 0xfd155cac5a869934, 0xcdefebcfc2325869, 0x96cc7bf9e40254, 0x0, 0x0])], [iw([0x7829178ced4dae19, 0xebc6dab348087b15, 0x3d5ee9bd329825cb, 0xb3ea92e60960e9a4, 0xbdb92343f491033e, 0x41767f63a5a17d, 0x0, 0x0]), iw([0x67921d58c90bff19, 0xb60887e70b9bdeb4, 0x7a5f61e88c18a15f, 0x44d787cc3cc22e33, 0x786128c3962a459f, 0x371102f6fa98cd, 0x0, 0x0])]],
+        action_j: [[iw([0x157d66706268a74d, 0x62fb13f3bff536bf, 0xada5b7a3863b404b, 0x7d756b4cc945355f, 0xba3e4c9089019efd, 0x9349eb567748f0, 0x0, 0x0]), iw([0xe0a70548d1f50d72, 0xd72bc63cfdbcee15, 0xb278c513e7871e45, 0x8be95cedcab507cd, 0x872de9d89711f4a4, 0x2ee34dead00443, 0x0, 0x0])], [iw([0x22b4bdb97789cecc, 0xd2cc8e17794e782f, 0x9299c88192701fb, 0xade1d62b746e22b0, 0x7363d1465e2ac7dd, 0xeed2b35460ca5e, 0x0, 0x0]), iw([0xea82998f9d9758b3, 0x9d04ec0c400ac940, 0x525a485c79c4bfb4, 0x828a94b336bacaa0, 0x45c1b36f76fe6102, 0x6cb614a988b70f, 0x0, 0x0])]],
+        action_k: [[iw([0xd58ff501dad13d63, 0xb3b9f8bdd2658741, 0xbcdf45abfc8bac08, 0x102f10ed09f70501, 0x8db4f892dc57c6e3, 0x8e2bc321ab2c76, 0x0, 0x0]), iw([0x2354a8e4418cc998, 0xdad95487b76d622a, 0xdfa5a00f522b1672, 0x91e1595ee17c296b, 0x9288904ce126a22d, 0xb161b0c6c55075, 0x0, 0x0])], [iw([0x35fa16ee594e1271, 0x24b71fca11b2af0e, 0x6409c2f02bcca3e3, 0xe7ee067e6a8ff8e1, 0x5e0a68132b9aad00, 0xb3bd1d48f56dec, 0x0, 0x0]), iw([0x2a700afe252ec29d, 0x4c4607422d9a78be, 0x4320ba54037453f7, 0xefd0ef12f608fafe, 0x724b076d23a8391c, 0x71d43cde54d389, 0x0, 0x0])]],
+        action_gen2: [[iw([0x986de2a736f400e7, 0x49f77818f464214b, 0x85a09e1773e75ea0, 0xbb287833c33dd1cc, 0x879ed73c69d5ba60, 0xc8eefd09056732, 0x0, 0x0]), iw([0x2effa6dcff6f925e, 0x6829ab24e88cb2a6, 0x850677ac011891eb, 0xfd155cac5a869934, 0xcdefebcfc2325869, 0x96cc7bf9e40254, 0x0, 0x0])], [iw([0x7829178ced4dae19, 0xebc6dab348087b15, 0x3d5ee9bd329825cb, 0xb3ea92e60960e9a4, 0xbdb92343f491033e, 0x41767f63a5a17d, 0x0, 0x0]), iw([0x67921d58c90bff19, 0xb60887e70b9bdeb4, 0x7a5f61e88c18a15f, 0x44d787cc3cc22e33, 0x786128c3962a459f, 0x371102f6fa98cd, 0x0, 0x0])]],
+        action_gen3: [[iw([0x8abeb338313453a7, 0xb17d89f9dffa9b5f, 0xd6d2dbd1c31da025, 0xbebab5a664a29aaf, 0x5d1f26484480cf7e, 0xc9a4f5ab3ba478, 0x0, 0x0]), iw([0xf05382a468fa86b9, 0xeb95e31e7ede770a, 0xd93c6289f3c38f22, 0x45f4ae76e55a83e6, 0xc396f4ec4b88fa52, 0x9771a6f5680221, 0x0, 0x0])], [iw([0x915a5edcbbc4e766, 0xe966470bbca73c17, 0x494ce440c9380fd, 0xd6f0eb15ba371158, 0x39b1e8a32f1563ee, 0xf76959aa30652f, 0x0, 0x0]), iw([0x75414cc7cecbac5a, 0x4e827606200564a0, 0x292d242e3ce25fda, 0x41454a599b5d6550, 0xa2e0d9b7bb7f3081, 0x365b0a54c45b87, 0x0, 0x0])]],
+        action_gen4: [[iw([0x7483a55131e4d70d, 0x85f6a80034d6f09, 0x38d20188e29b6b11, 0xddc8c423a241085b, 0x7cf7f3a417223260, 0xc6eeb9795536e8, 0x0, 0x0]), iw([0xf65bd42f8f5359a9, 0x8428954344757134, 0xe15d7bfb7d454555, 0x88eaf17f24ece9c2, 0x27712b42bf2d766c, 0xc9fa62d0405dfc, 0x0, 0x0])], [iw([0x91ca8c5289b04b49, 0x82d0453d527ed1b, 0x58163790b6bfb0eb, 0x5530ffc6a0a749bb, 0x6f5152c412bb23b9, 0xc6723d062d25fd, 0x0, 0x0]), iw([0x8b7c5aaece1b28f3, 0xf7a0957ffcb290f6, 0xc72dfe771d6494ee, 0x22373bdc5dbef7a4, 0x83080c5be8ddcd9f, 0x39114686aac917, 0x0, 0x0])]],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// lvl3 curves: structural invariants on every curve (projective z-coords and
+    /// C normalized to Montgomery-1; the 2^F basis x-coords nonzero and pairwise
+    /// distinct), plus E0-specific algebraic checks. `action_i² ≡ −I (mod 2^376)`
+    /// holds ONLY for E0 (`i ∈ O_0` acts on `E0[2^F]` with `i² = −1`); on the NICE
+    /// alternate curves `action_i` does NOT square to −I (verified: lvl1's own
+    /// alt curves behave identically), so those carry structural checks only —
+    /// their actions are validated downstream by the lvl3 KAT, as at lvl1.
+    #[test]
+    fn curves_with_endomorphism_lvl3_actions_and_structure() {
+        let curves = [
+            curve_with_endomorphism_e0_lvl3(),
+            curve_with_endomorphism_0_lvl3(),
+            curve_with_endomorphism_1_lvl3(),
+            curve_with_endomorphism_2_lvl3(),
+            curve_with_endomorphism_3_lvl3(),
+            curve_with_endomorphism_4_lvl3(),
+            curve_with_endomorphism_5_lvl3(),
+            curve_with_endomorphism_6_lvl3(),
+        ];
+        let one = Fp2::<Fp3Element>::one();
+        for (k, cw) in curves.iter().enumerate() {
+            assert_eq!(cw.curve_c, one, "curve_c must be 1 (k={k})");
+            assert_eq!(cw.p_z, one, "p_z must be 1 (k={k})");
+            assert_eq!(cw.q_z, one, "q_z must be 1 (k={k})");
+            assert_eq!(cw.pmq_z, one, "pmq_z must be 1 (k={k})");
+            assert!(!bool::from(cw.p_x.is_zero()), "p_x nonzero (k={k})");
+            assert!(!bool::from(cw.q_x.is_zero()), "q_x nonzero (k={k})");
+            assert!(!bool::from(cw.pmq_x.is_zero()), "pmq_x nonzero (k={k})");
+            assert_ne!(cw.p_x, cw.q_x, "P != Q (k={k})");
+            assert_ne!(cw.p_x, cw.pmq_x, "P != P-Q (k={k})");
+            assert_ne!(cw.q_x, cw.pmq_x, "Q != P-Q (k={k})");
+        }
+        // E0-with-endomorphism (curves[0]): A = 0, and action_i² ≡ −I (mod 2^376).
+        let e0 = curve_with_endomorphism_e0_lvl3();
+        assert!(bool::from(e0.curve_a.is_zero()), "E0 curve_a must be 0");
+        let mask = Uint::<8>::ONE.shl_vartime(376).wrapping_sub(&Uint::<8>::ONE);
+        let a = &e0.action_i;
+        let m = |r: usize, c: usize| -> Uint<8> {
+            let t0 = a[r][0].abs().wrapping_mul(&a[0][c].abs());
+            let t1 = a[r][1].abs().wrapping_mul(&a[1][c].abs());
+            t0.wrapping_add(&t1).bitand(&mask)
+        };
+        assert_eq!(m(0, 0), mask, "E0 action_i² [0][0] = -1");
+        assert_eq!(m(1, 1), mask, "E0 action_i² [1][1] = -1");
+        assert_eq!(m(0, 1), Uint::<8>::ZERO, "E0 action_i² [0][1] = 0");
+        assert_eq!(m(1, 0), Uint::<8>::ZERO, "E0 action_i² [1][0] = 0");
+    }
 
     /// Extraction validation: curve E0 = A:0, C:1; all 6 NICE curves have C=1
     /// (normalized) and a non-zero 2^F basis.

@@ -48,7 +48,6 @@ use rand_core::CryptoRng;
 
 use crate::quaternion::ideal::LeftIdeal;
 use crate::quaternion::ideal_mul::ideal_right_multiply;
-use crate::quaternion::o0_mul::reduced_norm_o0_basis;
 
 /// Sample a fresh random blinding quaternion `α ∈ O_0` (small nonzero
 /// `O_0`-coordinates) and return the blinded ideal `J = I·α` together with `α`
@@ -82,6 +81,7 @@ fn sample_blinding_quat<const LIMBS: usize, R: CryptoRng>(rng: &mut R) -> [Int<L
 mod tests {
     use super::*;
     use crate::quaternion::ideal::LeftIdeal;
+    use crate::quaternion::o0_mul::reduced_norm_o0_basis;
     use rand_chacha::ChaCha20Rng;
     use rand_chacha::rand_core::SeedableRng;
 

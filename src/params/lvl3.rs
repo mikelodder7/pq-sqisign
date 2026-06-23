@@ -4,7 +4,7 @@
 //! `p = 65 · 2^376 − 1`, a 383-bit prime. Six 64-bit limbs (`U384`).
 
 use crypto_bigint::modular::ConstMontyParams;
-use crypto_bigint::{U384, const_monty_params};
+use crypto_bigint::{U384, Uint, const_monty_params};
 
 use super::Params;
 
@@ -51,6 +51,26 @@ pub fn prime() -> U384 {
     *Lvl3Modulus::PARAMS.modulus().as_ref()
 }
 
+/// The Level-3 secret-key isogeny degree `SEC_DEGREE = 2^768 + 183` (769-bit,
+/// odd). Mirrors lvl1's `2^512 + 75`. Source: SQIsign C reference
+/// `src/precomp/ref/lvl3/torsion_constants.c` — 16-bit-limb array (size 49)
+/// `{0xb7, 0, …, 0, 0x1}`: low limb `0xb7 = 183`, top limb 48 contributes
+/// `2^(48·16) = 2^768`. Equals `COM_DEGREE` at this level. Returned at
+/// `Uint<24>` (1536-bit) to give the lvl3 quaternion wide-norm path headroom;
+/// callers `resize` as needed.
+pub fn sec_degree() -> Uint<24> {
+    Uint::<24>::ONE
+        .shl_vartime(768)
+        .wrapping_add(&Uint::<24>::from_u64(183))
+}
+
+/// The Level-3 commitment isogeny degree `COM_DEGREE = 2^768 + 183`. At every
+/// SQIsign level `COM_DEGREE == SEC_DEGREE`; the array in C-ref
+/// `torsion_constants.c` is byte-identical to `SEC_DEGREE` at lvl3.
+pub fn com_degree() -> Uint<24> {
+    sec_degree()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,5 +112,53 @@ mod tests {
         for (i, w) in wide_limbs.iter().enumerate().skip(6) {
             assert_eq!(w.0, 0, "upper limb {i} zero-extended");
         }
+    }
+
+    #[test]
+    fn sec_and_com_degree_match_c_reference() {
+        // C-ref src/precomp/ref/lvl3/torsion_constants.c: SEC_DEGREE and
+        // COM_DEGREE are byte-identical; 16-bit-limb array {0xb7, 0,…,0, 0x1}
+        // (size 49) ⇒ 183 + 2^768.
+        use crypto_bigint::Uint;
+        let sec = sec_degree();
+        let expected = Uint::<24>::ONE
+            .shl_vartime(768)
+            .wrapping_add(&Uint::<24>::from_u64(183));
+        assert_eq!(sec, expected, "SEC_DEGREE must equal 2^768 + 183");
+        assert_eq!(sec.bits_vartime(), 769, "SEC_DEGREE is 769 bits");
+        assert_eq!(sec.as_limbs()[0].0 & 1, 1, "SEC_DEGREE is odd");
+        // Low 64-bit limb is 183; limb 12 (= 768/64) is 1; all others zero.
+        let limbs = sec.as_limbs();
+        assert_eq!(limbs[0].0, 183);
+        assert_eq!(limbs[12].0, 0x1);
+        for (i, l) in limbs.iter().enumerate() {
+            if i != 0 && i != 12 {
+                assert_eq!(l.0, 0, "SEC_DEGREE limb {i} must be zero");
+            }
+        }
+        assert_eq!(com_degree(), sec, "COM_DEGREE == SEC_DEGREE at lvl3");
+    }
+
+    #[test]
+    fn montgomery_repr_matches_c_broadwell() {
+        // Foundational compatibility anchor for ALL lvl3 precomputed constants.
+        //
+        // The C reference stores field elements in Montgomery form with
+        // R = 2^384 (its 6-limb BROADWELL representation at lvl3). Our
+        // `Fp3Element = ConstMontyForm<Lvl3Modulus, 6>` also uses R = 2^(64·6) =
+        // 2^384. C-ref `endomorphism_action.c` CURVES_WITH_ENDOMORPHISMS[0]
+        // stores the Montgomery "1" (= R mod p) in BROADWELL limbs as
+        // {0x3, 0, 0, 0, 0, 0x3d00000000000000}. If plugging those limbs in via
+        // `from_montgomery` yields the canonical field element 1, the reference's
+        // stored limbs ARE our internal representation and every lvl3 constant can
+        // be transcribed verbatim (mirrors the lvl1 anchor {0x33,0,0,0x01<<56}).
+        let c_mont_one = Fp3Element::from_montgomery(U384::from_words([
+            0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00_0000_0000_0000,
+        ]));
+        assert_eq!(
+            c_mont_one,
+            Fp3Element::new(&U384::ONE),
+            "C BROADWELL Montgomery-1 must equal our canonical 1 (R = 2^384 match)"
+        );
     }
 }
