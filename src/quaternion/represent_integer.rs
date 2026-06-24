@@ -219,14 +219,13 @@ pub(crate) fn narrow_uint<const WIDE: usize, const RET: usize>(
 
 /// Narrow a `LeftIdeal<WIDE>` to `LeftIdeal<RET>`. Returns `None` if any
 /// basis cell, `denom`, or `cached_norm` overflows the narrow type.
-#[allow(clippy::needless_range_loop)]
 pub(crate) fn narrow_left_ideal<const WIDE: usize, const RET: usize>(
     wide: &LeftIdeal<WIDE>,
 ) -> Option<LeftIdeal<RET>> {
     let mut basis = [[Int::<RET>::from_i64(0); 4]; 4];
-    for r in 0..4 {
-        for c in 0..4 {
-            basis[r][c] = narrow_int::<WIDE, RET>(&wide.basis[r][c])?;
+    for (brow, wrow) in basis.iter_mut().zip(&wide.basis) {
+        for (bcell, wcell) in brow.iter_mut().zip(wrow) {
+            *bcell = narrow_int::<WIDE, RET>(wcell)?;
         }
     }
     let denom = narrow_uint::<WIDE, RET>(&wide.denom)?;
@@ -395,7 +394,6 @@ fn rand_uint_in_interval<const N: usize, R: CryptoRng>(
 /// if the trial budget is exhausted. Byte-exactness vs the C DRBG draw order
 /// is NOT claimed here (defers to item 8); any `CryptoRng` is accepted.
 #[cfg(feature = "alloc")]
-#[allow(dead_code, clippy::too_many_arguments, clippy::needless_range_loop)]
 pub fn represent_integer_over_alt_order<const LIMBS: usize, R: CryptoRng>(
     order: &crate::quaternion::extremal_orders::AltExtremalOrder,
     n_gamma: &Uint<LIMBS>,
@@ -560,9 +558,9 @@ pub fn represent_integer_over_alt_order<const LIMBS: usize, R: CryptoRng>(
         // γ_final = order_basis · primitive (standard-coords numerator),
         // denom = order_denom.
         let mut basis16 = [[Int::<16>::from_i64(0); 4]; 4];
-        for r in 0..4 {
-            for c in 0..4 {
-                basis16[r][c] = order.order_basis[r][c].resize::<16>();
+        for (b16row, obrow) in basis16.iter_mut().zip(&order.order_basis) {
+            for (b16cell, obcell) in b16row.iter_mut().zip(obrow) {
+                *b16cell = obcell.resize::<16>();
             }
         }
         let g16 = crate::quaternion::lattice::mat_4x4_eval::<16>(&basis16, &primitive);
@@ -799,6 +797,7 @@ fn finalize_random_ideal_o0_ret<const LIMBS: usize, const RET: usize, R: CryptoR
 /// The output's narrow `LeftIdeal<8>` is at the signing-flow norm
 /// width; a wide-cached-norm variant (`_wn` suffix) can be added
 /// later if real-prime signing products exceed `Uint<8>`.
+// Needs the target norm, base prime, primality/cofactor mode, search bound, witnesses, retry budget, and RNG.
 #[allow(clippy::too_many_arguments)]
 pub fn sampling_random_ideal_o0_given_norm_wide<const LIMBS: usize, R: CryptoRng>(
     norm: &Uint<LIMBS>,
@@ -838,6 +837,7 @@ pub fn sampling_random_ideal_o0_given_norm_wide<const LIMBS: usize, R: CryptoRng
 /// so `LIMBS ≳ 40`). `RET` only needs to hold the output ideal's basis
 /// (`~ norm`) and `cached_norm == norm`. For `RET == 8` this is
 /// bit-identical to the fixed-width entry point.
+// Same sampler inputs as the narrow entry point, plus the RET-width output contract for the ideal basis.
 #[allow(clippy::too_many_arguments)]
 pub fn sampling_random_ideal_o0_given_norm_wide_ret<
     const LIMBS: usize,
@@ -1806,7 +1806,7 @@ mod tests {
         let base = Uint::<L>::ONE.shl_vartime(370);
         let mut found = false;
         for k in 0..4u64 {
-            let mut rng = NistPqcRng::new(&[0x5a + k as u8; 48]);
+            let mut rng = NistPqcRng::new(&[0x5a + u8::try_from(k).expect("seed fits in u8"); 48]);
             let n = base.wrapping_add(&Uint::<L>::from_u64(2 * k + 1)); // odd
             let Some((gamma, denom)) =
                 represent_integer_over_alt_order::<L, _>(&order, &n, &p, 1 << 14, &wit, &mut rng)

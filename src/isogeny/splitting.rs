@@ -398,7 +398,7 @@ pub(crate) fn splitting_compute<F: BaseField>(
 // The index `i` drives both NORMALIZATION_TRANSFORMS lookup AND the
 // constant-time `i == secret` selection — enumerate() would obscure the
 // C-ref-faithful indexed comparison.
-#[allow(dead_code, clippy::needless_range_loop)]
+#[allow(clippy::needless_range_loop)]
 pub(crate) fn splitting_compute_randomized<F: BaseField, R: CryptoRng>(
     domain: &AbelianVariety2D<F>,
     zero_index: Option<usize>,
@@ -755,7 +755,7 @@ mod tests {
                 let m1 = splitting_compute_randomized(&domain, None, &mut rng)
                     .expect("product null splits (randomized)")
                     .m;
-                let matched = candidates.iter().any(|c| *c == m1);
+                let matched = candidates.contains(&m1);
                 assert!(matched, "M1 must equal NT[k]·M0 for some k");
             }
         }
@@ -889,11 +889,9 @@ mod tests {
         }
         assert_eq!(CHI_EVAL[0], [1, 1, 1, 1], "row 0 is all +1");
         // Hadamard: distinct rows are orthogonal (dot product 0).
-        for a in 0..4 {
-            for b in (a + 1)..4 {
-                let dot: i32 = (0..4)
-                    .map(|k| CHI_EVAL[a][k] as i32 * CHI_EVAL[b][k] as i32)
-                    .sum();
+        for (a, row_a) in CHI_EVAL.iter().enumerate() {
+            for (b, row_b) in CHI_EVAL.iter().enumerate().skip(a + 1) {
+                let dot: i32 = (0..4).map(|k| row_a[k] as i32 * row_b[k] as i32).sum();
                 assert_eq!(dot, 0, "rows {a},{b} must be orthogonal");
             }
             let self_dot: i32 = (0..4).map(|k| (CHI_EVAL[a][k] as i32).pow(2)).sum();

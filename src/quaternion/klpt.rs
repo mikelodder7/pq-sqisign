@@ -150,7 +150,6 @@ pub fn lift_to_smooth_norm(ideal: &LeftIdeal<8>, target: u128) -> Result<LeftIde
     // search so witnesses with fractional standard coords (e.g. (1+i+j)/2
     // and similar) are found — they're invisible to the integer-standard
     // `find_norm_witness` path.
-    #[allow(clippy::cast_possible_wrap)] // m bounded for prototype (small)
     let m_i64: i64 = m
         .try_into()
         .map_err(|_| Error::Internal("lift_to_smooth_norm: m exceeds i64 prototype bound"))?;
@@ -230,13 +229,8 @@ pub fn lift_to_smooth_norm_wide<const TLIMBS: usize>(
         ));
     }
     let m_low: u64 = m_w.as_words()[0];
-    if m_low > i64::MAX as u64 {
-        return Err(Error::Unimplemented(
-            "lift_to_smooth_norm_wide: m exceeds i64::MAX",
-        ));
-    }
-    #[allow(clippy::cast_possible_wrap)] // checked above: m_low <= i64::MAX
-    let m_i64: i64 = m_low as i64;
+    let m_i64: i64 = i64::try_from(m_low)
+        .map_err(|_| Error::Unimplemented("lift_to_smooth_norm_wide: m exceeds i64::MAX"))?;
 
     let full = LeftIdeal::<8>::full_order();
     let beta_o0 =
@@ -537,7 +531,8 @@ fn q_passes_smooth_predicate<const TLIMBS: usize>(
 
 /// Precision contract: same as [`lift_smooth_norm_rational_wide`] —
 /// `64·TLIMBS ≥ 2·bits(p) + 1` for Cornacchia to operate safely.
-#[allow(clippy::too_many_arguments)] // composes γ-randomize + lift; all params are operationally distinct
+// Combines the starting ideal, base prime, target norm multiplier, smooth factors, search bounds, witnesses, and RNG.
+#[allow(clippy::too_many_arguments)]
 pub fn klpt_body_wide<const TLIMBS: usize, R: CryptoRng>(
     starting_ideal: &LeftIdeal<8>,
     p: &Uint<8>,
@@ -747,7 +742,8 @@ pub fn lift_smooth_norm_rational_wide_wn<const TLIMBS: usize, R: CryptoRng>(
 /// pass `q_max_bits = Some(64·TLIMBS - bits(target_m))` (or smaller) to
 /// guarantee the multiplication fits. `None` disables the bound (legacy
 /// behavior).
-#[allow(clippy::too_many_arguments)] // composes γ-randomize + lift; all params operationally distinct
+// Adds the q bit bound to the KLPT ideal/prime/target/smooth-factor/witness/RNG bundle.
+#[allow(clippy::too_many_arguments)]
 pub fn klpt_body_wide_wn<const TLIMBS: usize, R: CryptoRng>(
     starting_ideal: &LeftIdeal<8>,
     p: &Uint<8>,
@@ -837,7 +833,6 @@ pub fn klpt_body_wide_wn<const TLIMBS: usize, R: CryptoRng>(
 ///
 /// Returns `None` if no probe lands on a prime within budget — caller
 /// should retry with a larger `equiv_bound_coeff` or fresh `rng` state.
-#[allow(clippy::needless_range_loop)]
 pub fn find_prime_norm_quaternion_in_ideal<R: CryptoRng>(
     ideal: &LeftIdeal<8>,
     p: &Uint<8>,
@@ -889,10 +884,9 @@ pub fn find_prime_norm_quaternion_in_ideal<R: CryptoRng>(
 
         // Build α in O_0-coords from the reduced basis: α = Σ_r v[r] · B_red[r].
         let mut alpha_o0 = [zero_i; 4];
-        for r in 0..4 {
-            for k in 0..4 {
-                let term = v[r].wrapping_mul(&b_red[r][k]);
-                alpha_o0[k] = alpha_o0[k].wrapping_add(&term);
+        for (vr, brow) in v.iter().zip(&b_red) {
+            for (acc, bcell) in alpha_o0.iter_mut().zip(brow) {
+                *acc = acc.wrapping_add(&vr.wrapping_mul(bcell));
             }
         }
 
@@ -965,7 +959,6 @@ pub fn find_prime_norm_quaternion_in_ideal_wide<
 ///
 /// `equiv_bound_coeff = k` caps the sampler at `(2k+1)^4` trials before
 /// returning `None`. Returns `None` if the search budget is exhausted.
-#[allow(clippy::needless_range_loop)]
 pub fn find_quaternion_in_ideal_with_norm_property_wide<const INW: usize, const WIDE: usize, F, R>(
     ideal: &LeftIdeal<INW>,
     p: &Uint<INW>,
@@ -993,9 +986,9 @@ where
     // prime q are the REDUCED-equivalent magnitudes (~bitsize(p)~2^250),
     // which fit the narrow Int<8>/Uint<8> return regardless of INW.
     let mut basis_w = [[zero_w; 4]; 4];
-    for r in 0..4 {
-        for c in 0..4 {
-            basis_w[r][c] = widen_int_lattice::<INW, WIDE>(&ideal.basis[r][c]);
+    for (bwrow, brow) in basis_w.iter_mut().zip(&ideal.basis) {
+        for (bwcell, bcell) in bwrow.iter_mut().zip(brow) {
+            *bwcell = widen_int_lattice::<INW, WIDE>(bcell);
         }
     }
     let p_w: Uint<WIDE> = p.resize::<WIDE>();
@@ -1021,8 +1014,8 @@ where
             continue;
         }
         let mut v_w = [zero_w; 4];
-        for i in 0..4 {
-            v_w[i] = widen_int_lattice::<8, WIDE>(&v_narrow[i]);
+        for (vw, vn) in v_w.iter_mut().zip(&v_narrow) {
+            *vw = widen_int_lattice::<8, WIDE>(vn);
         }
 
         let q4_w = qf_eval_4x4::<WIDE>(&v_w, &g_red_w);
@@ -1041,15 +1034,14 @@ where
 
         // Build α at WIDE via Σ v[r] · B_red[r], then narrow back.
         let mut alpha_w = [zero_w; 4];
-        for r in 0..4 {
-            for k in 0..4 {
-                let term = v_w[r].wrapping_mul(&b_red_w[r][k]);
-                alpha_w[k] = alpha_w[k].wrapping_add(&term);
+        for (vr, brow) in v_w.iter().zip(&b_red_w) {
+            for (acc, bcell) in alpha_w.iter_mut().zip(brow) {
+                *acc = acc.wrapping_add(&vr.wrapping_mul(bcell));
             }
         }
         let mut alpha = [zero_n; 4];
-        for k in 0..4 {
-            alpha[k] = narrow_int_lattice::<WIDE, 8>(&alpha_w[k]);
+        for (an, aw) in alpha.iter_mut().zip(&alpha_w) {
+            *an = narrow_int_lattice::<WIDE, 8>(aw);
         }
         let q_narrow: Uint<8> = q_w.resize::<8>();
         return Some((alpha, q_narrow));

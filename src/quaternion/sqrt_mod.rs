@@ -14,9 +14,9 @@
 /// `(a · b) mod m` with `u128` intermediate, narrowing back to `u64`.
 /// Safe because `% m` is `< m < 2^64`.
 #[inline]
-#[allow(clippy::cast_possible_truncation)]
 fn mulmod(a: u64, b: u64, m: u64) -> u64 {
-    ((a as u128 * b as u128) % m as u128) as u64
+    // `% m` is `< m < 2^64`, so narrowing back to `u64` is exact.
+    u64::try_from((u128::from(a) * u128::from(b)) % u128::from(m)).expect("result < m < 2^64")
 }
 
 /// `base^exp mod m` for `m < 2^64`.
@@ -116,11 +116,9 @@ pub fn tonelli_shanks(a: u64, p: u64) -> Option<u64> {
     let mut m: u32 = s;
     let mut c = pow_mod(z, q, p);
     let mut t = pow_mod(a, q, p);
-    // `(q + 1) / 2` here is the textbook Tonelli-Shanks exponent for `R`;
-    // because `q` is odd, this is `(q + 1) / 2` exact, not a `div_ceil` of
-    // some larger value, but clippy can't see the algebraic context.
-    #[allow(clippy::manual_div_ceil)]
-    let mut r = pow_mod(a, (q + 1) / 2, p);
+    // `(q + 1) / 2` is the textbook Tonelli-Shanks exponent for `R`; because
+    // `q` is odd this equals `q.div_ceil(2)` exactly.
+    let mut r = pow_mod(a, q.div_ceil(2), p);
     loop {
         if t == 0 {
             return Some(0);

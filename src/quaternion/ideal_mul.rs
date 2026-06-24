@@ -30,7 +30,6 @@ use crate::quaternion::o0_mul::multiply_o0_basis;
 /// Norm identity: `N(I·α) = N(I) · N_red(α)²`. (The right-multiplication
 /// map `O_0 → O_0` has determinant `N_red(α)²`; multiplied by the basis
 /// determinant of `I` gives the ideal norm of `I·α`.)
-#[allow(clippy::needless_range_loop)]
 pub fn ideal_right_multiply<const LIMBS: usize>(
     i: &LeftIdeal<LIMBS>,
     alpha: &[Int<LIMBS>; 4],
@@ -38,8 +37,8 @@ pub fn ideal_right_multiply<const LIMBS: usize>(
 ) -> LeftIdeal<LIMBS> {
     let zero = Int::<LIMBS>::from_i64(0);
     let mut basis = [[zero; 4]; 4];
-    for k in 0..4 {
-        basis[k] = multiply_o0_basis(&i.basis[k], alpha, p);
+    for (k, row) in basis.iter_mut().enumerate() {
+        *row = multiply_o0_basis(&i.basis[k], alpha, p);
     }
     let reduced = crate::quaternion::hnf::hnf_4x4(&basis);
     LeftIdeal::new(reduced)
@@ -88,7 +87,6 @@ pub fn ideal_right_multiply<const LIMBS: usize>(
 /// `caller_provided_new_norm = Some(q)` (bypassing the formula),
 /// so this fix is transparent to KLPT. Callers that DO use
 /// the autocompute path will now see lattice-index semantics.
-#[allow(clippy::needless_range_loop)]
 pub fn ideal_right_multiply_rational<const LIMBS: usize>(
     i: &LeftIdeal<LIMBS>,
     alpha_coord: &[Int<LIMBS>; 4],
@@ -98,8 +96,8 @@ pub fn ideal_right_multiply_rational<const LIMBS: usize>(
 ) -> Option<LeftIdeal<LIMBS>> {
     let zero = Int::<LIMBS>::from_i64(0);
     let mut basis = [[zero; 4]; 4];
-    for k in 0..4 {
-        basis[k] = multiply_o0_basis(&i.basis[k], alpha_coord, p);
+    for (k, row) in basis.iter_mut().enumerate() {
+        *row = multiply_o0_basis(&i.basis[k], alpha_coord, p);
     }
     let reduced = crate::quaternion::hnf::hnf_4x4(&basis);
     let new_denom = i.denom.wrapping_mul(alpha_denom);
@@ -146,7 +144,6 @@ pub fn ideal_right_multiply_rational<const LIMBS: usize>(
 /// [`ideal_right_multiply_rational`]'s docstring for the convention
 /// rationale). KLPT callers supply `Some(q)` from the primality test
 /// to skip redundant arithmetic.
-#[allow(clippy::needless_range_loop)]
 pub fn ideal_right_multiply_rational_wide<const WIDE: usize>(
     i: &LeftIdeal<8>,
     alpha_coord: &[Int<8>; 4],
@@ -158,8 +155,8 @@ pub fn ideal_right_multiply_rational_wide<const WIDE: usize>(
     use crate::quaternion::o0_mul::multiply_o0_basis_wide;
     let zero = Int::<8>::from_i64(0);
     let mut basis = [[zero; 4]; 4];
-    for k in 0..4 {
-        basis[k] = multiply_o0_basis_wide::<8, WIDE>(&i.basis[k], alpha_coord, p);
+    for (k, row) in basis.iter_mut().enumerate() {
+        *row = multiply_o0_basis_wide::<8, WIDE>(&i.basis[k], alpha_coord, p);
     }
     // HNF at WIDE, not Int<8>: the product lattice I·β has covolume
     // |det| = |det(I)|·N(β)² which, for a real connecting ideal (N(I)~2^511,
@@ -1028,7 +1025,7 @@ mod tests {
             let n_gamma = crate::quaternion::o0_mul::reduced_norm_o0_basis::<LIMBS>(gamma, &p);
             assert_eq!(
                 n_gamma,
-                nn(*expected_n as i64),
+                nn(i64::try_from(*expected_n).expect("fixture norm fits in i64")),
                 "fixture sanity: N_red({gamma:?}) should be {expected_n}, label={label}",
             );
             let lideal =

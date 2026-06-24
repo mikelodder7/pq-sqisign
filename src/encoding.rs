@@ -68,8 +68,8 @@ impl<'a> BitWriter<'a> {
             let bit_off = self.bit_pos % 8;
             let take = core::cmp::min(8 - bit_off, bits_left);
             let chunk_mask = if take == 8 { 0xffu8 } else { (1u8 << take) - 1 };
-            #[allow(clippy::cast_possible_truncation)] // masked to `take` ≤ 8 bits
-            let chunk = (v & u64::from(chunk_mask)) as u8;
+            // masked to `take` ≤ 8 bits, so the value fits in a `u8`.
+            let chunk = u8::try_from(v & u64::from(chunk_mask)).expect("masked to ≤ 8 bits");
             self.buf[byte_idx] |= chunk << bit_off;
             v >>= take;
             self.bit_pos += take;

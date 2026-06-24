@@ -235,15 +235,79 @@ pub fn alternate_connecting_ideal_5_l1() -> LeftIdeal<8> {
 /// `alt_connecting_ideals_lvl3_are_integral`.
 pub fn alternate_connecting_ideal_0_lvl3() -> LeftIdeal<8> {
     let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
-    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
     let cbasis = [
-        [pos([0x21d4cde19a6fbf5a, 0x78ebf3bae7a052b1, 0x1c515c29787fc45c, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1437b508fd5c8015, 0xa79a14526222fa92, 0x15c5b3c4d3a96c31, 0x0, 0x0, 0x0, 0x0, 0x0])],
-        [Int::<8>::from_i64(0), pos([0x21d4cde19a6fbf5a, 0x78ebf3bae7a052b1, 0x1c515c29787fc45c, 0x1, 0x0, 0x0, 0x0, 0x0]), pos([0xd9d18d89d133f45, 0xd151df68857d581f, 0x68ba864a4d6582a, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])],
+        [
+            pos([
+                0x21d4cde19a6fbf5a,
+                0x78ebf3bae7a052b1,
+                0x1c515c29787fc45c,
+                0x1,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([
+                0x1437b508fd5c8015,
+                0xa79a14526222fa92,
+                0x15c5b3c4d3a96c31,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            pos([
+                0x21d4cde19a6fbf5a,
+                0x78ebf3bae7a052b1,
+                0x1c515c29787fc45c,
+                0x1,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            pos([
+                0xd9d18d89d133f45,
+                0xd151df68857d581f,
+                0x68ba864a4d6582a,
+                0x1,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        ],
     ];
     let denom = pos([0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]);
-    let norm = Uint::<8>::from_words([0x90ea66f0cd37dfad, 0x3c75f9dd73d02958, 0x8e28ae14bc3fe22e, 0x0, 0x0, 0x0, 0x0, 0x0]);
+    let norm = Uint::<8>::from_words([
+        0x90ea66f0cd37dfad,
+        0x3c75f9dd73d02958,
+        0x8e28ae14bc3fe22e,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+    ]);
     crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &denom, &norm)
 }
 
@@ -254,15 +318,79 @@ pub fn alternate_connecting_ideal_0_lvl3() -> LeftIdeal<8> {
 /// `alt_connecting_ideals_lvl3_are_integral`.
 pub fn alternate_connecting_ideal_1_lvl3() -> LeftIdeal<8> {
     let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
-    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
     let cbasis = [
-        [pos([0xc1200e71920e9d7a, 0xff55029f607e8fbf, 0x125bbca447967422, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0xec53c53876edbcbf, 0x14fa54eb40deb88, 0x539edb2300a8bb2, 0x0, 0x0, 0x0, 0x0, 0x0])],
-        [Int::<8>::from_i64(0), pos([0xc1200e71920e9d7a, 0xff55029f607e8fbf, 0x125bbca447967422, 0x1, 0x0, 0x0, 0x0, 0x0]), pos([0xd4cc49391b20e0bb, 0xfe055d50ac70a436, 0xd21cef2178be870, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])],
+        [
+            pos([
+                0xc1200e71920e9d7a,
+                0xff55029f607e8fbf,
+                0x125bbca447967422,
+                0x1,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([
+                0xec53c53876edbcbf,
+                0x14fa54eb40deb88,
+                0x539edb2300a8bb2,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            pos([
+                0xc1200e71920e9d7a,
+                0xff55029f607e8fbf,
+                0x125bbca447967422,
+                0x1,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            pos([
+                0xd4cc49391b20e0bb,
+                0xfe055d50ac70a436,
+                0xd21cef2178be870,
+                0x1,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        ],
     ];
     let denom = pos([0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]);
-    let norm = Uint::<8>::from_words([0xe0900738c9074ebd, 0x7faa814fb03f47df, 0x892dde5223cb3a11, 0x0, 0x0, 0x0, 0x0, 0x0]);
+    let norm = Uint::<8>::from_words([
+        0xe0900738c9074ebd,
+        0x7faa814fb03f47df,
+        0x892dde5223cb3a11,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+    ]);
     crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &denom, &norm)
 }
 
@@ -273,15 +401,79 @@ pub fn alternate_connecting_ideal_1_lvl3() -> LeftIdeal<8> {
 /// `alt_connecting_ideals_lvl3_are_integral`.
 pub fn alternate_connecting_ideal_2_lvl3() -> LeftIdeal<8> {
     let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
-    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
     let cbasis = [
-        [pos([0xe33e6532cb1fd282, 0x2b6242750fd8153d, 0xf7223f12db04f17d, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0xea4de944eebf50bf, 0x12b04919cbc5076d, 0x126533049e3071f3, 0x0, 0x0, 0x0, 0x0, 0x0])],
-        [Int::<8>::from_i64(0), pos([0xe33e6532cb1fd282, 0x2b6242750fd8153d, 0xf7223f12db04f17d, 0x1, 0x0, 0x0, 0x0, 0x0]), pos([0xf8f07beddc6081c3, 0x18b1f95b44130dcf, 0xe4bd0c0e3cd47f8a, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])],
+        [
+            pos([
+                0xe33e6532cb1fd282,
+                0x2b6242750fd8153d,
+                0xf7223f12db04f17d,
+                0x1,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([
+                0xea4de944eebf50bf,
+                0x12b04919cbc5076d,
+                0x126533049e3071f3,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            pos([
+                0xe33e6532cb1fd282,
+                0x2b6242750fd8153d,
+                0xf7223f12db04f17d,
+                0x1,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            pos([
+                0xf8f07beddc6081c3,
+                0x18b1f95b44130dcf,
+                0xe4bd0c0e3cd47f8a,
+                0x1,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        ],
     ];
     let denom = pos([0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]);
-    let norm = Uint::<8>::from_words([0xf19f3299658fe941, 0x95b1213a87ec0a9e, 0xfb911f896d8278be, 0x0, 0x0, 0x0, 0x0, 0x0]);
+    let norm = Uint::<8>::from_words([
+        0xf19f3299658fe941,
+        0x95b1213a87ec0a9e,
+        0xfb911f896d8278be,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+    ]);
     crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &denom, &norm)
 }
 
@@ -292,15 +484,79 @@ pub fn alternate_connecting_ideal_2_lvl3() -> LeftIdeal<8> {
 /// `alt_connecting_ideals_lvl3_are_integral`.
 pub fn alternate_connecting_ideal_3_lvl3() -> LeftIdeal<8> {
     let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
-    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
     let cbasis = [
-        [pos([0x7c1cd4b8abc3dfda, 0x79cc21da66b24727, 0xa12d9b8d553de3a3, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0xd263887fd39960fb, 0xea34699bb202e0e7, 0x8e9567634b8a5a15, 0x0, 0x0, 0x0, 0x0, 0x0])],
-        [Int::<8>::from_i64(0), pos([0x7c1cd4b8abc3dfda, 0x79cc21da66b24727, 0xa12d9b8d553de3a3, 0x0, 0x0, 0x0, 0x0, 0x0]), pos([0xa9b94c38d82a7edf, 0x8f97b83eb4af663f, 0x1298342a09b3898d, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])],
+        [
+            pos([
+                0x7c1cd4b8abc3dfda,
+                0x79cc21da66b24727,
+                0xa12d9b8d553de3a3,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([
+                0xd263887fd39960fb,
+                0xea34699bb202e0e7,
+                0x8e9567634b8a5a15,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            pos([
+                0x7c1cd4b8abc3dfda,
+                0x79cc21da66b24727,
+                0xa12d9b8d553de3a3,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            pos([
+                0xa9b94c38d82a7edf,
+                0x8f97b83eb4af663f,
+                0x1298342a09b3898d,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        ],
     ];
     let denom = pos([0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]);
-    let norm = Uint::<8>::from_words([0xbe0e6a5c55e1efed, 0xbce610ed33592393, 0x5096cdc6aa9ef1d1, 0x0, 0x0, 0x0, 0x0, 0x0]);
+    let norm = Uint::<8>::from_words([
+        0xbe0e6a5c55e1efed,
+        0xbce610ed33592393,
+        0x5096cdc6aa9ef1d1,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+    ]);
     crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &denom, &norm)
 }
 
@@ -311,15 +567,79 @@ pub fn alternate_connecting_ideal_3_lvl3() -> LeftIdeal<8> {
 /// `alt_connecting_ideals_lvl3_are_integral`.
 pub fn alternate_connecting_ideal_4_lvl3() -> LeftIdeal<8> {
     let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
-    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
     let cbasis = [
-        [pos([0xd8de1a76d869e00e, 0xf26499e1abc5fe4c, 0xb60b32ab09c37d83, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0xd6b19a98bbfb00f, 0xd7e274e7cd5c0f7b, 0x8de856a83593a419, 0x1, 0x0, 0x0, 0x0, 0x0])],
-        [Int::<8>::from_i64(0), pos([0xd8de1a76d869e00e, 0xf26499e1abc5fe4c, 0xb60b32ab09c37d83, 0x1, 0x0, 0x0, 0x0, 0x0]), pos([0xcb7300cd4caa2fff, 0x1a8224f9de69eed1, 0x2822dc02d42fd96a, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])],
+        [
+            pos([
+                0xd8de1a76d869e00e,
+                0xf26499e1abc5fe4c,
+                0xb60b32ab09c37d83,
+                0x1,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([
+                0xd6b19a98bbfb00f,
+                0xd7e274e7cd5c0f7b,
+                0x8de856a83593a419,
+                0x1,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            pos([
+                0xd8de1a76d869e00e,
+                0xf26499e1abc5fe4c,
+                0xb60b32ab09c37d83,
+                0x1,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            pos([
+                0xcb7300cd4caa2fff,
+                0x1a8224f9de69eed1,
+                0x2822dc02d42fd96a,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        ],
     ];
     let denom = pos([0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]);
-    let norm = Uint::<8>::from_words([0x6c6f0d3b6c34f007, 0xf9324cf0d5e2ff26, 0xdb05995584e1bec1, 0x0, 0x0, 0x0, 0x0, 0x0]);
+    let norm = Uint::<8>::from_words([
+        0x6c6f0d3b6c34f007,
+        0xf9324cf0d5e2ff26,
+        0xdb05995584e1bec1,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+    ]);
     crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &denom, &norm)
 }
 
@@ -330,15 +650,79 @@ pub fn alternate_connecting_ideal_4_lvl3() -> LeftIdeal<8> {
 /// `alt_connecting_ideals_lvl3_are_integral`.
 pub fn alternate_connecting_ideal_5_lvl3() -> LeftIdeal<8> {
     let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
-    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
     let cbasis = [
-        [pos([0x97d3c8dc37a07b26, 0x1df20931d6bd7f2f, 0x6ee725914a3e2918, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x9a52ac55cd013a91, 0x42454dec118f9887, 0x7ad1d161022d869, 0x0, 0x0, 0x0, 0x0, 0x0])],
-        [Int::<8>::from_i64(0), pos([0x97d3c8dc37a07b26, 0x1df20931d6bd7f2f, 0x6ee725914a3e2918, 0x0, 0x0, 0x0, 0x0, 0x0]), pos([0xfd811c866a9f4095, 0xdbacbb45c52de6a7, 0x673a087b3a1b50ae, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])],
+        [
+            pos([
+                0x97d3c8dc37a07b26,
+                0x1df20931d6bd7f2f,
+                0x6ee725914a3e2918,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([
+                0x9a52ac55cd013a91,
+                0x42454dec118f9887,
+                0x7ad1d161022d869,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            pos([
+                0x97d3c8dc37a07b26,
+                0x1df20931d6bd7f2f,
+                0x6ee725914a3e2918,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            pos([
+                0xfd811c866a9f4095,
+                0xdbacbb45c52de6a7,
+                0x673a087b3a1b50ae,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        ],
     ];
     let denom = pos([0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]);
-    let norm = Uint::<8>::from_words([0xcbe9e46e1bd03d93, 0xef90498eb5ebf97, 0x377392c8a51f148c, 0x0, 0x0, 0x0, 0x0, 0x0]);
+    let norm = Uint::<8>::from_words([
+        0xcbe9e46e1bd03d93,
+        0xef90498eb5ebf97,
+        0x377392c8a51f148c,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+    ]);
     crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &denom, &norm)
 }
 
@@ -349,15 +733,79 @@ pub fn alternate_connecting_ideal_5_lvl3() -> LeftIdeal<8> {
 /// `alt_connecting_ideals_lvl3_are_integral`.
 pub fn alternate_connecting_ideal_6_lvl3() -> LeftIdeal<8> {
     let pos = |l: [u64; 8]| *Uint::<8>::from_words(l).as_int();
-    let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
     let cbasis = [
-        [pos([0x430fb04b3b34e5ca, 0xec478c7da04ae795, 0xd31fb71e8e5c77df, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x83ff383998d54d27, 0xbe45c95b4d5b48b7, 0x6c264d5736f39d44, 0x0, 0x0, 0x0, 0x0, 0x0])],
-        [Int::<8>::from_i64(0), pos([0x430fb04b3b34e5ca, 0xec478c7da04ae795, 0xd31fb71e8e5c77df, 0x0, 0x0, 0x0, 0x0, 0x0]), pos([0xbf107811a25f98a3, 0x2e01c32252ef9edd, 0x66f969c75768da9b, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-        [Int::<8>::from_i64(0), Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])],
+        [
+            pos([
+                0x430fb04b3b34e5ca,
+                0xec478c7da04ae795,
+                0xd31fb71e8e5c77df,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([
+                0x83ff383998d54d27,
+                0xbe45c95b4d5b48b7,
+                0x6c264d5736f39d44,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            pos([
+                0x430fb04b3b34e5ca,
+                0xec478c7da04ae795,
+                0xd31fb71e8e5c77df,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            pos([
+                0xbf107811a25f98a3,
+                0x2e01c32252ef9edd,
+                0x66f969c75768da9b,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+            Int::<8>::from_i64(0),
+        ],
+        [
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        ],
     ];
     let denom = pos([0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]);
-    let norm = Uint::<8>::from_words([0xa187d8259d9a72e5, 0xf623c63ed02573ca, 0x698fdb8f472e3bef, 0x0, 0x0, 0x0, 0x0, 0x0]);
+    let norm = Uint::<8>::from_words([
+        0xa187d8259d9a72e5,
+        0xf623c63ed02573ca,
+        0x698fdb8f472e3bef,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+        0x0,
+    ]);
     crate::quaternion::o0_mul::c_ideal_to_left_ideal::<8>(&cbasis, &denom, &norm)
 }
 

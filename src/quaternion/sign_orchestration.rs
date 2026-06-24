@@ -281,7 +281,6 @@ pub struct AuxNormHelpers<const LIMBS: usize> {
 /// Caller's `LIMBS` must hold `N_red(resp_quat)` at exact precision —
 /// same general-path bound as [`super::represent_integer::sampling_random_ideal_o0_given_norm_wide`]
 /// (`64·LIMBS ≥ 2·bits(p) + 1`). At L1 this is `LIMBS ≥ 8`.
-#[allow(clippy::too_many_arguments)]
 pub fn compute_random_aux_norm_and_helpers<const LIMBS: usize>(
     resp_quat: &[Int<LIMBS>; 4],
     lattice_content: &Uint<LIMBS>,
@@ -565,6 +564,7 @@ impl<P: Params> AuxIsogenyOutputs<P> {
 /// [`super::represent_integer::sampling_random_ideal_o0_given_norm_wide`]:
 /// `64·LIMBS ≥ 2·bits(p) + 1` for the general path that
 /// `random_aux_norm` lands on (composite, with `prime_cofactor`).
+// Needs the auxiliary norm, response-commit ideal, base prime/cofactor, sampler bounds, witnesses, and RNG.
 #[allow(clippy::too_many_arguments)]
 pub fn evaluate_random_aux_isogeny_signature<P: Params, const LIMBS: usize, R: CryptoRng>(
     random_aux_norm: &Uint<LIMBS>,
@@ -631,7 +631,7 @@ pub fn evaluate_random_aux_isogeny_signature<P: Params, const LIMBS: usize, R: C
     let q_placeholder = Uint::<8>::from_u64(1); // placeholder `q` for this legacy scaffold; the live path passes the real `q`.
     let _ = crate::isogeny::clapotis::ideal_to_isogeny::<P, LIMBS, R>(
         &wide_norm_ideal,
-        q_placeholder,
+        &q_placeholder,
         rng,
     )?;
 

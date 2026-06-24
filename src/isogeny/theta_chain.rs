@@ -117,10 +117,9 @@ pub(crate) trait ChainVisitor {
 /// Narrow the signed stack pointer to an index. `current` is `isize` only so
 /// it can hold the `-1` "stack empty" sentinel; it is always non-negative
 /// wherever it indexes.
-#[allow(clippy::cast_sign_loss)]
 fn slot(current: isize) -> usize {
     debug_assert!(current >= 0, "stack pointer used as index while negative");
-    current as usize
+    usize::try_from(current).expect("stack pointer is non-negative wherever it indexes")
 }
 
 /// Stack-machine size, mirroring the C reference:
@@ -799,7 +798,10 @@ mod tests {
     fn no_extra_torsion_total_steps_equals_n() {
         for n in 4..=248u32 {
             let v = run(n, false);
-            let total = v.glue_at.len() as u32 + v.steps.len() as u32 + v.final_4 + v.final_2;
+            let total = u32::try_from(v.glue_at.len()).expect("glue count fits in u32")
+                + u32::try_from(v.steps.len()).expect("step count fits in u32")
+                + v.final_4
+                + v.final_2;
             assert_eq!(total, n, "n={n}: total 2-isogeny steps must equal n");
             assert_eq!(v.glue_at.len(), 1, "n={n}: exactly one gluing step");
             assert_eq!(v.final_4, 1, "n={n}: exactly one compute_4 final");
@@ -807,7 +809,11 @@ mod tests {
             assert_eq!(v.split, 1, "n={n}: exactly one splitting step");
             assert_eq!(v.split_extra, Some(false));
             // interior steps = n - 3
-            assert_eq!(v.steps.len() as u32, n - 3, "n={n}: interior count");
+            assert_eq!(
+                u32::try_from(v.steps.len()).expect("step count fits in u32"),
+                n - 3,
+                "n={n}: interior count"
+            );
         }
     }
 
@@ -817,12 +823,19 @@ mod tests {
     fn extra_torsion_total_steps_equals_n() {
         for n in 4..=248u32 {
             let v = run(n, true);
-            let total = v.glue_at.len() as u32 + v.steps.len() as u32 + v.final_4 + v.final_2;
+            let total = u32::try_from(v.glue_at.len()).expect("glue count fits in u32")
+                + u32::try_from(v.steps.len()).expect("step count fits in u32")
+                + v.final_4
+                + v.final_2;
             assert_eq!(total, n, "n={n}: extra-torsion total steps must equal n");
             assert_eq!(v.final_4, 0, "n={n}: no finals on the extra-torsion path");
             assert_eq!(v.final_2, 0);
             assert_eq!(v.split_extra, Some(true));
-            assert_eq!(v.steps.len() as u32, n - 1, "n={n}: interior count (extra)");
+            assert_eq!(
+                u32::try_from(v.steps.len()).expect("step count fits in u32"),
+                n - 1,
+                "n={n}: interior count (extra)"
+            );
         }
     }
 
@@ -882,8 +895,8 @@ mod tests {
         let v = run(4, false);
         assert_eq!(v.glue_at, alloc::vec![1]);
         assert_eq!(v.steps.len(), 1);
-        assert_eq!(v.steps[0].2, false); // h1
-        assert_eq!(v.steps[0].3, true); // h2
+        assert!(!v.steps[0].2); // h1
+        assert!(v.steps[0].3); // h2
         assert_eq!(v.final_4, 1);
         assert_eq!(v.final_2, 1);
         assert_eq!(v.split, 1);

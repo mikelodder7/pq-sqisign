@@ -19,7 +19,7 @@ use crate::ec::montgomery::MontgomeryPoint;
 use crate::gf::fp2::Fp2;
 use crate::params::lvl1::Fp1Element;
 use crate::params::lvl3::Fp3Element;
-use crypto_bigint::{U256, U384};
+use crypto_bigint::{U256, U384, Uint};
 
 /// An `Fp` element from the reference's 4-limb Montgomery (`R = 2^256`) words.
 #[inline]
@@ -130,32 +130,56 @@ pub fn basis_e0_lvl3() -> (
 
     let px = fp2_mont3(
         [
-            0x31c4a31adbd9a5c6, 0xe7ad90c51d65d7b2, 0x88ba021701e76d61,
-            0x2cb3cdb2a2e90ddd, 0xdc1b70072d06f585, 0x16eecbda94894ad1,
+            0x31c4a31adbd9a5c6,
+            0xe7ad90c51d65d7b2,
+            0x88ba021701e76d61,
+            0x2cb3cdb2a2e90ddd,
+            0xdc1b70072d06f585,
+            0x16eecbda94894ad1,
         ],
         [
-            0xf42096161ef8662a, 0xcba5e8ce200d142d, 0x2205c5d40d107d81,
-            0xd00330eccc07a7e7, 0x16d8d4adf934c3fa, 0x6065815b3283164,
+            0xf42096161ef8662a,
+            0xcba5e8ce200d142d,
+            0x2205c5d40d107d81,
+            0xd00330eccc07a7e7,
+            0x16d8d4adf934c3fa,
+            0x6065815b3283164,
         ],
     );
     let qx = fp2_mont3(
         [
-            0x6f999f727a40c5b, 0x50a8ca71cebbf1da, 0x65cc12a7b6e85c42,
-            0x9151a12f13f8774b, 0x8678d0d647499967, 0x2e23bfb6dd51ff28,
+            0x6f999f727a40c5b,
+            0x50a8ca71cebbf1da,
+            0x65cc12a7b6e85c42,
+            0x9151a12f13f8774b,
+            0x8678d0d647499967,
+            0x2e23bfb6dd51ff28,
         ],
         [
-            0x6bcfee41588c1c62, 0xa9249a07cd644dfe, 0xef21e097d60b5ff8,
-            0xcecabfeab509e310, 0xf010f836ce26d4bd, 0x2a7787556e853bb9,
+            0x6bcfee41588c1c62,
+            0xa9249a07cd644dfe,
+            0xef21e097d60b5ff8,
+            0xcecabfeab509e310,
+            0xf010f836ce26d4bd,
+            0x2a7787556e853bb9,
         ],
     );
     let pmqx = fp2_mont3(
         [
-            0x1a0f70dccedb8c78, 0x7dec6534b94f5bd1, 0xe508bd760193eeb6,
-            0x10bf4b1c0497322f, 0x2d7e909753d8633c, 0x3722113986808eb1,
+            0x1a0f70dccedb8c78,
+            0x7dec6534b94f5bd1,
+            0xe508bd760193eeb6,
+            0x10bf4b1c0497322f,
+            0x2d7e909753d8633c,
+            0x3722113986808eb1,
         ],
         [
-            0x6a46366e4b4b295e, 0xa5a183bada734009, 0x8609a1279ac3fe52,
-            0x269b74a0c7e6f7c5, 0x9cf14a7d5c5199bd, 0x5ce1f24843721b0,
+            0x6a46366e4b4b295e,
+            0xa5a183bada734009,
+            0x8609a1279ac3fe52,
+            0x269b74a0c7e6f7c5,
+            0x9cf14a7d5c5199bd,
+            0x5ce1f24843721b0,
         ],
     );
 
@@ -196,22 +220,38 @@ mod lvl3_basis_tests {
         // in either transcription.
         let e0_px = fp2_mont3(
             [
-                0x31c4a31adbd9a5c6, 0xe7ad90c51d65d7b2, 0x88ba021701e76d61,
-                0x2cb3cdb2a2e90ddd, 0xdc1b70072d06f585, 0x16eecbda94894ad1,
+                0x31c4a31adbd9a5c6,
+                0xe7ad90c51d65d7b2,
+                0x88ba021701e76d61,
+                0x2cb3cdb2a2e90ddd,
+                0xdc1b70072d06f585,
+                0x16eecbda94894ad1,
             ],
             [
-                0xf42096161ef8662a, 0xcba5e8ce200d142d, 0x2205c5d40d107d81,
-                0xd00330eccc07a7e7, 0x16d8d4adf934c3fa, 0x6065815b3283164,
+                0xf42096161ef8662a,
+                0xcba5e8ce200d142d,
+                0x2205c5d40d107d81,
+                0xd00330eccc07a7e7,
+                0x16d8d4adf934c3fa,
+                0x6065815b3283164,
             ],
         );
         let e0_qx = fp2_mont3(
             [
-                0x6f999f727a40c5b, 0x50a8ca71cebbf1da, 0x65cc12a7b6e85c42,
-                0x9151a12f13f8774b, 0x8678d0d647499967, 0x2e23bfb6dd51ff28,
+                0x6f999f727a40c5b,
+                0x50a8ca71cebbf1da,
+                0x65cc12a7b6e85c42,
+                0x9151a12f13f8774b,
+                0x8678d0d647499967,
+                0x2e23bfb6dd51ff28,
             ],
             [
-                0x6bcfee41588c1c62, 0xa9249a07cd644dfe, 0xef21e097d60b5ff8,
-                0xcecabfeab509e310, 0xf010f836ce26d4bd, 0x2a7787556e853bb9,
+                0x6bcfee41588c1c62,
+                0xa9249a07cd644dfe,
+                0xef21e097d60b5ff8,
+                0xcecabfeab509e310,
+                0xf010f836ce26d4bd,
+                0x2a7787556e853bb9,
             ],
         );
         assert_eq!(p.x, e0_px, "P.x matches e0_basis.c BASIS_E0_PX");
@@ -235,36 +275,120 @@ mod lvl3_basis_tests {
 /// `action_i` (lvl3) = action of the quaternion `i` (== `action_gen2`).
 pub const ACTION_I_LVL3: [[[u64; 6]; 2]; 2] = [
     [
-        [0x3a84778f9c97d1, 0x13daabd666ae39d2, 0x5f9ff8dbb9e7f153, 0x62b9a4f0fcb236f7, 0xe8c5539d36945c07, 0x9ac691f16c7631],
-        [0x76df4a43bac61ac2, 0xd32d1cf84a2de925, 0xdf8bc02f1dc07867, 0x4a9ee07d4f0cf122, 0x357087917ce20a97, 0x6634cc519b1749],
+        [
+            0x3a84778f9c97d1,
+            0x13daabd666ae39d2,
+            0x5f9ff8dbb9e7f153,
+            0x62b9a4f0fcb236f7,
+            0xe8c5539d36945c07,
+            0x9ac691f16c7631,
+        ],
+        [
+            0x76df4a43bac61ac2,
+            0xd32d1cf84a2de925,
+            0xdf8bc02f1dc07867,
+            0x4a9ee07d4f0cf122,
+            0x357087917ce20a97,
+            0x6634cc519b1749,
+        ],
     ],
     [
-        [0x9c61a4810234fb0f, 0xe38c3a72cd584bd1, 0xdc99f1020ea3be7b, 0xef915d86b229f180, 0xf66fa9d5883146c4, 0xfc9ebd6c02a451],
-        [0xffc57b887063682f, 0xec2554299951c62d, 0xa060072446180eac, 0x9d465b0f034dc908, 0x173aac62c96ba3f8, 0x65396e0e9389ce],
+        [
+            0x9c61a4810234fb0f,
+            0xe38c3a72cd584bd1,
+            0xdc99f1020ea3be7b,
+            0xef915d86b229f180,
+            0xf66fa9d5883146c4,
+            0xfc9ebd6c02a451,
+        ],
+        [
+            0xffc57b887063682f,
+            0xec2554299951c62d,
+            0xa060072446180eac,
+            0x9d465b0f034dc908,
+            0x173aac62c96ba3f8,
+            0x65396e0e9389ce,
+        ],
     ],
 ];
 
 /// `action_gen3` (lvl3) = action of the O0 generator `(i + j)/2`.
 pub const ACTION_GEN3_LVL3: [[[u64; 6]; 2]; 2] = [
     [
-        [0xe1f64f99ab6f83a3, 0xec7ad9212b61c2e8, 0xe0fdf78e75554f14, 0x107cfb09044bb2bf, 0x9bbe063355f7f365, 0xf125b09c11409c],
-        [0x127f16ca0130dc3d, 0x2e8d3ece57d01c5c, 0x6cab1272eb26c5ae, 0xfeb3321b07c979c7, 0x62c3efa2b33ec99f, 0x4ec959777c7bbe],
+        [
+            0xe1f64f99ab6f83a3,
+            0xec7ad9212b61c2e8,
+            0xe0fdf78e75554f14,
+            0x107cfb09044bb2bf,
+            0x9bbe063355f7f365,
+            0xf125b09c11409c,
+        ],
+        [
+            0x127f16ca0130dc3d,
+            0x2e8d3ece57d01c5c,
+            0x6cab1272eb26c5ae,
+            0xfeb3321b07c979c7,
+            0x62c3efa2b33ec99f,
+            0x4ec959777c7bbe,
+        ],
     ],
     [
-        [0x68d7ec590f9b8f83, 0x2714909b787e8301, 0x60f499508ea5e264, 0xeb9a4d1b392b971d, 0x1f24cbaadd02b9fb, 0x910fc86afb626c],
-        [0x1e09b06654907c5d, 0x138526ded49e3d17, 0x1f0208718aaab0eb, 0xef8304f6fbb44d40, 0x6441f9ccaa080c9a, 0xeda4f63eebf63],
+        [
+            0x68d7ec590f9b8f83,
+            0x2714909b787e8301,
+            0x60f499508ea5e264,
+            0xeb9a4d1b392b971d,
+            0x1f24cbaadd02b9fb,
+            0x910fc86afb626c,
+        ],
+        [
+            0x1e09b06654907c5d,
+            0x138526ded49e3d17,
+            0x1f0208718aaab0eb,
+            0xef8304f6fbb44d40,
+            0x6441f9ccaa080c9a,
+            0xeda4f63eebf63,
+        ],
     ],
 ];
 
 /// `action_gen4` (lvl3) = action of the O0 generator `(1 + k)/2`.
 pub const ACTION_GEN4_LVL3: [[[u64; 6]; 2]; 2] = [
     [
-        [0x75414cc7cecbac5a, 0x4e827606200564a0, 0x292d242e3ce25fda, 0x41454a599b5d6550, 0xa2e0d9b7bb7f3081, 0x365b0a54c45b87],
-        [0xfac7d5b97057947, 0x146a1ce1812188f5, 0x26c39d760c3c70dd, 0xba0b51891aa57c19, 0x3c690b13b47705ad, 0x688e590a97fdde],
+        [
+            0x75414cc7cecbac5a,
+            0x4e827606200564a0,
+            0x292d242e3ce25fda,
+            0x41454a599b5d6550,
+            0xa2e0d9b7bb7f3081,
+            0x365b0a54c45b87,
+        ],
+        [
+            0xfac7d5b97057947,
+            0x146a1ce1812188f5,
+            0x26c39d760c3c70dd,
+            0xba0b51891aa57c19,
+            0x3c690b13b47705ad,
+            0x688e590a97fdde,
+        ],
     ],
     [
-        [0x6ea5a123443b189a, 0x1699b8f44358c3e8, 0xfb6b31bbf36c7f02, 0x290f14ea45c8eea7, 0xc64e175cd0ea9c11, 0x896a655cf9ad0],
-        [0x8abeb338313453a7, 0xb17d89f9dffa9b5f, 0xd6d2dbd1c31da025, 0xbebab5a664a29aaf, 0x5d1f26484480cf7e, 0xc9a4f5ab3ba478],
+        [
+            0x6ea5a123443b189a,
+            0x1699b8f44358c3e8,
+            0xfb6b31bbf36c7f02,
+            0x290f14ea45c8eea7,
+            0xc64e175cd0ea9c11,
+            0x896a655cf9ad0,
+        ],
+        [
+            0x8abeb338313453a7,
+            0xb17d89f9dffa9b5f,
+            0xd6d2dbd1c31da025,
+            0xbebab5a664a29aaf,
+            0x5d1f26484480cf7e,
+            0xc9a4f5ab3ba478,
+        ],
     ],
 ];
 
@@ -280,8 +404,14 @@ mod lvl3_action_tests {
         // (mod 2^376). This is an INDEPENDENT algebraic check on the transcribed
         // integers (not a restatement of them): one wrong limb breaks it.
         let a = [
-            [U384::from_words(ACTION_I_LVL3[0][0]), U384::from_words(ACTION_I_LVL3[0][1])],
-            [U384::from_words(ACTION_I_LVL3[1][0]), U384::from_words(ACTION_I_LVL3[1][1])],
+            [
+                U384::from_words(ACTION_I_LVL3[0][0]),
+                U384::from_words(ACTION_I_LVL3[0][1]),
+            ],
+            [
+                U384::from_words(ACTION_I_LVL3[1][0]),
+                U384::from_words(ACTION_I_LVL3[1][1]),
+            ],
         ];
         // mask = 2^376 − 1; note −1 ≡ 2^376 − 1 (mod 2^376).
         let mask = U384::ONE.shl_vartime(376).wrapping_sub(&U384::ONE);
@@ -415,16 +545,15 @@ const ACTION_GEN4: [[[u64; 4]; 2]; 2] = [
     ],
 ];
 
-/// Low `f`-bit mask `2^f − 1` as a `U256`.
+/// Low `f`-bit mask `2^f − 1` as a `Uint<8>`.
 #[inline]
-#[allow(clippy::cast_possible_truncation)] // 1 ≤ f ≤ 256 ⇒ 256−f fits u32
-fn mask_2f(f: usize) -> U256 {
-    U256::MAX.wrapping_shr((256 - f) as u32)
+fn mask_2f(f: usize) -> Uint<8> {
+    Uint::<8>::MAX.wrapping_shr(u32::try_from(512 - f).expect("512 - f fits u32 for 1 <= f <= 512"))
 }
 
 /// `(a − b) mod 2^f`.
 #[inline]
-fn sub_mod_2f(a: &U256, b: &U256, f: usize) -> U256 {
+fn sub_mod_2f(a: &Uint<8>, b: &Uint<8>, f: usize) -> Uint<8> {
     a.wrapping_sub(b) & mask_2f(f)
 }
 
@@ -439,7 +568,7 @@ pub(crate) fn matrix_application_even_basis(
     p: &MontgomeryPoint<Fp1Element>,
     q: &MontgomeryPoint<Fp1Element>,
     pmq: &MontgomeryPoint<Fp1Element>,
-    m: &[[U256; 2]; 2],
+    m: &[[Uint<8>; 2]; 2],
     f: usize,
     a24: &Fp2<Fp1Element>,
 ) -> Option<(
@@ -466,9 +595,9 @@ pub(crate) fn matrix_application_even_basis(
     Some((r, s, rmq))
 }
 
-/// `(m · v) mod 2^f` for a 2×2 matrix and a 2-vector (all `U256`, mod `2^f`).
+/// `(m · v) mod 2^f` for a 2×2 matrix and a 2-vector (all `Uint<8>`, mod `2^f`).
 #[inline]
-fn mat2x2_eval_mod_2f(m: &[[U256; 2]; 2], v: &[U256; 2], f: usize) -> [U256; 2] {
+fn mat2x2_eval_mod_2f(m: &[[Uint<8>; 2]; 2], v: &[Uint<8>; 2], f: usize) -> [Uint<8>; 2] {
     [
         add_mod_2f(
             &mul_mod_2f(&m[0][0], &v[0], f),
@@ -485,15 +614,15 @@ fn mat2x2_eval_mod_2f(m: &[[U256; 2]; 2], v: &[U256; 2], f: usize) -> [U256; 2] 
 
 /// Inverse of a 2×2 matrix modulo `2^f`. Returns `None` if the determinant is
 /// even (not a unit mod `2^f`). `inv = det⁻¹ · [[d, −b], [−c, a]]`.
-fn mat2x2_inv_mod_2f(m: &[[U256; 2]; 2], f: usize) -> Option<[[U256; 2]; 2]> {
+fn mat2x2_inv_mod_2f(m: &[[Uint<8>; 2]; 2], f: usize) -> Option<[[Uint<8>; 2]; 2]> {
     let det = sub_mod_2f(
         &mul_mod_2f(&m[0][0], &m[1][1], f),
         &mul_mod_2f(&m[0][1], &m[1][0], f),
         f,
     );
-    let modulus = mask_2f(f).wrapping_add(&U256::ONE); // 2^f
-    let det_inv = crate::quaternion::sign_orchestration::uint_inv_mod_vartime::<4>(&det, &modulus)?;
-    let neg = |x: &U256| sub_mod_2f(&U256::ZERO, x, f);
+    let modulus = mask_2f(f).wrapping_add(&Uint::<8>::ONE); // 2^f
+    let det_inv = crate::quaternion::sign_orchestration::uint_inv_mod_vartime::<8>(&det, &modulus)?;
+    let neg = |x: &Uint<8>| sub_mod_2f(&Uint::<8>::ZERO, x, f);
     Some([
         [
             mul_mod_2f(&det_inv, &m[1][1], f),
@@ -518,7 +647,7 @@ fn mat2x2_inv_mod_2f(m: &[[U256; 2]; 2], f: usize) -> Option<[[U256; 2]; 2]> {
 /// ~`2^(4f/... )` and overflows narrow widths), returned at `LeftIdeal<16>`.
 /// Returns `None` if the basis matrix is singular mod `2^f`. lvl1-pinned.
 pub(crate) fn id2iso_kernel_dlogs_to_ideal_even(
-    vec2: &[U256; 2],
+    vec2: &[Uint<8>; 2],
     f: usize,
 ) -> Option<crate::quaternion::ideal::LeftIdeal<16>> {
     use crate::quaternion::Quaternion;
@@ -529,7 +658,7 @@ pub(crate) fn id2iso_kernel_dlogs_to_ideal_even(
     let gen_i = mat_from_limbs(&ACTION_I);
     let gen3 = mat_from_limbs(&ACTION_GEN3);
     let gen4 = mat_from_limbs(&ACTION_GEN4);
-    let mut action_j = [[U256::ZERO; 2]; 2];
+    let mut action_j = [[Uint::<8>::ZERO; 2]; 2];
     for r in 0..2 {
         for c in 0..2 {
             let two_g3 = add_mod_2f(&gen3[r][c], &gen3[r][c], f);
@@ -553,7 +682,7 @@ pub(crate) fn id2iso_kernel_dlogs_to_ideal_even(
     // gen = a − i + b·(j + (1+k)/2), denom 2:
     //   coord0 = 2a + b, coord1 = −2, coord2 = 2b, coord3 = b.
     // a, b are in [0, 2^f) ⇒ widen to Int<WK> non-negative.
-    let to_wk = |u: &U256| -> crypto_bigint::Int<WK> { *u.resize::<WK>().as_int() };
+    let to_wk = |u: &Uint<8>| -> crypto_bigint::Int<WK> { *u.resize::<WK>().as_int() };
     let a_i = to_wk(&vec[0]);
     let b_i = to_wk(&vec[1]);
     let two = crypto_bigint::Int::<WK>::from_i64(2);
@@ -564,7 +693,7 @@ pub(crate) fn id2iso_kernel_dlogs_to_ideal_even(
         b_i,                                       // b
     );
 
-    let two_pow = crypto_bigint::Uint::<WK>::ONE.shl_vartime(u32::try_from(f).ok()?);
+    let two_pow = Uint::<WK>::ONE.shl_vartime(u32::try_from(f).ok()?);
     let p_wk = crate::params::lvl1::prime().resize::<WK>();
     let (basis, denom, norm) = quat_lideal_create::<WK>(
         &gen_q,
@@ -602,14 +731,14 @@ pub(crate) fn id2iso_kernel_dlogs_to_ideal_even(
 /// basis, whose `id2iso_kernel_dlogs_to_ideal_even` is the (norm-`2^f`) challenge
 /// ideal. lvl1-pinned (`f = TORSION_EVEN_POWER = 248`).
 pub(crate) fn compute_challenge_ideal_signature(
-    mat_bacan_to_ba0_two: &[[U256; 2]; 2],
-    chall_coeff: &U256,
+    mat_bacan_to_ba0_two: &[[Uint<8>; 2]; 2],
+    chall_coeff: &Uint<8>,
     f: usize,
 ) -> Option<crate::quaternion::ideal::LeftIdeal<16>> {
     // vec = mat · [1, chall_coeff]  (mod 2^f).
     let vec = mat2x2_eval_mod_2f(
         mat_bacan_to_ba0_two,
-        &[U256::ONE & mask_2f(f), *chall_coeff & mask_2f(f)],
+        &[Uint::<8>::ONE & mask_2f(f), *chall_coeff & mask_2f(f)],
         f,
     );
     id2iso_kernel_dlogs_to_ideal_even(&vec, f)
@@ -625,7 +754,7 @@ pub(crate) fn compute_challenge_ideal_signature(
 pub(crate) fn id2iso_ideal_to_kernel_dlogs_even<const LIMBS: usize>(
     gen_q: &[crypto_bigint::Int<LIMBS>; 4],
     f: usize,
-) -> [U256; 2] {
+) -> [Uint<8>; 2] {
     let alpha = crate::quaternion::o0_mul::o0_conjugate::<LIMBS>(gen_q);
     let c = [
         int_to_mod_2f(&alpha[0], f),
@@ -636,10 +765,10 @@ pub(crate) fn id2iso_ideal_to_kernel_dlogs_even<const LIMBS: usize>(
     let gen2 = mat_from_limbs(&ACTION_I); // GEN2 == ACTION_I
     let gen3 = mat_from_limbs(&ACTION_GEN3);
     let gen4 = mat_from_limbs(&ACTION_GEN4);
-    let mut mat = [[U256::ZERO; 2]; 2];
+    let mut mat = [[Uint::<8>::ZERO; 2]; 2];
     for i in 0..2 {
         for j in 0..2 {
-            let mut e = if i == j { c[0] } else { U256::ZERO };
+            let mut e = if i == j { c[0] } else { Uint::<8>::ZERO };
             e = add_mod_2f(&e, &mul_mod_2f(&c[1], &gen2[i][j], f), f);
             e = add_mod_2f(&e, &mul_mod_2f(&c[2], &gen3[i][j], f), f);
             e = add_mod_2f(&e, &mul_mod_2f(&c[3], &gen4[i][j], f), f);
@@ -647,7 +776,7 @@ pub(crate) fn id2iso_ideal_to_kernel_dlogs_even<const LIMBS: usize>(
         }
     }
     // Pick a primitive column: [mat[0][0], mat[1][0]] unless both are even.
-    let even = |x: &U256| x.to_le_bytes()[0] & 1 == 0;
+    let even = |x: &Uint<8>| x.to_le_bytes()[0] & 1 == 0;
     if even(&mat[0][0]) && even(&mat[1][0]) {
         [mat[0][1], mat[1][1]]
     } else {
@@ -655,38 +784,43 @@ pub(crate) fn id2iso_ideal_to_kernel_dlogs_even<const LIMBS: usize>(
     }
 }
 
-/// Build a `[[U256;2];2]` matrix from a `[[[u64;4];2];2]` limb table.
+/// Build a `[[Uint<8>;2];2]` matrix from a `[[[u64;4];2];2]` limb table.
 #[inline]
-fn mat_from_limbs(t: &[[[u64; 4]; 2]; 2]) -> [[U256; 2]; 2] {
+fn mat_from_limbs(t: &[[[u64; 4]; 2]; 2]) -> [[Uint<8>; 2]; 2] {
     [
-        [U256::from_words(t[0][0]), U256::from_words(t[0][1])],
-        [U256::from_words(t[1][0]), U256::from_words(t[1][1])],
+        [
+            Uint::<8>::from_words([t[0][0][0], t[0][0][1], t[0][0][2], t[0][0][3], 0, 0, 0, 0]),
+            Uint::<8>::from_words([t[0][1][0], t[0][1][1], t[0][1][2], t[0][1][3], 0, 0, 0, 0]),
+        ],
+        [
+            Uint::<8>::from_words([t[1][0][0], t[1][0][1], t[1][0][2], t[1][0][3], 0, 0, 0, 0]),
+            Uint::<8>::from_words([t[1][1][0], t[1][1][1], t[1][1][2], t[1][1][3], 0, 0, 0, 0]),
+        ],
     ]
 }
 
 /// `(a + b) mod 2^f`.
 #[inline]
-fn add_mod_2f(a: &U256, b: &U256, f: usize) -> U256 {
+fn add_mod_2f(a: &Uint<8>, b: &Uint<8>, f: usize) -> Uint<8> {
     a.wrapping_add(b) & mask_2f(f)
 }
 
 /// `(a · b) mod 2^f` (operands already `< 2^f ≤ 2^256`, so the low 256 bits of
 /// the product reduced mod `2^f` is exact).
 #[inline]
-fn mul_mod_2f(a: &U256, b: &U256, f: usize) -> U256 {
+fn mul_mod_2f(a: &Uint<8>, b: &Uint<8>, f: usize) -> Uint<8> {
     a.wrapping_mul(b) & mask_2f(f)
 }
 
-/// Reduce a signed quaternion-side `Int<L>` to `U256` modulo `2^f`
+/// Reduce a signed quaternion-side `Int<L>` to `Uint<8>` modulo `2^f`
 /// (two's-complement-correct: negatives map to `2^f − |x|`).
 #[inline]
-fn int_to_mod_2f<const L: usize>(x: &crypto_bigint::Int<L>, f: usize) -> U256 {
+fn int_to_mod_2f<const L: usize>(x: &crypto_bigint::Int<L>, f: usize) -> Uint<8> {
     let mag = x.abs(); // Uint<L>
     let w = mag.to_words();
-    // low 256 bits of |x| (f ≤ 248 < 256, so this captures |x| mod 2^f)
-    let lo = U256::from_words([w[0], w[1], w[2], w[3]]) & mask_2f(f);
-    if bool::from(x.is_negative()) && lo != U256::ZERO {
-        sub_mod_2f(&U256::ZERO, &lo, f) // 2^f − |x|
+    let lo = Uint::<8>::from_words([w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]]) & mask_2f(f);
+    if bool::from(x.is_negative()) && lo != Uint::<8>::ZERO {
+        sub_mod_2f(&Uint::<8>::ZERO, &lo, f) // 2^f − |x|
     } else {
         lo
     }
@@ -739,7 +873,7 @@ pub(crate) fn endomorphism_application_o0_coords<const L: usize>(
     let (primitive, content) =
         crate::quaternion::o0_mul::make_primitive_from_o0_coords::<L>(o0_coords);
 
-    let c: [U256; 4] = [
+    let c: [Uint<8>; 4] = [
         int_to_mod_2f(&primitive[0], f),
         int_to_mod_2f(&primitive[1], f),
         int_to_mod_2f(&primitive[2], f),
@@ -752,11 +886,11 @@ pub(crate) fn endomorphism_application_o0_coords<const L: usize>(
     let gen3 = mat_from_limbs(&ACTION_GEN3);
     let gen4 = mat_from_limbs(&ACTION_GEN4);
 
-    let mut m = [[U256::ZERO; 2]; 2];
+    let mut m = [[Uint::<8>::ZERO; 2]; 2];
     for i in 0..2 {
         for j in 0..2 {
             // diagonal carries coeffs0 (the identity component)
-            let mut e = if i == j { c[0] } else { U256::ZERO };
+            let mut e = if i == j { c[0] } else { Uint::<8>::ZERO };
             e = add_mod_2f(&e, &mul_mod_2f(&c[1], &gen2[i][j], f), f);
             e = add_mod_2f(&e, &mul_mod_2f(&c[2], &gen3[i][j], f), f);
             e = add_mod_2f(&e, &mul_mod_2f(&c[3], &gen4[i][j], f), f);
@@ -769,9 +903,9 @@ pub(crate) fn endomorphism_application_o0_coords<const L: usize>(
 }
 
 /// Reduce a `[[Int<8>;2];2]` action table (entries already in `[0, 2^F)`) to
-/// `[[U256;2];2]` mod `2^f`.
+/// `[[Uint<8>;2];2]` mod `2^f`.
 #[inline]
-fn mat_int8_to_mod_2f(t: &[[crypto_bigint::Int<8>; 2]; 2], f: usize) -> [[U256; 2]; 2] {
+fn mat_int8_to_mod_2f(t: &[[crypto_bigint::Int<8>; 2]; 2], f: usize) -> [[Uint<8>; 2]; 2] {
     [
         [int_to_mod_2f(&t[0][0], f), int_to_mod_2f(&t[0][1], f)],
         [int_to_mod_2f(&t[1][0], f), int_to_mod_2f(&t[1][1], f)],
@@ -805,7 +939,8 @@ fn mat_int8_to_mod_2f(t: &[[crypto_bigint::Int<8>; 2]; 2], f: usize) -> [[U256; 
 /// in-tree (no golden vectors); it is anchored here by the identity
 /// endomorphism (`θ = 1 ⇒ basis fixed`) and proven end-to-end by the eventual
 /// keygen KAT (item 8).
-#[allow(dead_code, clippy::too_many_arguments)]
+// Carries an even basis, alternate-curve index, theta quaternion/denominator, torsion exponent, and A24 constant.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn endomorphism_application_even_basis_indexed(
     p: &MontgomeryPoint<Fp1Element>,
     q: &MontgomeryPoint<Fp1Element>,
@@ -856,7 +991,7 @@ pub(crate) fn endomorphism_application_even_basis_indexed(
     // coeffs in the order basis (index 0 = identity component), content odd.
     let (coeffs, content) = eo::make_primitive_over_alt_order(&order, theta, theta_denom)?;
 
-    let c: [U256; 4] = [
+    let c: [Uint<8>; 4] = [
         int_to_mod_2f(&coeffs[0], f),
         int_to_mod_2f(&coeffs[1], f),
         int_to_mod_2f(&coeffs[2], f),
@@ -868,11 +1003,11 @@ pub(crate) fn endomorphism_application_even_basis_indexed(
     let gen3 = mat_int8_to_mod_2f(&curve.action_gen3, f);
     let gen4 = mat_int8_to_mod_2f(&curve.action_gen4, f);
 
-    let mut m = [[U256::ZERO; 2]; 2];
+    let mut m = [[Uint::<8>::ZERO; 2]; 2];
     for i in 0..2 {
         for j in 0..2 {
             // diagonal carries coeffs0 (the identity component)
-            let mut e = if i == j { c[0] } else { U256::ZERO };
+            let mut e = if i == j { c[0] } else { Uint::<8>::ZERO };
             e = add_mod_2f(&e, &mul_mod_2f(&c[1], &gen2[i][j], f), f);
             e = add_mod_2f(&e, &mul_mod_2f(&c[2], &gen3[i][j], f), f);
             e = add_mod_2f(&e, &mul_mod_2f(&c[3], &gen4[i][j], f), f);
@@ -884,19 +1019,19 @@ pub(crate) fn endomorphism_application_even_basis_indexed(
     matrix_application_even_basis(p, q, pmq, &m, f, a24)
 }
 
-/// Reduce a `Uint<L>` to `U256` modulo `2^f` (low `f` bits).
+/// Reduce a `Uint<L>` to `Uint<8>` modulo `2^f` (low `f` bits).
 #[inline]
-fn uint_to_mod_2f<const L: usize>(x: &crypto_bigint::Uint<L>, f: usize) -> U256 {
+fn uint_to_mod_2f<const L: usize>(x: &Uint<L>, f: usize) -> Uint<8> {
     let w = x.to_words();
-    U256::from_words([w[0], w[1], w[2], w[3]]) & mask_2f(f)
+    Uint::<8>::from_words([w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]]) & mask_2f(f)
 }
 
-/// Embed a `U256` value `< 2^f` (`f ≤ 248`) as a non-negative `Int<L>`.
+/// Embed a `Uint<8>` value `< 2^f` as a non-negative `Int<L>`.
 #[inline]
-fn u256_to_int<const L: usize>(x: &U256) -> crypto_bigint::Int<L> {
+fn u256_to_int<const L: usize>(x: &Uint<8>) -> crypto_bigint::Int<L> {
     let xw = x.to_words();
     let mut words = [0u64; L];
-    words[..4].copy_from_slice(&xw);
+    words[..8].copy_from_slice(&xw);
     crypto_bigint::Int::<L>::from_words(words)
 }
 
@@ -917,14 +1052,15 @@ fn u256_to_int<const L: usize>(x: &U256) -> crypto_bigint::Int<L> {
 ///
 /// `denom` and `extra` must be odd (invertible mod `2^f`). Returns
 /// `None` if the inverse does not exist or a biladder fails.
-#[allow(dead_code, clippy::too_many_arguments)]
+// Carries an even basis, rational theta numerator/denominator, extra odd factor, torsion exponent, and A24 constant.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn endomorphism_application_rational_even_basis<const L: usize>(
     p: &MontgomeryPoint<Fp1Element>,
     q: &MontgomeryPoint<Fp1Element>,
     pmq: &MontgomeryPoint<Fp1Element>,
     num: &crate::quaternion::Quaternion<L>,
-    denom: &crypto_bigint::Uint<L>,
-    extra: &crypto_bigint::Uint<L>,
+    denom: &Uint<L>,
+    extra: &Uint<L>,
     f: usize,
     a24: &Fp2<Fp1Element>,
 ) -> Option<(
@@ -944,10 +1080,10 @@ pub(crate) fn endomorphism_application_rational_even_basis<const L: usize>(
     let t = denom.trailing_zeros();
     let denom_odd = denom.wrapping_shr(t);
     let de = mul_mod_2f(&uint_to_mod_2f(&denom_odd, f), &uint_to_mod_2f(extra, f), f);
-    let modulus = mask_2f(f).wrapping_add(&U256::ONE); // 2^f (f ≤ 248)
-    let s = crate::quaternion::sign_orchestration::uint_inv_mod_vartime::<4>(&de, &modulus)?;
+    let modulus = mask_2f(f).wrapping_add(&Uint::<8>::ONE); // 2^f
+    let s = crate::quaternion::sign_orchestration::uint_inv_mod_vartime::<8>(&de, &modulus)?;
 
-    let two_t = *crypto_bigint::Uint::<L>::ONE.shl_vartime(t).as_int(); // 2^t
+    let two_t = *Uint::<L>::ONE.shl_vartime(t).as_int(); // 2^t
     let o0 = crate::quaternion::o0_mul::standard_to_o0_basis(num);
     let scaled: [crypto_bigint::Int<L>; 4] = core::array::from_fn(|i| {
         // Exact: 2^t divides the O_0 coord (θ's 2-adic part is integral).
@@ -976,7 +1112,7 @@ mod tests {
         use crate::quaternion::o0_mul::multiply_o0_basis;
         // Challenge-ideal construction for a kernel vec2 = [1, c].
         let f = 248usize;
-        let vec2 = [U256::ONE, U256::from_u64(12345)];
+        let vec2 = [Uint::<8>::ONE, Uint::<8>::from_u64(12345)];
         let ideal = id2iso_kernel_dlogs_to_ideal_even(&vec2, f)
             .expect("challenge ideal builds (norm = 2^f asserted internally)");
         // Validity by LEFT-CLOSURE (reduced_norm overflows det_4x4 at norm 2^248).
@@ -993,8 +1129,9 @@ mod tests {
             }
         }
         // A different challenge coefficient yields a different ideal.
-        let other = id2iso_kernel_dlogs_to_ideal_even(&[U256::ONE, U256::from_u64(6789)], f)
-            .expect("second challenge ideal");
+        let other =
+            id2iso_kernel_dlogs_to_ideal_even(&[Uint::<8>::ONE, Uint::<8>::from_u64(6789)], f)
+                .expect("second challenge ideal");
         assert_ne!(
             ideal.basis, other.basis,
             "distinct chall_coeff ⇒ distinct ideal"
@@ -1006,18 +1143,21 @@ mod tests {
         // With the identity change matrix, vec = [1, chall_coeff], so the
         // signing challenge ideal equals the direct id2iso construction.
         let f = 248usize;
-        let identity = [[U256::ONE, U256::ZERO], [U256::ZERO, U256::ONE]];
-        let c = U256::from_u64(424242);
+        let identity = [
+            [Uint::<8>::ONE, Uint::<8>::ZERO],
+            [Uint::<8>::ZERO, Uint::<8>::ONE],
+        ];
+        let c = Uint::<8>::from_u64(424242);
         let via_sig = compute_challenge_ideal_signature(&identity, &c, f).expect("sig challenge");
-        let direct = id2iso_kernel_dlogs_to_ideal_even(&[U256::ONE, c], f).expect("direct");
+        let direct = id2iso_kernel_dlogs_to_ideal_even(&[Uint::<8>::ONE, c], f).expect("direct");
         assert_eq!(
             via_sig.basis, direct.basis,
             "identity matrix ⇒ direct construction"
         );
         // A non-trivial matrix changes the result.
         let m = [
-            [U256::from_u8(3), U256::from_u8(1)],
-            [U256::from_u8(2), U256::from_u8(5)],
+            [Uint::<8>::from_u8(3), Uint::<8>::from_u8(1)],
+            [Uint::<8>::from_u8(2), Uint::<8>::from_u8(5)],
         ];
         let via_m = compute_challenge_ideal_signature(&m, &c, f).expect("matrix challenge");
         assert_ne!(
@@ -1289,7 +1429,7 @@ mod tests {
     #[test]
     fn rational_endomorphism_equals_scalar_times_plain() {
         use crate::quaternion::Quaternion;
-        use crypto_bigint::{Int, U256, Uint};
+        use crypto_bigint::{Int, Uint};
 
         let curve = MontgomeryCurve::<Fp1Element>::e0();
         let a24 = curve.a24();
@@ -1310,9 +1450,10 @@ mod tests {
         let (base_r, base_s, base_rmq) =
             endomorphism_application_even_basis::<8>(&p, &q, &pmq, &i_quat, f, &a24)
                 .expect("plain i-endo");
-        let modulus = (U256::MAX >> (256 - f as u32)).wrapping_add(&U256::ONE); // 2^f
-        let de = U256::from_u64(15) & (U256::MAX >> (256 - f as u32));
-        let s = crate::quaternion::sign_orchestration::uint_inv_mod_vartime::<4>(&de, &modulus)
+        let f_u32 = u32::try_from(f).expect("f fits in u32");
+        let modulus = (Uint::<8>::MAX >> (512 - f_u32)).wrapping_add(&Uint::<8>::ONE); // 2^f
+        let de = Uint::<8>::from_u64(15) & (Uint::<8>::MAX >> (512 - f_u32));
+        let s = crate::quaternion::sign_orchestration::uint_inv_mod_vartime::<8>(&de, &modulus)
             .expect("15 invertible mod 2^f");
         // ladder reads the scalar little-endian (byte[0] = LSB), like
         // ec_biscalar_mul — the doc comment saying "big-endian" is wrong.

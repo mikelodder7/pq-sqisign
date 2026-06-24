@@ -58,10 +58,8 @@
 #[macro_use]
 extern crate alloc;
 #[cfg(all(feature = "alloc", feature = "std"))]
-#[allow(unused_extern_crates)]
 extern crate alloc;
 #[cfg(test)]
-#[allow(unused_extern_crates)]
 extern crate std;
 
 #[macro_use]
@@ -73,6 +71,7 @@ pub mod error;
 pub mod gf;
 pub mod hash;
 pub mod isogeny;
+pub mod level_constants;
 pub mod params;
 pub mod quaternion;
 /// NIST PQC AES-256-CTR_DRBG. Test-only — required to reproduce
@@ -184,7 +183,7 @@ fn klpt_clapotis_chain_at_lvl1<P: Params, R: rand_core::CryptoRng>(rng: &mut R) 
         &witnesses,
         rng,
     )?;
-    ideal_to_isogeny::<P, 8, _>(&k_wn, q, rng).map(|_| ())
+    ideal_to_isogeny::<P, 8, _>(&k_wn, &q, rng).map(|_| ())
 }
 
 #[cfg(feature = "kgen")]
@@ -211,7 +210,7 @@ fn klpt_clapotis_chain_at_lvl3<P: Params, R: rand_core::CryptoRng>(rng: &mut R) 
         &witnesses,
         rng,
     )?;
-    ideal_to_isogeny::<P, 12, _>(&k_wn, q, rng).map(|_| ())
+    ideal_to_isogeny::<P, 12, _>(&k_wn, &q, rng).map(|_| ())
 }
 
 #[cfg(feature = "kgen")]
@@ -238,7 +237,7 @@ fn klpt_clapotis_chain_at_lvl5<P: Params, R: rand_core::CryptoRng>(rng: &mut R) 
         &witnesses,
         rng,
     )?;
-    ideal_to_isogeny::<P, 16, _>(&k_wn, q, rng).map(|_| ())
+    ideal_to_isogeny::<P, 16, _>(&k_wn, &q, rng).map(|_| ())
 }
 
 #[cfg(feature = "kgen")]

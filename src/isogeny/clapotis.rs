@@ -415,10 +415,9 @@ impl<P: Params> IdealToIsogenyResult<P> {
 ///
 /// Always returns `Error::Unimplemented`; the functional path is the
 /// spine evaluator (see above).
-#[allow(clippy::needless_pass_by_value)] // the spine evaluator consumes the rng
 pub fn ideal_to_isogeny<P: Params, const TLIMBS: usize, R: CryptoRng>(
     _klpt_output: &LeftIdealWideNorm<TLIMBS>,
-    _q: Uint<8>,
+    _q: &Uint<8>,
     _rng: &mut R,
 ) -> Result<IdealToIsogenyResult<P>> {
     Err(Error::Unimplemented(
@@ -485,7 +484,7 @@ mod tests {
         let q = Uint::<8>::from_u64(1);
         let mut rng = NistPqcRng::new(&[0x77u8; 48]);
 
-        let result = ideal_to_isogeny::<Level1, 8, _>(&klpt_output, q, &mut rng);
+        let result = ideal_to_isogeny::<Level1, 8, _>(&klpt_output, &q, &mut rng);
         let err = result.expect_err("stub must return Unimplemented");
         let Error::Unimplemented(msg) = err else {
             unreachable!("expected Unimplemented, got {err:?}");
@@ -548,9 +547,9 @@ mod tests {
         // Widen the L8 inner basis to L16 and set cached_norm = N(I)^2
         // (lattice-index convention) directly from k_wn.cached_norm = N(I).
         let mut basis16 = [[Int::<16>::from_i64(0); 4]; 4];
-        for r in 0..4 {
-            for c in 0..4 {
-                basis16[r][c] = widen_int_lattice::<8, 16>(&k_wn.inner.basis[r][c]);
+        for (r, row) in basis16.iter_mut().enumerate() {
+            for (c, entry) in row.iter_mut().enumerate() {
+                *entry = widen_int_lattice::<8, 16>(&k_wn.inner.basis[r][c]);
             }
         }
         let n_i = k_wn.cached_norm.resize::<16>();
@@ -760,9 +759,9 @@ mod tests {
             .expect("gen");
             let ideal16 = left_ideal_from_element_and_integer_o0::<BL>(&gamma, &n1, &p16);
             let mut basis8 = [[Int::<8>::from_i64(0); 4]; 4];
-            for r in 0..4 {
-                for c in 0..4 {
-                    basis8[r][c] = crate::quaternion::lattice::narrow_int_lattice::<BL, 8>(
+            for (r, row) in basis8.iter_mut().enumerate() {
+                for (c, entry) in row.iter_mut().enumerate() {
+                    *entry = crate::quaternion::lattice::narrow_int_lattice::<BL, 8>(
                         &ideal16.basis[r][c],
                     );
                 }
@@ -834,8 +833,8 @@ mod tests {
             let four_n1_nz = crypto_bigint::NonZero::new(four_n1.abs())
                 .into_option()
                 .unwrap();
-            for i in 0..4 {
-                let g_ii = gram[i][i].abs();
+            for (i, row) in gram.iter().enumerate() {
+                let g_ii = row[i].abs();
                 let nred =
                     crate::quaternion::o0_mul::reduced_norm_o0_basis::<8>(&reduced.basis[i], &p8)
                         .abs();
@@ -872,9 +871,9 @@ mod tests {
                             let mut combo = [Int::<8>::from_i64(0); 4];
                             for (r, &cf) in coeffs.iter().enumerate() {
                                 let cfi = Int::<8>::from_i64(cf);
-                                for k in 0..4 {
-                                    combo[k] = combo[k]
-                                        .wrapping_add(&cfi.wrapping_mul(&reduced.basis[r][k]));
+                                for (k, entry) in combo.iter_mut().enumerate() {
+                                    *entry =
+                                        entry.wrapping_add(&cfi.wrapping_mul(&reduced.basis[r][k]));
                                 }
                             }
                             let nred =
@@ -972,7 +971,6 @@ pub struct FindUvFromListsResult<const LIMBS: usize> {
 /// - `Some(FindUvFromListsResult)`: a valid Bezout pair was found.
 /// - `None`: no pair satisfies the constraints within the given lists.
 #[cfg(feature = "alloc")]
-#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
 pub fn find_uv_from_lists<const LIMBS: usize>(
     target: &Int<LIMBS>,
     small_norms1: &[Int<LIMBS>],
@@ -997,8 +995,7 @@ pub fn find_uv_from_lists<const LIMBS: usize>(
         "find_uv_from_lists: small_norms2 and quotients2 must have the same length",
     );
 
-    for i1 in 0..small_norms1.len() {
-        let d1 = &small_norms1[i1];
+    for (i1, d1) in small_norms1.iter().enumerate() {
         if *d1 <= zero_int {
             // Skip non-positive norms (shouldn't occur for valid inputs
             // from enumerate_hypercube but defensive).
@@ -1011,8 +1008,12 @@ pub fn find_uv_from_lists<const LIMBS: usize>(
         let adjusted_norm = target.wrapping_sub(&q_times_d1);
 
         let start_i2 = if is_diagonal { i1 } else { 0 };
-        for i2 in start_i2..small_norms2.len() {
-            let d2 = &small_norms2[i2];
+        for (i2, (d2, quotient2)) in small_norms2
+            .iter()
+            .zip(quotients2.iter())
+            .enumerate()
+            .skip(start_i2)
+        {
             if *d2 <= zero_int {
                 continue;
             }
@@ -1055,7 +1056,7 @@ pub fn find_uv_from_lists<const LIMBS: usize>(
             let mut v = prod.wrapping_sub(&q2_times_d1);
 
             // Walk v += d1 while v < quotients2[i2].
-            while v < quotients2[i2] {
+            while v < *quotient2 {
                 // Compute u = (target - v · d2) / d1.
                 let v_d2 = v.wrapping_mul(d2);
                 let target_minus_vd2 = target.wrapping_sub(&v_d2);
@@ -1242,15 +1243,14 @@ pub fn theta_endomorphism<const LIMBS: usize, const WIDE: usize>(
 /// `denom = 0` or `|det|/denom⁴` is not a perfect square (i.e. the basis is
 /// not a genuine left `O_0`-ideal lattice).
 #[cfg(feature = "alloc")]
-#[allow(clippy::needless_range_loop)]
 pub(crate) fn lattice_reduced_norm<const L: usize, const W: usize>(
     basis: &[[Int<L>; 4]; 4],
     denom: &Uint<L>,
 ) -> Option<Uint<L>> {
     let mut basis_w = [[Int::<W>::from_i64(0); 4]; 4];
-    for r in 0..4 {
-        for c in 0..4 {
-            basis_w[r][c] = crate::quaternion::lattice::widen_int_lattice::<L, W>(&basis[r][c]);
+    for (basis_w_row, basis_row) in basis_w.iter_mut().zip(basis.iter()) {
+        for (basis_w_cell, basis_cell) in basis_w_row.iter_mut().zip(basis_row.iter()) {
+            *basis_w_cell = crate::quaternion::lattice::widen_int_lattice::<L, W>(basis_cell);
         }
     }
     let det_abs = crate::quaternion::ideal::det_4x4::<W>(&basis_w).abs();
@@ -1369,7 +1369,6 @@ pub(crate) fn lattice_reduced_norm<const L: usize, const W: usize>(
 /// Variable-time on the ideal basis entries (LLL + enumeration both
 /// vartime). Acceptable per SQIsign 2.0 spec §8.
 #[cfg(feature = "alloc")]
-#[allow(clippy::too_many_arguments)]
 pub fn find_uv<const LIMBS: usize>(
     target: &Int<LIMBS>,
     lideal: &crate::quaternion::ideal::LeftIdeal<LIMBS>,
@@ -1565,7 +1564,6 @@ pub fn find_uv<const LIMBS: usize>(
 /// width because the adjugate intermediate `adj · x · lat_denom` reaches
 /// `~2^1246` at the real L1 ideal scale (overflows `Int<LIMBS=16>`).
 #[cfg(feature = "alloc")]
-#[allow(clippy::needless_range_loop)] // g indexes both lideal.basis (read) and std_basis columns (write)
 fn rational_quaternion_in_lideal<const LIMBS: usize, const WIDE: usize>(
     beta: &RationalQuaternion<LIMBS>,
     lideal: &crate::quaternion::ideal::LeftIdeal<LIMBS>,
@@ -1575,12 +1573,12 @@ fn rational_quaternion_in_lideal<const LIMBS: usize, const WIDE: usize>(
     use crate::quaternion::o0_mul::{o0_basis_to_standard_doubled, uint_as_nonneg_int};
 
     let mut std_basis = [[Int::<WIDE>::from_i64(0); 4]; 4];
-    for g in 0..4 {
-        let se = o0_basis_to_standard_doubled::<LIMBS>(&lideal.basis[g]);
-        std_basis[0][g] = widen_int_lattice::<LIMBS, WIDE>(&se.a);
-        std_basis[1][g] = widen_int_lattice::<LIMBS, WIDE>(&se.b);
-        std_basis[2][g] = widen_int_lattice::<LIMBS, WIDE>(&se.c);
-        std_basis[3][g] = widen_int_lattice::<LIMBS, WIDE>(&se.d);
+    for (generator_index, basis_row) in lideal.basis.iter().enumerate() {
+        let standard_element = o0_basis_to_standard_doubled::<LIMBS>(basis_row);
+        std_basis[0][generator_index] = widen_int_lattice::<LIMBS, WIDE>(&standard_element.a);
+        std_basis[1][generator_index] = widen_int_lattice::<LIMBS, WIDE>(&standard_element.b);
+        std_basis[2][generator_index] = widen_int_lattice::<LIMBS, WIDE>(&standard_element.c);
+        std_basis[3][generator_index] = widen_int_lattice::<LIMBS, WIDE>(&standard_element.d);
     }
     let two_denom = Uint::<LIMBS>::from_u64(2).wrapping_mul(&lideal.denom);
     let lat_denom = match uint_as_nonneg_int::<LIMBS>(&two_denom) {
@@ -1654,7 +1652,6 @@ fn rational_quaternion_in_lideal<const LIMBS: usize, const WIDE: usize>(
 /// (which lands in the alternate-order frame, not the input ideal), so a
 /// reconciliation error fails closed rather than emitting unverified crypto.
 #[cfg(feature = "alloc")]
-#[allow(clippy::too_many_arguments)]
 pub fn find_uv_alternate_orders<const LIMBS: usize, const WIDE: usize>(
     target: &Int<LIMBS>,
     lideal: &crate::quaternion::ideal::LeftIdeal<LIMBS>,
@@ -2023,7 +2020,7 @@ mod enumerate_hypercube_tests {
         // Rust's `Vec::sort_by` is stable, naturally tie-breaking by
         // original insertion order (the C reference uses an `idx` field
         // explicitly to achieve the same).
-        result.sort_by(|a, b| a.norm.cmp(&b.norm));
+        result.sort_by_key(|sv| sv.norm);
         assert_eq!(
             result.len(),
             pre_sort_count,
@@ -2048,10 +2045,10 @@ mod enumerate_hypercube_tests {
         let result = enumerate_hypercube::<8>(3, &gram, &adjusted);
         for sv in &result {
             let v: [i64; 4] = [
-                sv.vec[0].to_words()[0] as i64,
-                sv.vec[1].to_words()[0] as i64,
-                sv.vec[2].to_words()[0] as i64,
-                sv.vec[3].to_words()[0] as i64,
+                i64::from_ne_bytes(sv.vec[0].to_words()[0].to_ne_bytes()),
+                i64::from_ne_bytes(sv.vec[1].to_words()[0].to_ne_bytes()),
+                i64::from_ne_bytes(sv.vec[2].to_words()[0].to_ne_bytes()),
+                i64::from_ne_bytes(sv.vec[3].to_words()[0].to_ne_bytes()),
             ];
             // The above i64 conversion treats negative values as their
             // two's-complement low-word representation; we only care
@@ -2438,9 +2435,9 @@ mod find_uv_tests {
         // Widen a LeftIdeal<8> → LeftIdeal<16> (basis + denom + cached_norm).
         let widen = |id: &LeftIdeal<8>| -> LeftIdeal<16> {
             let mut basis = [[Int::<16>::from_i64(0); 4]; 4];
-            for r in 0..4 {
-                for c in 0..4 {
-                    basis[r][c] = widen_int_lattice::<8, 16>(&id.basis[r][c]);
+            for (r, row) in basis.iter_mut().enumerate() {
+                for (c, entry) in row.iter_mut().enumerate() {
+                    *entry = widen_int_lattice::<8, 16>(&id.basis[r][c]);
                 }
             }
             LeftIdeal::<16>::with_denom_and_norm(
@@ -2599,7 +2596,7 @@ mod find_uv_tests {
         let lideal = principal_left_ideal_from_o0::<8>(&gamma, &p);
         for t in [16u64, 32, 64, 128, 256, 512, 1024, 2048, 4096] {
             if let Ok(r) = find_uv::<8>(
-                &i(t as i64),
+                &i(i64::try_from(t).expect("target fits in i64")),
                 &lideal,
                 &p,
                 &[],
@@ -3097,7 +3094,7 @@ mod find_uv_tests {
         let n_id_int = Int::<8>::from_words(n_id.to_words());
 
         for &target_u in targets {
-            let target = i(target_u as i64);
+            let target = i(i64::try_from(target_u).expect("target fits in i64"));
             let result = find_uv::<8>(&target, &lideal, p, &[], box_size);
             let Ok(r) = result else { continue };
             let lhs =
@@ -3186,7 +3183,7 @@ mod find_uv_tests {
             let n_id = crate::quaternion::o0_mul::reduced_norm_o0_basis::<8>(gamma, &p);
             assert_eq!(
                 n_id,
-                i(*expected_n as i64),
+                i(i64::try_from(*expected_n).expect("fixture norm fits in i64")),
                 "fixture sanity: N_red({gamma:?}) should be {expected_n}, label={label}",
             );
             let outcome = try_find_uv_postcondition(
@@ -3245,7 +3242,7 @@ mod find_uv_tests {
 
         let mut any_succeeded = false;
         for target_u in [16u64, 32, 64, 128, 256, 512, 1024, 2048, 4096] {
-            let target = nn(target_u as i64);
+            let target = nn(i64::try_from(target_u).expect("target fits in i64"));
             let result = find_uv::<LIMBS>(&target, &lideal, &p, &[], box_size);
             let Ok(r) = result else { continue };
             let lhs =
@@ -3398,7 +3395,7 @@ mod find_uv_tests {
         let targets = [16u64, 32, 64, 128, 256, 512, 1024, 2048, 4096];
         let mut any_succeeded = false;
         for target_u in targets {
-            let target = i(target_u as i64);
+            let target = i(i64::try_from(target_u).expect("target fits in i64"));
             // box_size = 2 (C ref's FINDUV_box_size at L1).
             let result = find_uv::<8>(&target, &lideal, &p, &[], 2);
             if result.is_ok() {

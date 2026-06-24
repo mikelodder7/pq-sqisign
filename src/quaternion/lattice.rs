@@ -71,13 +71,12 @@ fn round_div<const LIMBS: usize>(n: &Int<LIMBS>, d: &Int<LIMBS>) -> Int<LIMBS> {
 ///
 /// Useful as the integer-arithmetic stand-in for the rational
 /// Gram-Schmidt coefficients that classical LLL maintains.
-#[allow(clippy::needless_range_loop)]
 pub fn gram_matrix_4x4<const LIMBS: usize>(basis: &[[Int<LIMBS>; 4]; 4]) -> [[Int<LIMBS>; 4]; 4] {
     let zero = Int::<LIMBS>::from_i64(0);
     let mut g = [[zero; 4]; 4];
-    for i in 0..4 {
-        for j in 0..4 {
-            g[i][j] = dot4(&basis[i], &basis[j]);
+    for (i, grow) in g.iter_mut().enumerate() {
+        for (j, gij) in grow.iter_mut().enumerate() {
+            *gij = dot4(&basis[i], &basis[j]);
         }
     }
     g
@@ -123,6 +122,8 @@ fn int_div_exact<const LIMBS: usize>(n: &Int<LIMBS>, d: &Int<LIMBS>) -> Int<LIMB
 /// Each division is exact when `basis` is a rank-4 integer lattice (Cohen
 /// Prop 2.6.7). Returns `None` if some `d[i+1] == 0` (rank-deficient input);
 /// the LLL caller treats this as a degenerate basis and bails.
+// GSO recurrence cross-references lam[i][k]/lam[j][k] across rows and d[k];
+// index form mirrors the Cohen Algorithm 2.6.7 recurrence it transcribes.
 #[allow(clippy::needless_range_loop)]
 pub fn integer_gso_4x4<const LIMBS: usize>(
     basis: &[[Int<LIMBS>; 4]; 4],
@@ -171,6 +172,8 @@ pub fn integer_gso_4x4<const LIMBS: usize>(
 /// inputs is far lower.
 ///
 /// Returns the input unchanged when the basis is rank-deficient.
+// Lovász/swap loops read neighbour d[k-1..=k+1] and cross-row lam entries;
+// index form mirrors the Cohen Algorithm 2.6.3 it transcribes.
 #[allow(clippy::needless_range_loop)]
 pub fn lll_4x4<const LIMBS: usize>(input: &[[Int<LIMBS>; 4]; 4]) -> [[Int<LIMBS>; 4]; 4] {
     let mut basis = size_reduce_4x4(input);
@@ -268,6 +271,8 @@ pub(crate) fn narrow_int_lattice<const WIDE: usize, const NARROW: usize>(
 /// themselves overflow narrow, those overflows are a separate concern
 /// handled by the *search-path* wide variant
 /// (`find_prime_norm_quaternion_in_ideal_wide`).
+// Parallel widen/narrow across the basis and metric matrices at matching
+// [r][c]; index form is clearer than a 4-way iterator zip of distinct matrices.
 #[allow(clippy::needless_range_loop)]
 pub fn lll_4x4_in_metric_wide<const NARROW: usize, const WIDE: usize>(
     basis: &[[Int<NARROW>; 4]; 4],
@@ -300,6 +305,8 @@ pub fn lll_4x4_in_metric_wide<const NARROW: usize, const WIDE: usize>(
 /// `B` is the lattice's basis matrix and `M` is the ambient quadratic
 /// form's Gram. Two integer 4×4 matmuls (64 wrapping multiplications),
 /// pure integer arithmetic.
+// 4×4 integer matrix products (B·M·Bᵀ); row/column index access is inherent
+// to matmul and reads metric[k][j]/basis[j][k] transposed across rows.
 #[allow(clippy::needless_range_loop)]
 pub fn pull_back_gram<const LIMBS: usize>(
     basis: &[[Int<LIMBS>; 4]; 4],
@@ -341,6 +348,8 @@ pub fn pull_back_gram<const LIMBS: usize>(
 /// A `WIDE`-precision pullback restores the exact
 /// `denom² | vᵀGv` divisibility the narrow path silently corrupts.
 /// Mirrors [`qf_eval_4x4_wide`]'s widen-then-compute shape.
+// Wide-precision 4×4 matmul with widen; row/column index access is inherent
+// to matmul and to the parallel widen of distinct basis/metric matrices.
 #[allow(clippy::needless_range_loop)]
 pub fn pull_back_gram_wide<const NARROW: usize, const WIDE: usize>(
     basis: &[[Int<NARROW>; 4]; 4],
@@ -368,6 +377,8 @@ pub fn pull_back_gram_wide<const NARROW: usize, const WIDE: usize>(
 /// Returns `None` for rank-deficient input. Used by
 /// [`lll_4x4_in_metric`] which wants the Gram pre-pulled-back through
 /// the lattice's metric, not the basis's Euclidean Gram.
+// GSO recurrence cross-references lam[i][k]/lam[j][k] across rows and d[k];
+// index form mirrors the Cohen Algorithm 2.6.7 recurrence it transcribes.
 #[allow(clippy::needless_range_loop)]
 pub fn integer_gso_4x4_from_gram<const LIMBS: usize>(
     gram: &[[Int<LIMBS>; 4]; 4],
@@ -431,6 +442,8 @@ pub fn integer_gso_4x4_from_gram<const LIMBS: usize>(
 /// terminate early (via the no-swap exit) while large inputs get enough
 /// headroom. Returns the input unchanged if the metric or basis is
 /// rank-deficient (i.e. the GSO recurrence hits a zero `d[i+1]`).
+// LLL size-reduce mutates b[j] from pivot rows b[i] (cross-row) and the Lovász
+// test reads neighbour d[k-1..=k+1]; index form mirrors Cohen Algorithm 2.6.3.
 #[allow(clippy::needless_range_loop)]
 pub fn lll_4x4_in_metric<const LIMBS: usize>(
     input: &[[Int<LIMBS>; 4]; 4],
@@ -514,6 +527,8 @@ pub fn lll_4x4_in_metric<const LIMBS: usize>(
 /// [`lll_4x4_in_metric_wide`] and a future
 /// `pull_back_gram_wide` to compose the wide search path that flips
 /// the `#[should_panic]` L1 large-γ test.
+// Parallel widen of the distinct vector c and matrix gram; index form is
+// clearer than a multi-array iterator zip over different-shaped operands.
 #[allow(clippy::needless_range_loop)]
 pub fn qf_eval_4x4_wide<const NARROW: usize, const WIDE: usize>(
     c: &[Int<NARROW>; 4],
@@ -544,6 +559,8 @@ pub fn qf_eval_4x4_wide<const NARROW: usize, const WIDE: usize>(
 /// 16 wrapping multiplications + 12 wrapping additions; pure integer
 /// arithmetic. No allocation. The matrix is row-major: `m[i][j]` is
 /// the entry at row `i`, column `j`.
+// 4×4 matrix·vector product; the inner index j accesses matrix row m[i][j]
+// and vector v[j] together — inherent to matvec.
 #[allow(clippy::needless_range_loop)]
 pub fn mat_4x4_eval<const LIMBS: usize>(
     m: &[[Int<LIMBS>; 4]; 4],
@@ -589,6 +606,8 @@ pub fn mat_4x4_eval<const LIMBS: usize>(
 ///
 /// 16 wrapping multiplications + 12 wrapping additions; pure integer
 /// arithmetic. No allocation.
+// 4×4 transpose matrix·vector product mᵀ·v; index j accesses m[j][i] and
+// v[j] together (transposed access) — inherent to the operation.
 #[allow(clippy::needless_range_loop)]
 pub fn mat_4x4_transpose_eval<const LIMBS: usize>(
     m: &[[Int<LIMBS>; 4]; 4],
@@ -619,6 +638,8 @@ pub fn mat_4x4_transpose_eval<const LIMBS: usize>(
 /// arithmetic. Symmetric Gram matrices give identical results regardless
 /// of whether `G[i][j]` or `G[j][i]` is consulted, but the function
 /// makes no symmetry assumption.
+// Quadratic form cᵀ·G·c; indices i,j access c[i]/c[j] and gram[i][j]
+// together — inherent to the bilinear evaluation.
 #[allow(clippy::needless_range_loop)]
 pub fn qf_eval_4x4<const LIMBS: usize>(
     c: &[Int<LIMBS>; 4],
@@ -658,7 +679,6 @@ pub fn qf_eval_4x4<const LIMBS: usize>(
 /// (`T/p ~ 2^249`) the enumeration is infeasible regardless of how it
 /// is structured — that's a complexity property of the search, not the
 /// primitive.
-#[allow(clippy::needless_range_loop)]
 pub fn find_lattice_point_2x2_under_quad_threshold<const LIMBS: usize, F>(
     threshold: &Int<LIMBS>,
     alpha: &Int<LIMBS>,
@@ -728,6 +748,7 @@ where
 /// for `G = diag(α, β)` it scales each axis independently
 /// (`α · u₀·v₀ + β · u₁·v₁`); for off-diagonal `G` it captures the
 /// cross-term contribution `(G[0][1] + G[1][0]) · u₀·v₁`.
+// Bilinear form uᵀ·G·v; indices i,j access u[i]/v[j] and g[i][j] together.
 #[allow(clippy::needless_range_loop)]
 pub fn gram_dot2<const LIMBS: usize>(
     u: &[Int<LIMBS>; 2],
@@ -758,6 +779,8 @@ pub fn gram_norm2_2<const LIMBS: usize>(
 /// product inside the Session-39 Lagrange loop. Result is the
 /// `G`-reduced basis: `Q(b_0) ≤ Q(b_1)` and `2·|⟨b_0, b_1⟩_G| ≤ Q(b_0)`.
 /// For `G = I` the output equals [`lll_2x2`]'s.
+// Lagrange size-reduce mutates b[1] from pivot row b[0] (cross-row);
+// index form mirrors the 2×2 reduction it transcribes.
 #[allow(clippy::needless_range_loop)]
 pub fn lll_2x2_with_gram<const LIMBS: usize>(
     input: &[[Int<LIMBS>; 2]; 2],
@@ -804,6 +827,8 @@ pub fn lll_2x2_with_gram<const LIMBS: usize>(
 /// `Q(c, d) = p·(c² + d²)`, when the basis is non-trivial). For
 /// trivial basis `Z²` the QF still rounds per-coordinate — that case
 /// needs short-vector *enumeration* (Fincke-Pohst), not CVP.
+// Round-off CVP subtracts c·reduced[i] across distinct vectors; index form
+// mirrors the projection it transcribes.
 #[allow(clippy::needless_range_loop)]
 pub fn babai_cvp_2x2_with_gram<const LIMBS: usize>(
     basis: &[[Int<LIMBS>; 2]; 2],
@@ -862,6 +887,8 @@ pub fn norm2_2<const LIMBS: usize>(a: &[Int<LIMBS>; 2]) -> Int<LIMBS> {
 /// witness `a² + b² + p·(c² + d²) = T`). Outer-loop iteration is capped
 /// at 64 as a safety net; the theoretical bound at `n = 2` with bounded
 /// entries is much lower.
+// Lagrange reduction size-reduces b[1] against pivot row b[0] (cross-row);
+// index form mirrors the 2×2 Gauss/Lagrange algorithm.
 #[allow(clippy::needless_range_loop)]
 pub fn lll_2x2<const LIMBS: usize>(input: &[[Int<LIMBS>; 2]; 2]) -> [[Int<LIMBS>; 2]; 2] {
     let mut b = *input;
@@ -902,6 +929,8 @@ pub fn lll_2x2<const LIMBS: usize>(input: &[[Int<LIMBS>; 2]; 2]) -> [[Int<LIMBS>
 /// `(c, d)` target derived from `T / p` and a 2-D lattice encoding the
 /// quadratic-form constraint, returns a `(c, d)` candidate. Wiring lands
 /// in a later session — see ISC-41.13.
+// Round-off CVP subtracts c·reduced[i] across distinct vectors; index form
+// mirrors the per-vector projection it transcribes.
 #[allow(clippy::needless_range_loop)]
 pub fn babai_cvp_2x2<const LIMBS: usize>(
     basis: &[[Int<LIMBS>; 2]; 2],
@@ -960,6 +989,8 @@ pub fn babai_cvp_2x2<const LIMBS: usize>(
 /// skips degenerate axes — the LLL pre-step's `Option`-returning
 /// [`integer_gso_4x4`] caller pattern is not used here because round-off
 /// only needs `‖b_i‖² ≠ 0` per individual basis vector, not full rank.
+// Round-off CVP subtracts c·reduced[i] across distinct vectors; index form
+// mirrors the per-vector projection it transcribes.
 #[allow(clippy::needless_range_loop)]
 pub fn babai_cvp_4x4<const LIMBS: usize>(
     basis: &[[Int<LIMBS>; 4]; 4],
@@ -1003,6 +1034,8 @@ pub fn babai_cvp_4x4<const LIMBS: usize>(
 /// whose vectors are typically much shorter than the input's, suitable as a
 /// pre-step for LLL or as a stand-alone reducer for already-near-orthogonal
 /// inputs.
+// Babai size-reduce mutates row b[j] from earlier rows b[i] (cross-row);
+// index form mirrors the unimodular reduction it transcribes.
 #[allow(clippy::needless_range_loop)]
 pub fn size_reduce_4x4<const LIMBS: usize>(input: &[[Int<LIMBS>; 4]; 4]) -> [[Int<LIMBS>; 4]; 4] {
     let mut basis = *input;
@@ -1028,6 +1061,8 @@ pub fn size_reduce_4x4<const LIMBS: usize>(input: &[[Int<LIMBS>; 4]; 4]) -> [[In
 }
 
 #[cfg(test)]
+// Test helpers build and compare fixed-size matrices by [r][c] index for direct
+// correspondence with the math under test; iterator rewrites add no value here.
 #[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;

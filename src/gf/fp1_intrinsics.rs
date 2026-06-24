@@ -36,6 +36,11 @@
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// p = 5·2^248 − 1, little-endian limbs.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
 pub(crate) const P_LIMBS: [u64; 4] = [
     0xffff_ffff_ffff_ffff,
     0xffff_ffff_ffff_ffff,
@@ -44,16 +49,36 @@ pub(crate) const P_LIMBS: [u64; 4] = [
 ];
 
 /// Top limb of p+1 = 5·2^248. Lower three limbs of p+1 are zero.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
 const P_PLUS_1_TOP: u64 = 0x0500_0000_0000_0000; // 5 << 56
 
 /// Top limb of −p mod 2^256, for add correction.
 /// −p = [1, 0, 0, 0xFB<<56].
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
 const NEG_P_TOP: u64 = 0xFB00_0000_0000_0000; // 0xFBu64 << 56
 
 /// Low limb of (−2q mod 2^256), for sub correction.
 /// gf5248_sub adds 2q by subtracting −2q = [2, 0, 0, 0xF6<<56].
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
 const SUB_NEG2Q_LO: u64 = 2;
 /// High limb of (−2q mod 2^256).
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
 const SUB_NEG2Q_HI: u64 = 0xF600_0000_0000_0000; // 0xF6u64 << 56
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -64,6 +89,11 @@ const SUB_NEG2Q_HI: u64 = 0xF600_0000_0000_0000; // 0xF6u64 << 56
 ///
 /// Port of `inner_gf5248_normalize` from `gf5248.h`.
 /// Constant-time: uses borrow-to-mask arithmetic.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "bmi2",
+    target_feature = "adx"
+))]
 pub(crate) fn to_canonical(a: &[u64; 4]) -> [u64; 4] {
     let (d0, b0) = a[0].overflowing_sub(P_LIMBS[0]);
     let (d1, b1a) = a[1].overflowing_sub(P_LIMBS[1]);

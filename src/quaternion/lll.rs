@@ -183,7 +183,9 @@ pub fn quat_lll_core<const N: usize>(g: &mut [[Int<N>; 4]; 4], basis: &mut [[Int
 /// u3v3)` on `(1,i,j,ij)` coords with `i²=−1, j²=−p`). The `×2` is the
 /// trace pairing `2·Re(conj(x)·y)`; `lideal_reduce_basis` halves the
 /// diagonal back out at the end. Full symmetric output.
-#[allow(dead_code, clippy::needless_range_loop)]
+// Weighted Gram with column access basis[k][i]/basis[k][j], a triangular j≤i
+// fill, and a symmetric transpose copy g[i][j]=g[j][i]; index access is inherent.
+#[allow(clippy::needless_range_loop)]
 pub fn lattice_gram<const N: usize>(basis: &[[Int<N>; 4]; 4], p: &Uint<N>) -> [[Int<N>; 4]; 4] {
     let p_int = *p.as_int();
     let two = Int::<N>::from_i64(2);
@@ -222,6 +224,10 @@ fn int_div_exact_signed<const N: usize>(a: &Int<N>, d: &NonZero<Uint<N>>) -> Opt
     Some(if neg { qi.wrapping_neg() } else { qi })
 }
 
+/// `(reduced_basis, reduced_gram)` returned by [`lideal_reduce_basis`]: the
+/// LLL-reduced lattice basis and its rescaled class-Gram matrix.
+pub type ReducedBasisGram<const N: usize> = ([[Int<N>; 4]; 4], [[Int<N>; 4]; 4]);
+
 /// Port of `quat_lideal_reduce_basis` (`lll/lll_applications.c`) with
 /// `quat_lideal_class_gram` inlined: LLL-reduce a left ideal's COLUMN-major
 /// `basis` (denominator `denom`, reduced norm `norm`, algebra prime `p`).
@@ -238,13 +244,13 @@ fn int_div_exact_signed<const N: usize>(a: &Int<N>, d: &NonZero<Uint<N>>) -> Opt
 /// prime-norm box-search enumerates; feeding `quat_lll_core` the *divided*
 /// class Gram (not `lattice_gram`) is required for byte-exactness, since
 /// dpe rounding is not invariant under the non-power-of-two divisor.
-#[allow(dead_code, clippy::needless_range_loop, clippy::type_complexity)]
+#[allow(clippy::needless_range_loop)] // Gram triangle reduction: index loops read/write paired upper+lower entries; order mirrors C.
 pub fn lideal_reduce_basis<const N: usize>(
     basis: &[[Int<N>; 4]; 4],
     denom: &Uint<N>,
     norm: &Uint<N>,
     p: &Uint<N>,
-) -> Option<([[Int<N>; 4]; 4], [[Int<N>; 4]; 4])> {
+) -> Option<ReducedBasisGram<N>> {
     let denom_int = *denom.as_int();
     let corrector = denom_int.wrapping_mul(&denom_int); // denom²
 
@@ -289,7 +295,9 @@ pub fn lideal_reduce_basis<const N: usize>(
 /// `out[i] = Σ_j mat[i][j]·vec[j]`. Computes into a fresh array, so the C
 /// in-place call `ibz_mat_4x4_eval(&coord, &red, &coord)` is reproduced by
 /// passing the same slice as `vec` (the result is a new array).
-#[allow(dead_code, clippy::needless_range_loop)]
+// 4×4 matrix·vector product; the inner index j accesses mat[i][j] and vec[j]
+// together — inherent to matvec.
+#[allow(clippy::needless_range_loop)]
 pub fn mat4_eval<const N: usize>(mat: &[[Int<N>; 4]; 4], vec: &[Int<N>; 4]) -> [Int<N>; 4] {
     let mut out = [Int::<N>::from_i64(0); 4];
     for i in 0..4 {
@@ -301,6 +309,11 @@ pub fn mat4_eval<const N: usize>(mat: &[[Int<N>; 4]; 4], vec: &[Int<N>; 4]) -> [
     }
     out
 }
+
+/// `(coord, prime)` returned by [`prime_norm_box_search`]: the sampled
+/// coordinate vector `α = reduced · coord` and its prime reduced norm `q`.
+#[cfg(feature = "alloc")]
+pub type BoxSearchHit<const N: usize> = ([Int<N>; 4], Uint<N>);
 
 /// The prime-norm BOX-SEARCH from `quat_lideal_prime_norm_reduced_equivalent`
 /// (`lll/lll_applications.c`), byte-faithful: over a reduced basis + its
@@ -318,7 +331,6 @@ pub fn mat4_eval<const N: usize>(mat: &[[Int<N>; 4]; 4], vec: &[Int<N>; 4]) -> [
 /// Gated on `alloc` because the byte-exact interval RNG it consumes lives in
 /// [`crate::quaternion::sample`].
 #[cfg(feature = "alloc")]
-#[allow(dead_code, clippy::type_complexity)]
 pub fn prime_norm_box_search<const N: usize, R: rand_core::CryptoRng + ?Sized>(
     reduced: &[[Int<N>; 4]; 4],
     gram: &[[Int<N>; 4]; 4],
@@ -326,7 +338,7 @@ pub fn prime_norm_box_search<const N: usize, R: rand_core::CryptoRng + ?Sized>(
     equiv_bound_coeff: u32,
     primality_witnesses: &[Uint<N>],
     rng: &mut R,
-) -> Option<([Int<N>; 4], Uint<N>)> {
+) -> Option<BoxSearchHit<N>> {
     use crate::quaternion::lattice::qf_eval_4x4;
     use crate::quaternion::primality::is_probable_prime_with_witnesses;
     use crate::quaternion::sample::ibz_rand_interval_minm_m;
@@ -360,6 +372,11 @@ pub fn prime_norm_box_search<const N: usize, R: rand_core::CryptoRng + ?Sized>(
     None
 }
 
+/// `(J_basis, J_denom, q)` returned by
+/// [`quat_lideal_prime_norm_reduced_equivalent`]: the prime-norm equivalent
+/// ideal's column-major basis, its scalar denominator, and its prime norm `q`.
+pub type PrimeNormEquivalent<const N: usize> = ([[Int<N>; 4]; 4], Int<N>, Uint<N>);
+
 /// Port of the C `quat_lideal_prime_norm_reduced_equivalent`
 /// (`lll/lll_applications.c`): given a left ideal `I` in the C representation
 /// (COLUMN-major standard-coords `basis`, scalar `denom`, reduced norm
@@ -391,13 +408,10 @@ pub fn prime_norm_box_search<const N: usize, R: rand_core::CryptoRng + ?Sized>(
 /// byte-exactness is finally certified by the end-to-end keygen KAT.
 ///
 /// `alloc`-gated because the box search consumes the byte-exact interval RNG.
+// needless_range_loop: column-gather across all 4 rows of `basis` while writing
+// the matching column of `prod`; index loop mirrors the C column-major product.
 #[cfg(feature = "alloc")]
-#[allow(
-    dead_code,
-    clippy::type_complexity,
-    clippy::too_many_arguments,
-    clippy::needless_range_loop
-)]
+#[allow(clippy::needless_range_loop)]
 pub fn quat_lideal_prime_norm_reduced_equivalent<
     const N: usize,
     R: rand_core::CryptoRng + ?Sized,
@@ -409,7 +423,7 @@ pub fn quat_lideal_prime_norm_reduced_equivalent<
     equiv_bound_coeff: u32,
     primality_witnesses: &[Uint<N>],
     rng: &mut R,
-) -> Option<([[Int<N>; 4]; 4], Int<N>, Uint<N>)> {
+) -> Option<PrimeNormEquivalent<N>> {
     use crate::quaternion::Quaternion;
     use crate::quaternion::hnf::{hnf_mod_core, quat_lattice_reduce_denom};
     use crate::quaternion::ideal::det_4x4;
@@ -491,7 +505,6 @@ pub fn quat_lideal_prime_norm_reduced_equivalent<
 ///
 /// `alloc`-gated (the reduction's box search consumes the byte-exact RNG).
 #[cfg(feature = "alloc")]
-#[allow(dead_code, clippy::too_many_arguments)]
 pub fn keygen_prime_norm_left_ideal<const N: usize, R: rand_core::CryptoRng + ?Sized>(
     gen_a: &crate::quaternion::Quaternion<N>,
     gen_denom: &Int<N>,
@@ -539,7 +552,6 @@ pub fn keygen_prime_norm_left_ideal<const N: usize, R: rand_core::CryptoRng + ?S
 ///
 /// `kat`-gated (consumes the byte-exact interval RNG throughout).
 #[cfg(feature = "kat")]
-#[allow(dead_code, clippy::too_many_arguments)]
 pub fn keygen_byte_exact_secret_ideal<const N: usize, R: rand_core::CryptoRng>(
     sec_degree: &Uint<N>,
     p: &Uint<N>,
@@ -602,7 +614,8 @@ mod tests {
             [0, 1, 2, 3].map(|r| {
                 let v = basis[r][c];
                 let neg = bool::from(v.is_negative());
-                let mag = v.abs().as_words()[0] as f64;
+                let mag =
+                    f64::from(u32::try_from(v.abs().as_words()[0]).expect("magnitude fits in u32"));
                 if neg { -mag } else { mag }
             })
         };
@@ -619,16 +632,17 @@ mod tests {
             bstar[i] = ci;
             for j in 0..i {
                 mu[i][j] = form(&ci, &bstar[j]) / bnorm[j];
-                for k in 0..4 {
-                    bstar[i][k] -= mu[i][j] * bstar[j][k];
+                let bstar_j = bstar[j];
+                for (k, entry) in bstar[i].iter_mut().enumerate() {
+                    *entry -= mu[i][j] * bstar_j[k];
                 }
             }
             bnorm[i] = form(&bstar[i], &bstar[i]);
         }
         // Size-reduction.
-        for i in 0..4 {
-            for j in 0..i {
-                if mu[i][j].abs() > eta + 1e-9 {
+        for (i, row) in mu.iter().enumerate() {
+            for entry in row.iter().take(i) {
+                if entry.abs() > eta + 1e-9 {
                     return false;
                 }
             }
@@ -909,7 +923,12 @@ mod tests {
             "LLL must preserve the lattice (|det| invariant)"
         );
         assert!(
-            is_lll_reduced::<N>(&basis, q as f64, 0.99, 0.51),
+            is_lll_reduced::<N>(
+                &basis,
+                f64::from(u32::try_from(q).expect("q fits in u32")),
+                0.99,
+                0.51,
+            ),
             "output must be LLL-reduced under the C-ref δ=0.99, η=0.51",
         );
     }
@@ -946,8 +965,8 @@ mod tests {
     fn lll_on_identity_is_stable() {
         const N: usize = 8;
         let mut basis = [[Int::<N>::from_i64(0); 4]; 4];
-        for i in 0..4 {
-            basis[i][i] = Int::<N>::from_i64(1);
+        for (i, row) in basis.iter_mut().enumerate() {
+            row[i] = Int::<N>::from_i64(1);
         }
         let det_in = det_4x4::<N>(&basis).abs();
         let mut g = gram_from_basis::<N>(&basis, 103);
@@ -983,7 +1002,12 @@ mod tests {
         .expect("trivial denom/norm division is always exact");
         assert_eq!(det_4x4::<N>(&reduced).abs(), det_in, "lattice preserved");
         assert!(
-            is_lll_reduced::<N>(&reduced, p as f64, 0.99, 0.51),
+            is_lll_reduced::<N>(
+                &reduced,
+                f64::from(u32::try_from(p).expect("p fits in u32")),
+                0.99,
+                0.51,
+            ),
             "reduce_basis output must be LLL-reduced",
         );
     }
@@ -1014,7 +1038,12 @@ mod tests {
         .expect("lattice_gram(2·B) is divisible by norm=4");
         assert_eq!(det_4x4::<N>(&reduced).abs(), det_in, "lattice preserved");
         assert!(
-            is_lll_reduced::<N>(&reduced, p as f64, 0.99, 0.51),
+            is_lll_reduced::<N>(
+                &reduced,
+                f64::from(u32::try_from(p).expect("p fits in u32")),
+                0.99,
+                0.51,
+            ),
             "reduce_basis output must be LLL-reduced",
         );
     }
@@ -1244,8 +1273,8 @@ mod tests {
     /// path ≈ N⁴ ≈ 2^2052 and the reduce/box-search Gram ≈ 2^1278 both fit) and
     /// produces a prime-norm spine-ready ideal. INDEPENDENT invariants: q prime
     /// + `[O_0 : I] = |det(basis)|/denom⁴ = q²`. This is the prerequisite for
-    /// the end-to-end keygen → KAT pk run. Heavy (real-scale dpe-LLL +
-    /// Miller-Rabin at 3072-bit), hence ignored in the default run.
+    ///   the end-to-end keygen → KAT pk run. Heavy (real-scale dpe-LLL +
+    ///   Miller-Rabin at 3072-bit), hence ignored in the default run.
     #[cfg(feature = "kat")]
     #[ignore = "SEC_DEGREE-scale keygen front (heavy: WIDE=48 sampler + reduce)"]
     #[test]

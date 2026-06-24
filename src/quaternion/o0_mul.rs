@@ -102,7 +102,9 @@ pub fn o0_conjugate<const LIMBS: usize>(coords: &[Int<LIMBS>; 4]) -> [Int<LIMBS>
 /// same quaternion as our `generator_r / denom`. This is the boundary
 /// adapter to the C-faithful `lattice_gram` / `quat_lll_core`, which read
 /// column vectors in standard coords.
-#[allow(dead_code, clippy::needless_range_loop)]
+// Row→column (transpose) conversion: out[k][r] writes column r across rows k;
+// the transposed index access is inherent and can't be a plain iterator.
+#[allow(clippy::needless_range_loop)]
 pub fn ideal_basis_o0_to_standard_col<const LIMBS: usize>(
     basis_o0: &[[Int<LIMBS>; 4]; 4],
 ) -> [[Int<LIMBS>; 4]; 4] {
@@ -123,7 +125,9 @@ pub fn ideal_basis_o0_to_standard_col<const LIMBS: usize>(
 /// (`out[r]` = `O_0`-coords of `g_r`). The internal `÷2` is exact because
 /// `standard_to_o0_basis(2·g)` yields `2·(O_0-coords of g)`. Used to hand a
 /// C-representation reduced ideal back to our (already-validated) spine.
-#[allow(dead_code, clippy::needless_range_loop)]
+// Column→row (transpose) conversion reading std_col[k][r] down column r;
+// the transposed index access is inherent and can't be a plain iterator.
+#[allow(clippy::needless_range_loop)]
 pub fn ideal_basis_standard_col_to_o0<const LIMBS: usize>(
     std_col: &[[Int<LIMBS>; 4]; 4],
 ) -> [[Int<LIMBS>; 4]; 4] {
@@ -157,7 +161,9 @@ pub fn ideal_basis_standard_col_to_o0<const LIMBS: usize>(
 ///
 /// Right-multiplication by `gen` scales the lattice covolume by
 /// `N(gen)²`, so `|det(out)| = |det(O_0 basis)|·N(gen)² = 4·N(gen)²`.
-#[allow(dead_code, clippy::needless_range_loop)]
+// Builds column-major output out[k][j] (transpose write of column j from each
+// product); the transposed index access is inherent to the layout.
+#[allow(clippy::needless_range_loop)]
 pub fn order_times_gen<const LIMBS: usize>(
     g: &Quaternion<LIMBS>,
     p: &Uint<LIMBS>,
@@ -276,21 +282,20 @@ pub fn quat_lideal_create<const LIMBS: usize>(
 ///
 /// The map is exact and lattice-preserving: `c_ideal_to_left_ideal` followed
 /// by the spine sees the same rational lattice the C representation encoded.
-#[allow(dead_code, clippy::needless_range_loop)]
 pub fn c_ideal_to_left_ideal<const LIMBS: usize>(
     basis_col_std: &[[Int<LIMBS>; 4]; 4],
     denom: &Int<LIMBS>,
     norm: &Uint<LIMBS>,
 ) -> crate::quaternion::LeftIdeal<LIMBS> {
     let mut left_basis = [[Int::<LIMBS>::from_i64(0); 4]; 4];
-    for r in 0..4 {
+    for (r, lrow) in left_basis.iter_mut().enumerate() {
         let col = Quaternion::<LIMBS>::new(
             basis_col_std[0][r],
             basis_col_std[1][r],
             basis_col_std[2][r],
             basis_col_std[3][r],
         );
-        left_basis[r] = standard_to_o0_basis::<LIMBS>(&col);
+        *lrow = standard_to_o0_basis::<LIMBS>(&col);
     }
     // Reduce to lowest terms so an INTEGRAL O_0-ideal comes back with denom 1
     // (the canonical form the spine expects). The C representation carries a

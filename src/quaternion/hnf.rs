@@ -24,6 +24,9 @@ use crypto_bigint::Int;
 /// the canonical upper-triangular basis; rows 4..ROWS are zero.
 ///
 /// Used by `ideal_multiply` to reduce the 16-pair product matrix.
+// HNF cross-row reduction: the pivot row m[col] is read while sibling rows
+// m[r] mutate (and m[col][c] feeds m[r][c]); index form mirrors the C operation
+// order and avoids split-borrow scaffolding over the same matrix.
 #[allow(clippy::needless_range_loop)]
 pub fn hnf_rect_4cols<const ROWS: usize, const LIMBS: usize>(
     input: &[[Int<LIMBS>; 4]; ROWS],
@@ -106,6 +109,9 @@ pub fn hnf_rect_4cols<const ROWS: usize, const LIMBS: usize>(
 /// adversarial inputs. KLPT operates on ideals whose bases come out of
 /// Cornacchia-and-conjugation chains, where this is acceptable; the
 /// fraction-free / Bareiss variant lands when profiling shows overflow.
+// HNF cross-row reduction: the pivot row m[col] is read while sibling rows
+// m[r] mutate (and m[col][c] feeds m[r][c]); index form mirrors the C operation
+// order and avoids split-borrow scaffolding over the same matrix.
 #[allow(clippy::needless_range_loop)]
 pub fn hnf_4x4<const LIMBS: usize>(input: &[[Int<LIMBS>; 4]; 4]) -> [[Int<LIMBS>; 4]; 4] {
     let mut m = *input;
@@ -315,12 +321,12 @@ pub fn euclid_mod<const LIMBS: usize>(
 /// `m ← m/d`; transpose write-back `hnf[i][j] = w[j][i]`. HNF is canonical,
 /// so the exact internal `(u,v)` does not affect the output.
 #[allow(
-    dead_code,
     clippy::needless_range_loop,
     clippy::cast_possible_truncation,
     clippy::cast_possible_wrap,
     clippy::cast_sign_loss
-)] // i32/usize index casts mirror the C's `int` indices with the −1 sentinel; n ≤ 8, i/j/k ∈ [−1, 7].
+)] // HNF-mod core: index loops use C's −1 sentinel (i/j/k ∈ [−1,7], n ≤ 8) so
+// they cannot be plain iterators, and the i32/usize index casts mirror the C `int` arithmetic.
 pub fn hnf_mod_core<const LIMBS: usize>(
     generators: &[[Int<LIMBS>; 4]],
     modulus: &crypto_bigint::Uint<LIMBS>,
@@ -471,7 +477,6 @@ pub fn centered_mod<const LIMBS: usize>(
 /// non-negative (the C's `ibz_abs(&reduced->denom)`); basis signs are kept on
 /// the basis (the C does NOT abs the basis). Used after every
 /// [`quat_lattice_add`] and after the principal-ideal construction.
-#[allow(dead_code, clippy::needless_range_loop)]
 pub fn quat_lattice_reduce_denom<const LIMBS: usize>(
     basis: &[[Int<LIMBS>; 4]; 4],
     denom: &Int<LIMBS>,
@@ -481,9 +486,9 @@ pub fn quat_lattice_reduce_denom<const LIMBS: usize>(
 
     // g = gcd(|basis[0][0]|, …, |basis[3][3]|, |denom|), non-negative.
     let mut g: Uint<LIMBS> = basis[0][0].abs();
-    for i in 0..4 {
-        for j in 0..4 {
-            g = uint_gcd_vartime(&g, &basis[i][j].abs());
+    for row in basis {
+        for entry in row {
+            g = uint_gcd_vartime(&g, &entry.abs());
         }
     }
     g = uint_gcd_vartime(&g, &denom.abs());
@@ -494,9 +499,9 @@ pub fn quat_lattice_reduce_denom<const LIMBS: usize>(
 
     // basis / g (exact signed division; int_div_floor == exact when g | entry).
     let mut out = *basis;
-    for i in 0..4 {
-        for j in 0..4 {
-            out[i][j] = int_div_floor(&basis[i][j], &g_int);
+    for row in &mut out {
+        for entry in row {
+            *entry = int_div_floor(entry, &g_int);
         }
     }
     // |denom| / g, non-negative (the C abs's the result denominator).
@@ -526,7 +531,9 @@ pub fn quat_lattice_reduce_denom<const LIMBS: usize>(
 /// arithmetic; the caller must pick `LIMBS` wide enough that these
 /// determinants (≈ `(d·‖B‖)^4`) do not overflow. At keygen scale (ideal norm
 /// ≈ `2^512`) this needs ≈ 36 limbs.
-#[allow(dead_code, clippy::needless_range_loop)]
+// Parallel scale of two basis matrices and column-extraction (transpose) into
+// 8 generators; index form mirrors the C reference's quat_lattice_add.
+#[allow(clippy::needless_range_loop)]
 pub fn quat_lattice_add<const LIMBS: usize>(
     basis1: &[[Int<LIMBS>; 4]; 4],
     denom1: &Int<LIMBS>,
@@ -567,6 +574,8 @@ pub fn quat_lattice_add<const LIMBS: usize>(
 }
 
 #[cfg(test)]
+// Test helpers build/compare fixed matrices by [r][c] index for direct
+// correspondence with the math under test; iterator rewrites add no value here.
 #[allow(clippy::needless_range_loop)]
 mod tests {
     use super::*;
@@ -619,9 +628,13 @@ mod tests {
             assert_eq!(out.gcd, u(g), "gcd({x},{y})");
             let (bu, bv) = out.bezout_coefficients();
             let lhs = bu
-                .wrapping_mul(&n(x as i64))
-                .wrapping_add(&bv.wrapping_mul(&n(y as i64)));
-            assert_eq!(lhs, n(g as i64), "Bezout ({x},{y})");
+                .wrapping_mul(&n(i64::try_from(x).expect("x fits in i64")))
+                .wrapping_add(&bv.wrapping_mul(&n(i64::try_from(y).expect("y fits in i64"))));
+            assert_eq!(
+                lhs,
+                n(i64::try_from(g).expect("g fits in i64")),
+                "Bezout ({x},{y})"
+            );
         }
     }
 
@@ -683,7 +696,11 @@ mod tests {
             assert_eq!(gg, Uint::<8>::from_u64(g), "gcd({x},{y})");
             assert_ne!(u, n(0), "u must be non-zero for ({x},{y})");
             let lhs = u.wrapping_mul(&n(x)).wrapping_add(&v.wrapping_mul(&n(y)));
-            assert_eq!(lhs, n(g as i64), "u·x + v·y = g for ({x},{y})");
+            assert_eq!(
+                lhs,
+                n(i64::try_from(g).expect("g fits in i64")),
+                "u·x + v·y = g for ({x},{y})"
+            );
         }
     }
 

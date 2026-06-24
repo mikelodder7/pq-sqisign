@@ -84,9 +84,8 @@ pub fn find_norm_witness(target_norm: u128, p: u128) -> Option<Quaternion<8>> {
 fn into_int(value: u128) -> crypto_bigint::Int<8> {
     // Truncate u128 → i64 fits for the prototype's small search range; if
     // the search bound exceeded i64::MAX we wouldn't be running this path.
-    debug_assert!(value <= u128::from(i64::MAX as u64));
-    #[allow(clippy::cast_possible_truncation)] // bounded by debug_assert above
-    let v = value as i64;
+    // The prototype search range keeps `value` within `i64::MAX`.
+    let v = i64::try_from(value).expect("value ≤ i64::MAX for the prototype search range");
     crypto_bigint::Int::<8>::from_i64(v)
 }
 

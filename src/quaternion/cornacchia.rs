@@ -70,8 +70,8 @@ pub fn cornacchia_classical(d: u64, p: u64) -> Option<(u64, u64)> {
     if s2 > u128::from(u64::MAX) {
         return None;
     }
-    #[allow(clippy::cast_possible_truncation)] // bounded by the check above
-    let s2_u64 = s2 as u64;
+    // bounded by the `s2 > u64::MAX` check above.
+    let s2_u64 = u64::try_from(s2).expect("s2 ≤ u64::MAX by the check above");
     let s = s2_u64.isqrt();
     if (s as u128) * (s as u128) == s2 {
         return Some((b, s));

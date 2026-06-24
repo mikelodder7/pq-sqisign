@@ -551,7 +551,6 @@ fn ec_recover_y<F: BaseField>(x_aff: &Fp2<F>, curve_a: &Fp2<F>) -> (Fp2<F>, Choi
 /// treating the triple as a Jacobian point.
 // Consumed by the theta-chain orchestration; only tests exercise it
 // until then, so the lib target sees it as unused.
-#[allow(dead_code, clippy::many_single_char_names)]
 pub(crate) fn lift_basis<F: BaseField>(
     basis: &crate::ec::couple::EcBasis<F>,
     curve: &crate::ec::montgomery::MontgomeryCurve<F>,

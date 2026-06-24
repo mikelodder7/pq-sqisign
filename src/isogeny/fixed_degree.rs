@@ -252,7 +252,8 @@ pub(crate) fn fixed_degree_isogeny_and_eval_keygen<R: CryptoRng>(
 /// correctness rests on the standalone-verified `represent_integer_over_alt_order`
 /// (norm + membership) and `endomorphism_application_even_basis_indexed`
 /// (identity-validated on all 6 curves).
-#[allow(dead_code, clippy::too_many_arguments)]
+// Needs the alternate-curve index, target scalar, eval/output point slices, primality witnesses, search bounds, and RNG.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn fixed_degree_isogeny_and_eval_indexed<R: CryptoRng>(
     index_alternate_curve: usize,
     u: &Uint<QL>,

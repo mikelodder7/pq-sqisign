@@ -34,7 +34,8 @@ use crate::isogeny::fixed_degree::{
     fixed_degree_isogeny_and_eval, fixed_degree_isogeny_and_eval_keygen,
 };
 use crate::isogeny::theta_chain::theta_chain_compute_and_eval_randomized;
-use crate::params::lvl1::Fp1Element;
+use crate::level_constants::{EvenBasis, LevelConstants};
+use crate::params::lvl1::{Fp1Element, Level1};
 use crate::quaternion::ideal::LeftIdeal;
 use crypto_bigint::{Int, Uint};
 use rand_core::CryptoRng;
@@ -64,7 +65,6 @@ fn abs_uint(x: &Int<L>) -> Uint<L> {
 /// Returns `None` if `find_uv` finds no Bézout decomposition, a
 /// fixed-degree isogeny / lift / endomorphism scaling fails, or the
 /// `(2,2)`-chain does not split.
-#[allow(dead_code, clippy::too_many_arguments)]
 pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
     lideal: &LeftIdeal<L>,
     p: &Uint<L>,
@@ -327,25 +327,11 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
 
 /// Starting even-torsion basis for `find_uv` index `idx` (0 = E0; k≥1 = the
 /// NICE alternate curve `k−1`'s `basis_even`).
-fn starting_basis_indexed(
-    idx: usize,
-) -> (
-    MontgomeryPoint<Fp1Element>,
-    MontgomeryPoint<Fp1Element>,
-    MontgomeryPoint<Fp1Element>,
-) {
-    use crate::quaternion::curves_with_endomorphism as cw;
+fn starting_basis_indexed<P: LevelConstants>(idx: usize) -> EvenBasis<P::Field> {
     if idx == 0 {
-        return basis_e0_lvl1();
+        return P::basis_e0();
     }
-    let c = match idx - 1 {
-        0 => cw::curve_with_endomorphism_0_l1(),
-        1 => cw::curve_with_endomorphism_1_l1(),
-        2 => cw::curve_with_endomorphism_2_l1(),
-        3 => cw::curve_with_endomorphism_3_l1(),
-        4 => cw::curve_with_endomorphism_4_l1(),
-        _ => cw::curve_with_endomorphism_5_l1(),
-    };
+    let c = P::nice_curve(idx - 1);
     (
         MontgomeryPoint::new(c.p_x, c.p_z),
         MontgomeryPoint::new(c.q_x, c.q_z),
@@ -355,38 +341,22 @@ fn starting_basis_indexed(
 
 /// Starting curve for `find_uv` index `idx` (0 = E0; k≥1 = NICE curve `k−1`;
 /// the NICE curves have `C = 1`, so `curve_a` is the affine coefficient).
-fn starting_curve_indexed(idx: usize) -> MontgomeryCurve<Fp1Element> {
-    use crate::quaternion::curves_with_endomorphism as cw;
+fn starting_curve_indexed<P: LevelConstants>(idx: usize) -> MontgomeryCurve<P::Field> {
     if idx == 0 {
-        return MontgomeryCurve::e0();
+        return MontgomeryCurve::<P::Field>::e0();
     }
-    let c = match idx - 1 {
-        0 => cw::curve_with_endomorphism_0_l1(),
-        1 => cw::curve_with_endomorphism_1_l1(),
-        2 => cw::curve_with_endomorphism_2_l1(),
-        3 => cw::curve_with_endomorphism_3_l1(),
-        4 => cw::curve_with_endomorphism_4_l1(),
-        _ => cw::curve_with_endomorphism_5_l1(),
-    };
+    let c = P::nice_curve(idx - 1);
     MontgomeryCurve::new(c.curve_a)
 }
 
 /// Connecting-ideal norm `N` for index `idx` (0 ⇒ 1; k≥1 ⇒ `N = √(cached_norm)`
 /// since the Rust connecting ideals store `cached_norm = N²`, S328). Used in the
 /// θ / β1 rational-scaling factors (C `.norm` is `N`, dim2id2iso.c:988/1092).
-fn connecting_norm_indexed(idx: usize) -> Uint<L> {
-    use crate::quaternion::connecting_ideals as ci;
+fn connecting_norm_indexed<P: LevelConstants>(idx: usize) -> Uint<L> {
     if idx == 0 {
         return Uint::<L>::ONE;
     }
-    let id = match idx - 1 {
-        0 => ci::alternate_connecting_ideal_0_l1(),
-        1 => ci::alternate_connecting_ideal_1_l1(),
-        2 => ci::alternate_connecting_ideal_2_l1(),
-        3 => ci::alternate_connecting_ideal_3_l1(),
-        4 => ci::alternate_connecting_ideal_4_l1(),
-        _ => ci::alternate_connecting_ideal_5_l1(),
-    };
+    let id = P::alternate_connecting_ideal(idx - 1);
     id.cached_norm.resize::<L>().floor_sqrt_vartime()
 }
 
@@ -400,7 +370,6 @@ fn connecting_norm_indexed(idx: usize) -> Uint<L> {
 /// and β1 endomorphism APPLICATIONS stay index-0 (the elements are in the
 /// standard frame post-β); the alternate curve enters only via the starting-φ
 /// and the Weil reference.
-#[allow(clippy::too_many_arguments)]
 fn clapotis_combine_indexed<R: CryptoRng>(
     r: &crate::isogeny::clapotis::FindUvResult<L>,
     lideal: &LeftIdeal<L>,
@@ -438,7 +407,7 @@ fn clapotis_combine_indexed<R: CryptoRng>(
     };
 
     // 4. φ_u from the index1 NICE curve (D1); φ_v from index2 (D2).
-    let (bp1, bq1, bpmq1) = starting_basis_indexed(index1);
+    let (bp1, bq1, bpmq1) = starting_basis_indexed::<Level1>(index1);
     let eval_u = push(bp1, bq1, bpmq1);
     let mut out_u = [CoupleMontgomeryPoint::infinity(); 3];
     let (_lu, fu) = fixed_degree_isogeny_and_eval_indexed(
@@ -453,7 +422,7 @@ fn clapotis_combine_indexed<R: CryptoRng>(
     )?;
     let bas_u = (out_u[0].p1, out_u[1].p1, out_u[2].p1);
 
-    let (bp2, bq2, bpmq2) = starting_basis_indexed(index2);
+    let (bp2, bq2, bpmq2) = starting_basis_indexed::<Level1>(index2);
     let eval_v = push(bp2, bq2, bpmq2);
     let mut out_v = [CoupleMontgomeryPoint::infinity(); 3];
     let (_lv, fv) = fixed_degree_isogeny_and_eval_indexed(
@@ -470,7 +439,7 @@ fn clapotis_combine_indexed<R: CryptoRng>(
 
     // 5. Apply θ (scaled by 1/(d1·N(conn[index2]))) to φ_v's image (D3); the
     //    application itself is index-0 (standard-frame θ).
-    let extra_theta = d1.wrapping_mul(&connecting_norm_indexed(index2));
+    let extra_theta = d1.wrapping_mul(&connecting_norm_indexed::<Level1>(index2));
     let a24_fv1 = fv.e1.a24();
     let (t2p, t2q, t2pmq) = endomorphism_application_rational_even_basis::<L>(
         &bas2.0,
@@ -509,7 +478,7 @@ fn clapotis_combine_indexed<R: CryptoRng>(
 
     // 7. Weil-pairing factor selection — reference on the index1 NICE
     //    curve/basis (D5); correct factor pairs as e(bas1)^{d1·u²}.
-    let e1_curve = starting_curve_indexed(index1);
+    let e1_curve = starting_curve_indexed::<Level1>(index1);
     let w0 = weil(F, &bp1, &bq1, &bpmq1, &e1_curve);
     let w1 = weil(F, &tt1.p1, &tt2.p1, &tt1m2.p1, &theta_cod.e1);
     let mask_f = Uint::<L>::ONE.shl_vartime(F).wrapping_sub(&Uint::ONE);
@@ -526,7 +495,7 @@ fn clapotis_combine_indexed<R: CryptoRng>(
     let a24_cod = codomain.a24();
     let ud1 = u_s
         .wrapping_mul(&d1)
-        .wrapping_mul(&connecting_norm_indexed(index1));
+        .wrapping_mul(&connecting_norm_indexed::<Level1>(index1));
     let (op, oq, opmq) = endomorphism_application_rational_even_basis::<L>(
         &basis_pts.0,
         &basis_pts.1,
@@ -550,7 +519,6 @@ fn clapotis_combine_indexed<R: CryptoRng>(
 /// SQIsign-shaped input (`find_uv_alternate_orders` rescales by the smallest
 /// basis element ⇒ `cached_norm` must be a perfect square `N²`); the real
 /// keygen secret ideal is so shaped.
-#[allow(dead_code, clippy::too_many_arguments, clippy::needless_range_loop)]
 pub(crate) fn ideal_to_isogeny_clapotis<R: CryptoRng>(
     lideal: &LeftIdeal<L>,
     p: &Uint<L>,
@@ -567,9 +535,9 @@ pub(crate) fn ideal_to_isogeny_clapotis<R: CryptoRng>(
     // Widen the 6 real ALTERNATE_CONNECTING_IDEALS (L8) to the spine width L16.
     let widen = |id: &LeftIdeal<8>| -> LeftIdeal<L> {
         let mut basis = [[Int::<L>::from_i64(0); 4]; 4];
-        for r in 0..4 {
-            for c in 0..4 {
-                basis[r][c] = widen_int_lattice::<8, L>(&id.basis[r][c]);
+        for (brow, idrow) in basis.iter_mut().zip(&id.basis) {
+            for (bcell, idcell) in brow.iter_mut().zip(idrow) {
+                *bcell = widen_int_lattice::<8, L>(idcell);
             }
         }
         LeftIdeal::<L>::with_denom_and_norm(
@@ -719,7 +687,8 @@ pub(crate) fn commit<R: CryptoRng>(
 /// is doubled `exp_diadic` times, and the chain is the RANDOMIZED variant.
 /// Returns `(codomain E1×E2, pushed B_com basis as 3 couple points)`. lvl1.
 #[cfg(feature = "alloc")]
-#[allow(dead_code, clippy::too_many_arguments)]
+// Needs the commitment and auxiliary curves/bases plus response degree data, 2-adic exponents, and RNG.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_dim2_isogeny_challenge<R: CryptoRng>(
     e_com: &MontgomeryCurve<Fp1Element>,
     b_com: &EcBasis<Fp1Element>,
@@ -780,6 +749,19 @@ pub(crate) fn compute_dim2_isogeny_challenge<R: CryptoRng>(
     Some((codomain, out))
 }
 
+/// Output of [`keygen_lvl1`]: the public-key curve `E_A`, the secret ideal,
+/// the basis-change matrix `mat_BAcan_BA0`, the canonical basis `B_Acan`, the
+/// public-key hint, and the pushed E0 basis `B_A0`.
+#[cfg(feature = "kgen")]
+pub(crate) type KeygenLvl1Output = (
+    MontgomeryCurve<Fp1Element>,
+    LeftIdeal<L>,
+    [[Uint<8>; 2]; 2],
+    EcBasis<Fp1Element>,
+    u8,
+    EcBasis<Fp1Element>,
+);
+
 /// Functional (self-consistent, NOT byte-exact) keygen at lvl1. Reuses
 /// [`commit`]'s sampler→prime-norm-reduce→Clapotis-spine pipeline (the secret
 /// ideal is a random `O_0`-ideal of norm `SEC_DEGREE = COM_DEGREE`, reduced to a
@@ -796,20 +778,12 @@ pub(crate) fn compute_dim2_isogeny_challenge<R: CryptoRng>(
 /// applies it directly to `[1, chall_coeff]` (canonical-basis kernel coords) to
 /// get the kernel coords in the secret-pushed E0 frame.
 #[cfg(feature = "kgen")]
-#[allow(dead_code, clippy::type_complexity)]
 pub(crate) fn keygen_lvl1<R: CryptoRng>(
     witnesses: &[Uint<QL>],
     sample_bound: i64,
     max_trials: usize,
     rng: &mut R,
-) -> Option<(
-    MontgomeryCurve<Fp1Element>,
-    LeftIdeal<L>,
-    [[crypto_bigint::U256; 2]; 2],
-    EcBasis<Fp1Element>,
-    u8,
-    EcBasis<Fp1Element>,
-)> {
+) -> Option<KeygenLvl1Output> {
     use crate::ec::biscalar::ec_curve_to_basis_2f_to_hint;
     use crate::verification::change_of_basis_matrix;
     const TORSION_EVEN_POWER: usize = 248;
@@ -832,7 +806,6 @@ pub(crate) fn keygen_lvl1<R: CryptoRng>(
 /// `QUAT_prime_cofactor = 2^251 + 65`), intersect it with `lideal_com_resp`, and
 /// map the result through the Clapotis spine to `(E_aux, B_aux)`. HEAVY. lvl1.
 #[cfg(feature = "sign")]
-#[allow(dead_code, clippy::too_many_arguments)]
 pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
     random_aux_norm: &Uint<L>,
     lideal_com_resp: &LeftIdeal<L>,
@@ -1057,9 +1030,9 @@ mod tests {
             );
         }
         let mut jb16 = [[Int::<L>::from_i64(0); 4]; 4];
-        for r in 0..4 {
-            for c in 0..4 {
-                jb16[r][c] = narrow_int_lattice::<WL, L>(&ideal_wl.basis[r][c]);
+        for (r, row) in jb16.iter_mut().enumerate() {
+            for (c, entry) in row.iter_mut().enumerate() {
+                *entry = narrow_int_lattice::<WL, L>(&ideal_wl.basis[r][c]);
             }
         }
         let spine_ideal = LeftIdeal::<L>::with_denom_and_norm(
@@ -1078,9 +1051,9 @@ mod tests {
         use crate::quaternion::lattice::widen_int_lattice as widen;
         let widen_id = |id: &LeftIdeal<8>| {
             let mut b = [[Int::<L>::from_i64(0); 4]; 4];
-            for r in 0..4 {
-                for c in 0..4 {
-                    b[r][c] = widen::<8, L>(&id.basis[r][c]);
+            for (r, row) in b.iter_mut().enumerate() {
+                for (c, entry) in row.iter_mut().enumerate() {
+                    *entry = widen::<8, L>(&id.basis[r][c]);
                 }
             }
             LeftIdeal::<L>::with_denom_and_norm(
@@ -1099,15 +1072,9 @@ mod tests {
         ];
         let target = *Uint::<L>::ONE.shl_vartime(F).as_int();
         let fuv = find_uv::<L>(&target, &spine_ideal, &p16, &alts, 2);
-        std::eprintln!(
-            "STEP4a find_uv(alts) = {:?}",
-            fuv.as_ref().map(|_| "Ok").map_err(|e| e)
-        );
+        std::eprintln!("STEP4a find_uv(alts) = {:?}", fuv.as_ref().map(|_| "Ok"));
         let fuv0 = find_uv::<L>(&target, &spine_ideal, &p16, &[], 2);
-        std::eprintln!(
-            "STEP4b find_uv(idx0) = {:?}",
-            fuv0.as_ref().map(|_| "Ok").map_err(|e| e)
-        );
+        std::eprintln!("STEP4b find_uv(idx0) = {:?}", fuv0.as_ref().map(|_| "Ok"));
         let wit_ql: [Uint<QL>; 5] = [2u64, 3, 5, 7, 11].map(Uint::from_u64);
         let idx0 = ideal_to_isogeny_clapotis_idx0(
             &spine_ideal,
@@ -1176,8 +1143,7 @@ mod tests {
 
         let closed =
             |id_basis: &[[Int<SL>; 4]; 4], contains: &dyn Fn(&[Int<SL>; 4]) -> bool| -> bool {
-                for r in 0..4 {
-                    let g = id_basis[r];
+                for &g in id_basis.iter().take(4) {
                     for k in 0..4 {
                         let mut e = [Int::<SL>::from_i64(0); 4];
                         e[k] = Int::<SL>::from_i64(1);
@@ -1235,9 +1201,9 @@ mod tests {
         let wit_wr: [Uint<WR>; 12] =
             [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
         let mut basis_wr = [[Int::<WR>::from_i64(0); 4]; 4];
-        for r in 0..4 {
-            for c in 0..4 {
-                basis_wr[r][c] = widen_int_lattice::<RET, WR>(&narrowed.basis[r][c]);
+        for (r, row) in basis_wr.iter_mut().enumerate() {
+            for (c, entry) in row.iter_mut().enumerate() {
+                *entry = widen_int_lattice::<RET, WR>(&narrowed.basis[r][c]);
             }
         }
         let ideal_wr = LeftIdeal::<WR>::with_denom_and_norm(
@@ -1396,9 +1362,9 @@ mod tests {
             // irrelevant here.
             let ideal_bl = left_ideal_from_element_and_integer_o0::<BL>(&gamma, &n1, &p16);
             let mut basis16 = [[Int::<L>::from_i64(0); 4]; 4];
-            for r in 0..4 {
-                for c in 0..4 {
-                    basis16[r][c] = narrow_int_lattice::<BL, L>(&ideal_bl.basis[r][c]);
+            for (r, row) in basis16.iter_mut().enumerate() {
+                for (c, entry) in row.iter_mut().enumerate() {
+                    *entry = narrow_int_lattice::<BL, L>(&ideal_bl.basis[r][c]);
                 }
             }
             let lideal = LeftIdeal::<L>::with_denom_and_norm(
@@ -1502,9 +1468,9 @@ mod tests {
             .expect("sample prime-norm secret ideal");
             // Widen to the spine's L=16.
             let mut basis16 = [[Int::<L>::from_i64(0); 4]; 4];
-            for r in 0..4 {
-                for c in 0..4 {
-                    basis16[r][c] = widen_int_lattice::<8, L>(&ideal8.basis[r][c]);
+            for (r, row) in basis16.iter_mut().enumerate() {
+                for (c, entry) in row.iter_mut().enumerate() {
+                    *entry = widen_int_lattice::<8, L>(&ideal8.basis[r][c]);
                 }
             }
             let lideal = LeftIdeal::<L>::with_denom_and_norm(
@@ -1658,9 +1624,9 @@ mod tests {
 
         // Narrow J<48> → LeftIdeal<16> for the spine (J basis ~2^250 fits Int16).
         let mut b16 = [[Int::<L>::from_i64(0); 4]; 4];
-        for r in 0..4 {
-            for c in 0..4 {
-                b16[r][c] = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
+        for (r, row) in b16.iter_mut().enumerate() {
+            for (c, entry) in row.iter_mut().enumerate() {
+                *entry = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
             }
         }
         let lideal = LeftIdeal::<L>::with_denom_and_norm(
@@ -1721,11 +1687,11 @@ mod tests {
     ///   - `A_kat == A_ours` / `A_kat == -A_ours` — both FALSE: it is not the
     ///     trivial sign model-swap; A_kat is another element of the ≤6-value
     ///     S₃ orbit (a different 2-torsion point at the Montgomery origin).
-    /// OPEN: this does NOT by itself exclude the quadratic twist (twists share
-    /// j); the next increment computes the full model orbit to confirm
-    /// iso-not-twist, then matches C's construction (2^f basis ordering /
-    /// `small=true` length) so the canonical model falls out. Asserts only the
-    /// j-equality (the proven invariant).
+    ///     OPEN: this does NOT by itself exclude the quadratic twist (twists share
+    ///     j); the next increment computes the full model orbit to confirm
+    ///     iso-not-twist, then matches C's construction (2^f basis ordering /
+    ///     `small=true` length) so the canonical model falls out. Asserts only the
+    ///     j-equality (the proven invariant).
     #[ignore = "diagnostic: E_A vs KAT curve — same j (iso), different Montgomery model"]
     #[test]
     fn diag_keygen_e_a_isomorphism_to_kat() {
@@ -1750,9 +1716,9 @@ mod tests {
             keygen_byte_exact_secret_ideal::<WN, _>(&sec, &p48, 8192, 64, &wit48, &mut rng)
                 .expect("byte-exact keygen front must produce a prime-norm ideal");
         let mut b16 = [[Int::<L>::from_i64(0); 4]; 4];
-        for r in 0..4 {
-            for c in 0..4 {
-                b16[r][c] = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
+        for (r, row) in b16.iter_mut().enumerate() {
+            for (c, entry) in row.iter_mut().enumerate() {
+                *entry = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
             }
         }
         let lideal = LeftIdeal::<L>::with_denom_and_norm(
@@ -1853,9 +1819,9 @@ mod tests {
             keygen_byte_exact_secret_ideal::<WN, _>(&sec, &p48, 8192, 64, &wit48, &mut rng)
                 .expect("byte-exact keygen front");
         let mut b16 = [[Int::<L>::from_i64(0); 4]; 4];
-        for r in 0..4 {
-            for c in 0..4 {
-                b16[r][c] = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
+        for (r, row) in b16.iter_mut().enumerate() {
+            for (c, entry) in row.iter_mut().enumerate() {
+                *entry = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
             }
         }
         let lideal = LeftIdeal::<L>::with_denom_and_norm(
@@ -1928,9 +1894,9 @@ mod tests {
             keygen_byte_exact_secret_ideal::<WN, _>(&sec, &p48, 8192, 64, &wit48, &mut rng)
                 .expect("byte-exact keygen front");
         let mut b16 = [[Int::<L>::from_i64(0); 4]; 4];
-        for r in 0..4 {
-            for c in 0..4 {
-                b16[r][c] = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
+        for (r, row) in b16.iter_mut().enumerate() {
+            for (c, entry) in row.iter_mut().enumerate() {
+                *entry = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
             }
         }
         let lideal = LeftIdeal::<L>::with_denom_and_norm(
@@ -2001,9 +1967,9 @@ mod tests {
                 .expect("byte-exact keygen front");
         // find_uv (no DRBG draw) → u_s.
         let mut b16 = [[Int::<L>::from_i64(0); 4]; 4];
-        for r in 0..4 {
-            for c in 0..4 {
-                b16[r][c] = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
+        for (r, row) in b16.iter_mut().enumerate() {
+            for (c, entry) in row.iter_mut().enumerate() {
+                *entry = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
             }
         }
         let lideal = LeftIdeal::<L>::with_denom_and_norm(
@@ -2137,9 +2103,9 @@ mod tests {
             keygen_byte_exact_secret_ideal::<WN, _>(&sec, &p48, 8192, 64, &wit48, &mut rng)
                 .expect("keygen front");
         let mut b16 = [[Int::<L>::from_i64(0); 4]; 4];
-        for r in 0..4 {
-            for c in 0..4 {
-                b16[r][c] = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
+        for (r, row) in b16.iter_mut().enumerate() {
+            for (c, entry) in row.iter_mut().enumerate() {
+                *entry = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
             }
         }
         let j16 = LeftIdeal::<L>::with_denom_and_norm(
@@ -2173,9 +2139,9 @@ mod tests {
             use crate::quaternion::lattice::widen_int_lattice as wil;
             let wd = |id: &LeftIdeal<8>| -> LeftIdeal<L> {
                 let mut b = [[Int::<L>::from_i64(0); 4]; 4];
-                for rr in 0..4 {
-                    for cc in 0..4 {
-                        b[rr][cc] = wil::<8, L>(&id.basis[rr][cc]);
+                for (rr, row) in b.iter_mut().enumerate() {
+                    for (cc, entry) in row.iter_mut().enumerate() {
+                        *entry = wil::<8, L>(&id.basis[rr][cc]);
                     }
                 }
                 LeftIdeal::<L>::with_denom_and_norm(
@@ -2222,9 +2188,9 @@ mod tests {
         )
         .expect("sampler ideal of norm q");
         let mut sb16 = [[Int::<L>::from_i64(0); 4]; 4];
-        for r in 0..4 {
-            for c in 0..4 {
-                sb16[r][c] = widen_int_lattice::<8, L>(&s8.basis[r][c]);
+        for (r, row) in sb16.iter_mut().enumerate() {
+            for (c, entry) in row.iter_mut().enumerate() {
+                *entry = widen_int_lattice::<8, L>(&s8.basis[r][c]);
             }
         }
         let s16 = LeftIdeal::<L>::with_denom_and_norm(

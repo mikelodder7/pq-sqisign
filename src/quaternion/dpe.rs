@@ -56,7 +56,7 @@ fn pow2(s: i32) -> f64 {
 /// Callers only pass values whose rounded magnitude is below `2^53`, so the
 /// cast to `i64` is exact after the half-unit adjustment.
 #[inline]
-#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // |adjusted| < 2^53 ⇒ i64 cast and back to f64 are both exact.
 fn round_ties_away(x: f64) -> f64 {
     let adjusted = if x >= 0.0 { x + 0.5 } else { x - 0.5 };
     (adjusted as i64) as f64
@@ -120,7 +120,7 @@ impl Dpe {
     /// `dpe_set_ui`/`dpe_set_si`: from an integer (exp 0 then normalize).
     /// The significand may lose precision for `|y| >= 2^53` exactly as the C
     /// `(DPE_DOUBLE) y` cast does; the reducer only feeds small constants here.
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss)] // mirrors C `(DPE_DOUBLE) y` cast; |y| < 2^53 callers are exact, larger lose precision identically to C.
     pub fn from_i64(y: i64) -> Self {
         let mut x = Dpe {
             mant: y as f64,
@@ -514,7 +514,7 @@ mod tests {
         let d = Dpe::from_int::<4>(&Int::<4>::from_i64((1i64 << 60) + 1));
         assert_eq!(d.exp, 61);
         assert_eq!(d.mant, 0.5);
-        assert_eq!(d.to_f64(), (1u64 << 60) as f64);
+        assert_eq!(d.to_f64(), 2f64.powi(60));
     }
 
     /// `to_int` (`dpe_get_z`): round-trips ≤53-bit integers exactly, rounds

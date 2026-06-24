@@ -27,7 +27,6 @@ use crate::quaternion::o0_mul::reduced_norm_o0_basis;
 ///
 /// KLPT's general lift consumes this primitive to find `γ ∈ I` with
 /// `N_red(γ) = N(I) · T`, after which `J = I · γ̄ / N(I)` has norm `T`.
-#[allow(clippy::needless_range_loop)]
 pub fn find_quaternion_in_ideal_with_norm<const LIMBS: usize>(
     ideal: &LeftIdeal<LIMBS>,
     target_norm: i64,
@@ -49,12 +48,12 @@ pub fn find_quaternion_in_ideal_with_norm<const LIMBS: usize>(
                     let n2_int = Int::<LIMBS>::from_i64(n2);
                     let n3_int = Int::<LIMBS>::from_i64(n3);
                     let mut coords = [zero; 4];
-                    for c in 0..4 {
+                    for (c, coord) in coords.iter_mut().enumerate() {
                         let t0 = n0_int.wrapping_mul(&ideal.basis[0][c]);
                         let t1 = n1_int.wrapping_mul(&ideal.basis[1][c]);
                         let t2 = n2_int.wrapping_mul(&ideal.basis[2][c]);
                         let t3 = n3_int.wrapping_mul(&ideal.basis[3][c]);
-                        coords[c] = t0.wrapping_add(&t1).wrapping_add(&t2).wrapping_add(&t3);
+                        *coord = t0.wrapping_add(&t1).wrapping_add(&t2).wrapping_add(&t3);
                     }
                     let norm = reduced_norm_o0_basis(&coords, p);
                     if norm == target_int {
@@ -73,7 +72,6 @@ pub fn find_quaternion_in_ideal_with_norm<const LIMBS: usize>(
 ///
 /// Returns `Some((coords_in_o0_basis, norm))`, or `None` if the search
 /// space contained nothing but zero.
-#[allow(clippy::needless_range_loop)]
 pub fn shortest_quaternion_in_ideal<const LIMBS: usize>(
     ideal: &LeftIdeal<LIMBS>,
     p: &Uint<LIMBS>,
@@ -94,12 +92,12 @@ pub fn shortest_quaternion_in_ideal<const LIMBS: usize>(
                     let n2_int = Int::<LIMBS>::from_i64(n2);
                     let n3_int = Int::<LIMBS>::from_i64(n3);
                     let mut coords = [zero; 4];
-                    for c in 0..4 {
+                    for (c, coord) in coords.iter_mut().enumerate() {
                         let t0 = n0_int.wrapping_mul(&ideal.basis[0][c]);
                         let t1 = n1_int.wrapping_mul(&ideal.basis[1][c]);
                         let t2 = n2_int.wrapping_mul(&ideal.basis[2][c]);
                         let t3 = n3_int.wrapping_mul(&ideal.basis[3][c]);
-                        coords[c] = t0.wrapping_add(&t1).wrapping_add(&t2).wrapping_add(&t3);
+                        *coord = t0.wrapping_add(&t1).wrapping_add(&t2).wrapping_add(&t3);
                     }
                     let norm = reduced_norm_o0_basis(&coords, p);
                     let is_better = match &best {

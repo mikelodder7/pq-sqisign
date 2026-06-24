@@ -153,7 +153,12 @@ mod tests {
         // stored limbs ARE our internal representation and every lvl3 constant can
         // be transcribed verbatim (mirrors the lvl1 anchor {0x33,0,0,0x01<<56}).
         let c_mont_one = Fp3Element::from_montgomery(U384::from_words([
-            0x3, 0x0, 0x0, 0x0, 0x0, 0x3d00_0000_0000_0000,
+            0x3,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+            0x3d00_0000_0000_0000,
         ]));
         assert_eq!(
             c_mont_one,

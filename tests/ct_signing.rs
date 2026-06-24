@@ -54,10 +54,11 @@ fn first_working_seed(start: u64) -> u64 {
 }
 
 fn mean(xs: &[f64]) -> f64 {
-    xs.iter().sum::<f64>() / xs.len() as f64
+    xs.iter().sum::<f64>() / f64::from(u32::try_from(xs.len()).expect("sample count fits in u32"))
 }
 fn var(xs: &[f64], m: f64) -> f64 {
-    xs.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / (xs.len() as f64 - 1.0)
+    xs.iter().map(|x| (x - m) * (x - m)).sum::<f64>()
+        / (f64::from(u32::try_from(xs.len()).expect("sample count fits in u32")) - 1.0)
 }
 
 #[test]
@@ -85,7 +86,8 @@ fn ct_sign_fixed_vs_random_key() {
 
     let (mf, mr) = (mean(&fix), mean(&rnd));
     let (vf, vr) = (var(&fix, mf), var(&rnd, mr));
-    let t = (mf - mr) / (vf / n as f64 + vr / n as f64).sqrt();
+    let n_f64 = f64::from(u32::try_from(n).expect("sample count fits in u32"));
+    let t = (mf - mr) / (vf / n_f64 + vr / n_f64).sqrt();
     // Primary CT metric: with the sign-RNG fixed, FIX (one key, repeated) is the
     // noise floor; RND (many keys) is the key-induced timing spread. A constant-
     // time signer has RND_std ≈ FIX_std (ratio ≈ 1). The leak manifests as
@@ -165,7 +167,8 @@ fn ct_sign_blinding_eval_random_beta() {
     }
     let (mf, mr) = (mean(&fix), mean(&rnd));
     let (vf, vr) = (var(&fix, mf), var(&rnd, mr));
-    let t = (mf - mr) / (vf / n as f64 + vr / n as f64).sqrt();
+    let n_f64 = f64::from(u32::try_from(n).expect("sample count fits in u32"));
+    let t = (mf - mr) / (vf / n_f64 + vr / n_f64).sqrt();
     eprintln!("\n==== CT BLINDING VALIDATION (random β, n={n}) ====");
     eprintln!(
         "FIX-key  mean {:.1} ms  std {:.1} ms",

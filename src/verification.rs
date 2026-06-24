@@ -7,7 +7,7 @@
 //! structs mirror `signature_t` / `public_key_t`.
 //!
 //! lvl1-pinned: the basis-change matrix and challenge coefficient are the
-//! order scalars (`U256` at lvl1), and the field element is `Fp1Element`. The
+//! order scalars (`Uint<8>`), and the field element is `Fp1Element`. The
 //! rest of the verify subsystem (`ec::biscalar` basis routines) is pinned the
 //! same way.
 
@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 use crate::gf::fp::BaseField;
 use crate::gf::fp2::Fp2;
 use crate::params::lvl1::Fp1Element;
-use crypto_bigint::U256;
+use crypto_bigint::{U256, Uint};
 use subtle::ConstantTimeEq;
 
 /// lvl1 wire sizes (bytes). `SIG_BYTES = 64 (E_aux_A) + 1 + 1 + 4·16 (matrix)
@@ -68,7 +68,7 @@ pub struct SecretKeyData {
     /// encoded generator and norm.
     pub secret_ideal: crate::quaternion::ideal::LeftIdeal<16>,
     /// Basis-change matrix `mat_BAcan_to_BA0_two`.
-    pub mat_bacan_to_ba0_two: [[U256; 2]; 2],
+    pub mat_bacan_to_ba0_two: [[Uint<8>; 2]; 2],
 }
 
 impl SecretKeyData {
@@ -103,10 +103,10 @@ impl SecretKeyData {
         );
         off += 4 * fb;
 
-        let read_u256 = |o: usize| -> U256 {
-            let mut buf = [0u8; 32];
+        let read_u256 = |o: usize| -> Uint<8> {
+            let mut buf = [0u8; 64];
             buf[..fb].copy_from_slice(&enc[o..o + fb]);
-            U256::from_le_slice(&buf)
+            Uint::<8>::from_le_slice(&buf)
         };
         let mat = [
             [read_u256(off), read_u256(off + fb)],
@@ -193,9 +193,9 @@ pub struct SignatureData {
     /// Length of the short `2^r` response isogeny (`0` if absent).
     pub two_resp_length: u8,
     /// Basis-change matrix `mat_Bchall_can_to_B_chall` (`[[m00,m01],[m10,m11]]`).
-    pub mat: [[U256; 2]; 2],
+    pub mat: [[Uint<8>; 2]; 2],
     /// Challenge coefficient (recomputed and compared during verify).
-    pub chall_coeff: U256,
+    pub chall_coeff: Uint<8>,
     /// Basis hint for the auxiliary curve.
     pub hint_aux: u8,
     /// Basis hint for the challenge curve.
@@ -220,7 +220,7 @@ impl SignatureData {
         out[off + 1] = self.two_resp_length;
         off += 2;
 
-        let write_digits = |out: &mut [u8], o: usize, width: usize, v: &U256| {
+        let write_digits = |out: &mut [u8], o: usize, width: usize, v: &Uint<8>| {
             out[o..o + width].copy_from_slice(&v.to_le_bytes()[..width]);
         };
         write_digits(out, off, MAT_ENTRY_BYTES_LVL1, &self.mat[0][0]);
@@ -271,11 +271,11 @@ impl SignatureData {
         let two_resp_length = enc[off + 1];
         off += 2;
 
-        // decode_digits: read a fixed-width little-endian field into a U256.
-        let read_u256 = |enc: &[u8], o: usize, width: usize| -> U256 {
-            let mut buf = [0u8; 32];
+        // decode_digits: read a fixed-width little-endian field into a Uint<8>.
+        let read_u256 = |enc: &[u8], o: usize, width: usize| -> Uint<8> {
+            let mut buf = [0u8; 64];
             buf[..width].copy_from_slice(&enc[o..o + width]);
-            U256::from_le_slice(&buf)
+            Uint::<8>::from_le_slice(&buf)
         };
 
         let m00 = read_u256(enc, off, MAT_ENTRY_BYTES_LVL1);
@@ -312,22 +312,22 @@ fn fp2_pow2k<F: BaseField>(x: &Fp2<F>, k: u32) -> Fp2<F> {
 }
 
 /// 2-adic discrete log in `μ_{2^e}`: given a primitive `2^e`-th root of unity
-/// `base` and `target = base^x`, return `x mod 2^e` (little-endian `U256`).
+/// `base` and `target = base^x`, return `x mod 2^e` (little-endian `Uint<8>`).
 ///
 /// Pohlig–Hellman over the 2-group: at step `k` the value
 /// `running^(2^(e−1−k))` lies in the order-2 subgroup `{1, −1}`; it is `−1`
 /// exactly when bit `k` of `x` is set. Each set bit is stripped by multiplying
 /// `running` by `base^(−2^k)`. The change-of-basis matrices on `E[2^f]` are
-/// assembled from four such dlogs of pairing values. `e ≤ 256`.
-pub(crate) fn dlog_2f<F: BaseField>(base: &Fp2<F>, target: &Fp2<F>, e: u32) -> U256 {
-    let mut x = U256::ZERO;
+/// assembled from four such dlogs of pairing values. `e ≤ 512`.
+pub(crate) fn dlog_2f<F: BaseField>(base: &Fp2<F>, target: &Fp2<F>, e: u32) -> Uint<8> {
+    let mut x = Uint::<8>::ZERO;
     let inv_base = base.invert().into_option().unwrap_or_else(Fp2::one);
     let mut inv_pow = inv_base; // base^(−2^k), starting at k = 0
     let mut running = *target; // base^(x − partial)
     for k in 0..e {
         // running^(2^(e−1−k)) ∈ {1, −1}; ≠ 1 ⇒ bit k is set.
         if !bool::from(fp2_pow2k(&running, e - 1 - k).is_one()) {
-            x |= U256::ONE.shl_vartime(k);
+            x |= Uint::<8>::ONE.shl_vartime(k);
             running = running.mul(&inv_pow);
         }
         inv_pow = inv_pow.square();
@@ -374,14 +374,14 @@ pub fn change_of_basis_matrix(
     b2: &crate::ec::couple::EcBasis<Fp1Element>,
     curve: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
     f: u32,
-) -> Option<[[U256; 2]; 2]> {
+) -> Option<[[Uint<8>; 2]; 2]> {
     use crate::ec::jacobian::lift_basis;
     let (p2, q2) = lift_basis(b2, curve).ok()?;
     let (p1, q1) = lift_basis(b1, curve).ok()?;
 
     let zeta = weil_jac(f, &p2, &q2, curve);
-    let mask = U256::MAX.wrapping_shr(256 - f); // 2^f − 1
-    let neg_mod = |x: U256| U256::ZERO.wrapping_sub(&x) & mask;
+    let mask = Uint::<8>::MAX.wrapping_shr(512 - f); // 2^f − 1
+    let neg_mod = |x: Uint<8>| Uint::<8>::ZERO.wrapping_sub(&x) & mask;
 
     // Coordinates of R in (b2.P, b2.Q). With this implementation's Weil
     // orientation, e(R, b2.Q) = ζ^(−a) and e(R, b2.P) = ζ^b, so
@@ -548,7 +548,7 @@ pub fn check_canonical_basis_change_matrix(sig: &SignatureData) -> bool {
         // Bound 2^shift undefined for shift < 0 ⇒ no canonical rep exists.
         return false;
     }
-    let bound = U256::ONE.shl_vartime(u32::try_from(shift).expect("shift ≥ 0"));
+    let bound = Uint::<8>::ONE.shl_vartime(u32::try_from(shift).expect("shift ≥ 0"));
     // Valid iff every matrix entry is strictly below the bound.
     sig.mat.iter().flatten().all(|e| e < &bound)
 }
@@ -793,7 +793,7 @@ pub fn hash_to_challenge(
     pk_curve_a: &Fp2<Fp1Element>,
     e_com_a: &Fp2<Fp1Element>,
     message: &[u8],
-) -> U256 {
+) -> Uint<8> {
     use crate::ec::montgomery::MontgomeryCurve;
     use crate::hash::{Shake256, hash_to_challenge_scalar};
     use crate::params::lvl1::Level1;
@@ -820,9 +820,9 @@ pub fn hash_to_challenge(
     // Mask to 122 bits (248 − 126): keep the low 2 bits of the top byte.
     chall[15] &= 0x03;
     // mod 2^SECURITY_BITS (128) is a no-op on these 16 bytes.
-    let mut buf = [0u8; 32];
+    let mut buf = [0u8; 64];
     buf[..16].copy_from_slice(&chall);
-    U256::from_le_slice(&buf)
+    Uint::<8>::from_le_slice(&buf)
 }
 
 /// Top-level SQIsign verification — C `protocols_verify` (`verify.c`). Chains
@@ -971,7 +971,7 @@ pub fn compute_small_chain_isogeny_signature(
 pub fn compute_challenge_codomain_signature(
     sk_curve_a: &Fp2<Fp1Element>,
     sk_canonical_basis: &crate::ec::couple::EcBasis<Fp1Element>,
-    chall_coeff: &U256,
+    chall_coeff: &Uint<8>,
     backtracking: u8,
     e_chall_2_a: &Fp2<Fp1Element>,
     b_chall_2: &crate::ec::couple::EcBasis<Fp1Element>,
@@ -1027,12 +1027,12 @@ mod tests {
         // E0 secret curve, its canonical basis; small challenge, no backtracking.
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
         let basis = ec_basis_e0_2f(248);
-        let c = U256::from_u64(98765);
+        let c = Uint::<8>::from_u64(98765);
         // Learn E_chall via compute_challenge_verify (same chain, E0 basis from
         // the E0 hint branch), then map with E_chall_2 == E_chall (identity isom).
         let sig = SignatureData {
             chall_coeff: c,
-            ..small_sig([[U256::ONE; 2]; 2], 0)
+            ..small_sig([[Uint::<8>::ONE; 2]; 2], 0)
         };
         let e_chall = compute_challenge_verify(&e0, &sig, 0);
         let (e_chall2, b_mapped) =
@@ -1105,22 +1105,22 @@ mod tests {
         assert!(bool::from(sig.e_aux_a.ct_eq(&expected_e_aux)), "E_aux_A");
         assert_eq!(sig.backtracking, 2);
         assert_eq!(sig.two_resp_length, 5);
-        assert_eq!(sig.mat[0][0], U256::from_u8(1));
-        assert_eq!(sig.mat[0][1], U256::from_u8(2));
-        assert_eq!(sig.mat[1][0], U256::from_u8(3));
-        assert_eq!(sig.mat[1][1], U256::from_u8(4));
-        assert_eq!(sig.chall_coeff, U256::from_u16(258));
+        assert_eq!(sig.mat[0][0], Uint::<8>::from_u8(1));
+        assert_eq!(sig.mat[0][1], Uint::<8>::from_u8(2));
+        assert_eq!(sig.mat[1][0], Uint::<8>::from_u8(3));
+        assert_eq!(sig.mat[1][1], Uint::<8>::from_u8(4));
+        assert_eq!(sig.chall_coeff, Uint::<8>::from_u16(258));
         assert_eq!(sig.hint_aux, 0x0b);
         assert_eq!(sig.hint_chall, 0x17);
     }
 
-    fn small_sig(mat: [[U256; 2]; 2], backtracking: u8) -> SignatureData {
+    fn small_sig(mat: [[Uint<8>; 2]; 2], backtracking: u8) -> SignatureData {
         SignatureData {
             e_aux_a: Fp2::<Fp1Element>::zero(),
             backtracking,
             two_resp_length: 0,
             mat,
-            chall_coeff: U256::ZERO,
+            chall_coeff: Uint::<8>::ZERO,
             hint_aux: 0,
             hint_chall: 0,
         }
@@ -1128,16 +1128,18 @@ mod tests {
 
     #[test]
     fn check_canonical_matrix_bounds_entries() {
-        let ones = [[U256::from_u8(1); 2]; 2];
+        let ones = [[Uint::<8>::from_u8(1); 2]; 2];
         // backtracking = 0 ⇒ bound = 2^128; small entries accepted.
         assert!(check_canonical_basis_change_matrix(&small_sig(ones, 0)));
         // An entry equal to the bound (2^128) is rejected (C: bound ≤ entry).
         let mut m = ones;
-        m[1][1] = U256::ONE.shl_vartime(128);
+        m[1][1] = Uint::<8>::ONE.shl_vartime(128);
         assert!(!check_canonical_basis_change_matrix(&small_sig(m, 0)));
         // Just below the bound (2^128 − 1) is accepted.
         let mut m2 = ones;
-        m2[0][1] = U256::ONE.shl_vartime(128).wrapping_sub(&U256::ONE);
+        m2[0][1] = Uint::<8>::ONE
+            .shl_vartime(128)
+            .wrapping_sub(&Uint::<8>::ONE);
         assert!(check_canonical_basis_change_matrix(&small_sig(m2, 0)));
         // backtracking shrinks the bound: backtracking = 128 ⇒ bound = 2^0 = 1,
         // so any non-zero entry is rejected.
@@ -1150,9 +1152,9 @@ mod tests {
         use crate::ec::montgomery::MontgomeryCurve;
         // E0 public curve (A = 0) ⇒ the E0 basis branch; small odd challenge.
         let epk = MontgomeryCurve::<Fp1Element>::e0();
-        let sig = small_sig([[U256::ONE; 2]; 2], 0);
+        let sig = small_sig([[Uint::<8>::ONE; 2]; 2], 0);
         let sig = SignatureData {
-            chall_coeff: U256::from_u64(12345),
+            chall_coeff: Uint::<8>::from_u64(12345),
             ..sig
         };
         // hint_pk is ignored on E0 (the basis comes from the precomputed E0 set).
@@ -1174,7 +1176,10 @@ mod tests {
         // Identity change matrix [[1,0],[0,1]] must leave the (reduced)
         // challenge basis unchanged: R=[1]P+[0]Q=P, S=[0]P+[1]Q=Q,
         // R−S=[1]P+[−1]Q=P−Q.
-        let identity = [[U256::ONE, U256::ZERO], [U256::ZERO, U256::ONE]];
+        let identity = [
+            [Uint::<8>::ONE, Uint::<8>::ZERO],
+            [Uint::<8>::ZERO, Uint::<8>::ONE],
+        ];
         let sig = small_sig(identity, 0); // two_resp_length = 0
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
         let pow = 240usize; // ⇒ chall/aux doublings = 248−240−2 = 6, f = 242
@@ -1212,7 +1217,10 @@ mod tests {
             a24.x_double_n(&base.p_minus_q, 240),
         );
         // mat[0][0] odd ⇒ kernel = P branch.
-        let mat = [[U256::ONE, U256::ZERO], [U256::ZERO, U256::ONE]];
+        let mat = [
+            [Uint::<8>::ONE, Uint::<8>::ZERO],
+            [Uint::<8>::ZERO, Uint::<8>::ONE],
+        ];
         let sig = SignatureData {
             two_resp_length: 2,
             ..small_sig(mat, 0)
@@ -1313,7 +1321,7 @@ mod tests {
             "E_com matters"
         );
         // Output is reduced below 2^122 (top 6 bits of the 128-bit value clear).
-        let mut bytes = [0u8; 32];
+        let mut bytes = [0u8; 64];
         h1.to_le_bytes()
             .iter()
             .enumerate()
@@ -1352,10 +1360,10 @@ mod tests {
             backtracking: 3,
             two_resp_length: 7,
             mat: [
-                [U256::from_u64(0x1234), U256::from_u64(0x5678)],
-                [U256::from_u64(0x9abc), U256::from_u64(0xdef0)],
+                [Uint::<8>::from_u64(0x1234), Uint::<8>::from_u64(0x5678)],
+                [Uint::<8>::from_u64(0x9abc), Uint::<8>::from_u64(0xdef0)],
             ],
-            chall_coeff: U256::from_u64(0x00ab_cdef),
+            chall_coeff: Uint::<8>::from_u64(0x00ab_cdef),
             hint_aux: 0x2a,
             hint_chall: 0x3b,
         };
@@ -1403,7 +1411,7 @@ mod tests {
             let recovered = dlog_2f(&zeta, &t, e);
             assert_eq!(
                 recovered,
-                U256::from_u32(x_known),
+                Uint::<8>::from_u32(x_known),
                 "dlog recovers exponent {x_known}",
             );
         }
@@ -1423,8 +1431,8 @@ mod tests {
         let b2 = ec_basis_e0_2f(f as usize);
         // Apply a known invertible matrix M0 (det 13 odd) to get a basis b1.
         let m0 = [
-            [U256::from_u8(3), U256::from_u8(1)],
-            [U256::from_u8(2), U256::from_u8(5)],
+            [Uint::<8>::from_u8(3), Uint::<8>::from_u8(1)],
+            [Uint::<8>::from_u8(2), Uint::<8>::from_u8(5)],
         ];
         let (b1p, b1q, b1pmq) =
             matrix_application_even_basis(&b2.p, &b2.q, &b2.p_minus_q, &m0, f as usize, &a24)
@@ -1445,7 +1453,7 @@ mod tests {
         let f: usize = 32;
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
         let a24 = e0.a24();
-        let e_diff = (248 - f) as u32;
+        let e_diff = u32::try_from(248 - f).expect("difference fits in u32");
 
         // Canonical challenge basis reduced to order 2^f.
         let (b_can_chall, _h) = ec_curve_to_basis_2f_to_hint(&e0, 248);
@@ -1453,8 +1461,8 @@ mod tests {
 
         // Supplied challenge basis = M_known applied to the canonical basis.
         let m_known = [
-            [U256::from_u8(5), U256::from_u8(2)],
-            [U256::from_u8(3), U256::from_u8(7)],
+            [Uint::<8>::from_u8(5), Uint::<8>::from_u8(2)],
+            [Uint::<8>::from_u8(3), Uint::<8>::from_u8(7)],
         ];
         let (cp, cq, cpmq) = matrix_application_even_basis(
             &b_can_chall_f.p,
@@ -1470,7 +1478,7 @@ mod tests {
         // Auxiliary basis = the reduced canonical basis ⇒ M_aux = identity.
         let b_aux_2 = b_can_chall_f;
 
-        let mut sig = small_sig([[U256::ZERO; 2]; 2], 0);
+        let mut sig = small_sig([[Uint::<8>::ZERO; 2]; 2], 0);
         assert!(compute_and_set_basis_change_matrix(
             &mut sig, &b_aux_2, &b_chall_2, &e0, &e0, f
         ));
@@ -1518,8 +1526,8 @@ mod tests {
         let sk = SecretKeyData::from_bytes_lvl1(&buf).expect("decode SK");
         assert_eq!(sk.curve_a, Fp2::<Fp1Element>::zero(), "E0 curve");
         assert_eq!(sk.hint_pk, 0);
-        assert_eq!(sk.mat_bacan_to_ba0_two[0][0], U256::ONE);
-        assert_eq!(sk.mat_bacan_to_ba0_two[1][1], U256::ONE);
+        assert_eq!(sk.mat_bacan_to_ba0_two[0][0], Uint::<8>::ONE);
+        assert_eq!(sk.mat_bacan_to_ba0_two[1][1], Uint::<8>::ONE);
         // The reconstructed secret ideal (norm 5) must be a valid left O_0-ideal.
         let p16 = crate::params::lvl1::prime().resize::<16>();
         for r in 0..4 {
@@ -1536,7 +1544,7 @@ mod tests {
         }
         assert_eq!(
             sk.secret_ideal.reduced_norm_vartime(),
-            Some(crypto_bigint::Uint::<16>::from_u64(5)),
+            Some(Uint::<16>::from_u64(5)),
             "secret ideal norm = 5",
         );
     }

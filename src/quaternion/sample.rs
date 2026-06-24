@@ -16,8 +16,8 @@ fn sample_int_in_range<R: CryptoRng>(rng: &mut R, bound: i64) -> i64 {
         return 0;
     }
     // Use rejection sampling on u64 to avoid modulo bias.
-    #[allow(clippy::cast_sign_loss)] // bound is non-negative per debug_assert
-    let bound_u = bound as u64;
+    // bound is non-negative per the debug_assert above.
+    let bound_u = u64::try_from(bound).expect("bound is non-negative");
     let span = bound_u.saturating_mul(2).saturating_add(1);
     let limit = u64::MAX - (u64::MAX % span);
     loop {
@@ -25,8 +25,8 @@ fn sample_int_in_range<R: CryptoRng>(rng: &mut R, bound: i64) -> i64 {
         rng.fill_bytes(&mut buf);
         let r = u64::from_le_bytes(buf);
         if r < limit {
-            #[allow(clippy::cast_possible_wrap)] // r % span < 2·bound+1 ≤ i64::MAX
-            let centred = (r % span) as i64 - bound;
+            // r % span < 2·bound+1 ≤ i64::MAX, so the conversion is exact.
+            let centred = i64::try_from(r % span).expect("r % span < 2·bound+1 ≤ i64::MAX") - bound;
             return centred;
         }
     }

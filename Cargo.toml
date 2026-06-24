@@ -92,9 +92,7 @@ cast_precision_loss = "warn"
 cast_possible_truncation = "warn"
 cast_possible_wrap = "warn"
 cast_sign_loss = "warn"
-# Pedantic rustdoc-rendering style lint on nested markdown lists inside the
-# byte-exact-code doc comments; not a code smell. Allowed.
-doc_lazy_continuation = "allow"
+doc_lazy_continuation = "warn"
 mod_module_files = "warn"
 panic = "warn"
 panic_in_result_fn = "warn"

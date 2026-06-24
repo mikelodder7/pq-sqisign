@@ -89,11 +89,56 @@ pub fn alternate_extremal_order_0_lvl3() -> AltExtremalOrder {
     let z0 = Int::<8>::from_i64(0);
     let one = Int::<8>::from_i64(1);
     // distinct limb constants (low-to-high, zero-padded to 8):
-    let d = [0x3e5958f3e7edafcc, 0x4a6df2c588d69763, 0x3c317d27f44b3afe, 0, 0, 0, 0, 0];
-    let v = [0x9f2cac79f3f6d7e6, 0x2536f962c46b4bb1, 0x1e18be93fa259d7f, 0, 0, 0, 0, 0];
-    let w = [0x2a21a3eaea912fb7, 0xa2d3de7326b39cd1, 0x266bc96320a1cecc, 0, 0, 0, 0, 0];
-    let big = [0x843690644aa81e5f, 0xdd152fd850ab8fae, 0x3d794238343617a, 0, 0, 0x680000000000000, 0, 0];
-    let s = [0x843690644aa81e5f, 0xdd152fd850ab8fae, 0x3d794238343617a, 0, 0, 0, 0, 0];
+    let d = [
+        0x3e5958f3e7edafcc,
+        0x4a6df2c588d69763,
+        0x3c317d27f44b3afe,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ];
+    let v = [
+        0x9f2cac79f3f6d7e6,
+        0x2536f962c46b4bb1,
+        0x1e18be93fa259d7f,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ];
+    let w = [
+        0x2a21a3eaea912fb7,
+        0xa2d3de7326b39cd1,
+        0x266bc96320a1cecc,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ];
+    let big = [
+        0x843690644aa81e5f,
+        0xdd152fd850ab8fae,
+        0x3d794238343617a,
+        0,
+        0,
+        0x680000000000000,
+        0,
+        0,
+    ];
+    let s = [
+        0x843690644aa81e5f,
+        0xdd152fd850ab8fae,
+        0x3d794238343617a,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ];
     AltExtremalOrder {
         order_basis: [
             [pos(d), z0, pos(v), z0],
@@ -118,15 +163,126 @@ pub fn alternate_extremal_order_1_lvl3() -> AltExtremalOrder {
     let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
     AltExtremalOrder {
         order_basis: [
-            [pos([0x8dca5bc7b21f0c40, 0xbdddc8b1ca0ac2a2, 0x3cc00a9dc9d5cb7d, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x46e52de3d90f8620, 0xdeeee458e5056151, 0x1e60054ee4eae5be, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-            [Int::<8>::from_i64(0), pos([0xbd0b4e1e9f6f6801, 0x3849b4c6aa125c5e, 0xb10632272d76d6c7, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xa4cf343c41358400, 0x5ac7c207a4146603, 0x6cf01edd084921b, 0x0, 0x0, 0x280000000000000, 0x0, 0x0])],
-            [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x46e52de3d90f8620, 0xdeeee458e5056151, 0x1e60054ee4eae5be, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-            [Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0xa4cf343c41358400, 0x5ac7c207a4146603, 0x6cf01edd084921b, 0x0, 0x0, 0x0, 0x0, 0x0])],
+            [
+                pos([
+                    0x8dca5bc7b21f0c40,
+                    0xbdddc8b1ca0ac2a2,
+                    0x3cc00a9dc9d5cb7d,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+                pos([
+                    0x46e52de3d90f8620,
+                    0xdeeee458e5056151,
+                    0x1e60054ee4eae5be,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                pos([
+                    0xbd0b4e1e9f6f6801,
+                    0x3849b4c6aa125c5e,
+                    0xb10632272d76d6c7,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+                pos([
+                    0xa4cf343c41358400,
+                    0x5ac7c207a4146603,
+                    0x6cf01edd084921b,
+                    0x0,
+                    0x0,
+                    0x280000000000000,
+                    0x0,
+                    0x0,
+                ]),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                pos([
+                    0x46e52de3d90f8620,
+                    0xdeeee458e5056151,
+                    0x1e60054ee4eae5be,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+                Int::<8>::from_i64(0),
+                neg([
+                    0xa4cf343c41358400,
+                    0x5ac7c207a4146603,
+                    0x6cf01edd084921b,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+            ],
         ],
-        order_denom: pos([0x8dca5bc7b21f0c40, 0xbdddc8b1ca0ac2a2, 0x3cc00a9dc9d5cb7d, 0x0, 0x0, 0x0, 0x0, 0x0]),
-        z: Quaternion::<8>::new(Int::<8>::from_i64(0), pos([0xbd0b4e1e9f6f6801, 0x3849b4c6aa125c5e, 0xb10632272d76d6c7, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])),
-        z_denom: pos([0x8dca5bc7b21f0c40, 0xbdddc8b1ca0ac2a2, 0x3cc00a9dc9d5cb7d, 0x0, 0x0, 0x0, 0x0, 0x0]),
-        t: Quaternion::<8>::new(Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)),
+        order_denom: pos([
+            0x8dca5bc7b21f0c40,
+            0xbdddc8b1ca0ac2a2,
+            0x3cc00a9dc9d5cb7d,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+        ]),
+        z: Quaternion::<8>::new(
+            Int::<8>::from_i64(0),
+            pos([
+                0xbd0b4e1e9f6f6801,
+                0x3849b4c6aa125c5e,
+                0xb10632272d76d6c7,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        ),
+        z_denom: pos([
+            0x8dca5bc7b21f0c40,
+            0xbdddc8b1ca0ac2a2,
+            0x3cc00a9dc9d5cb7d,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+        ]),
+        t: Quaternion::<8>::new(
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+            Int::<8>::from_i64(0),
+        ),
         t_denom: pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
         q: 13,
     }
@@ -140,15 +296,126 @@ pub fn alternate_extremal_order_2_lvl3() -> AltExtremalOrder {
     let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
     AltExtremalOrder {
         order_basis: [
-            [pos([0x5357db3873285b40, 0x85cf01f331d8465b, 0x3dab6f6dd8dc32b9, 0x2, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xa9abed9c39942da0, 0xc2e780f998ec232d, 0x1ed5b7b6ec6e195c, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-            [Int::<8>::from_i64(0), neg([0xe28458cc4ddcb7ef, 0xc383dca9b9edc4a7, 0x7663d2bc5a13c3dd, 0x3, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x9489605a925adc07, 0x65fa880f7944475b, 0x78f213f8329ced5a, 0xfffffffffffffffe, 0xffffffffffffffff, 0x207fffffffffffff, 0x0, 0x0])],
-            [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0xa9abed9c39942da0, 0xc2e780f998ec232d, 0x1ed5b7b6ec6e195c, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-            [Int::<8>::from_i64(0), pos([0x11, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xc2e5c6605ca49c07, 0xa3de3b322b1d94d7, 0x1a11feab2fd367a4, 0x0, 0x0, 0x0, 0x0, 0x0])],
+            [
+                pos([
+                    0x5357db3873285b40,
+                    0x85cf01f331d8465b,
+                    0x3dab6f6dd8dc32b9,
+                    0x2,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+                pos([
+                    0xa9abed9c39942da0,
+                    0xc2e780f998ec232d,
+                    0x1ed5b7b6ec6e195c,
+                    0x1,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                neg([
+                    0xe28458cc4ddcb7ef,
+                    0xc383dca9b9edc4a7,
+                    0x7663d2bc5a13c3dd,
+                    0x3,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+                pos([
+                    0x9489605a925adc07,
+                    0x65fa880f7944475b,
+                    0x78f213f8329ced5a,
+                    0xfffffffffffffffe,
+                    0xffffffffffffffff,
+                    0x207fffffffffffff,
+                    0x0,
+                    0x0,
+                ]),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                pos([
+                    0xa9abed9c39942da0,
+                    0xc2e780f998ec232d,
+                    0x1ed5b7b6ec6e195c,
+                    0x1,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                pos([0x11, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+                Int::<8>::from_i64(0),
+                pos([
+                    0xc2e5c6605ca49c07,
+                    0xa3de3b322b1d94d7,
+                    0x1a11feab2fd367a4,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+            ],
         ],
-        order_denom: pos([0x5357db3873285b40, 0x85cf01f331d8465b, 0x3dab6f6dd8dc32b9, 0x2, 0x0, 0x0, 0x0, 0x0]),
-        z: Quaternion::<8>::new(Int::<8>::from_i64(0), neg([0xe28458cc4ddcb7ef, 0xc383dca9b9edc4a7, 0x7663d2bc5a13c3dd, 0x3, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x11, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])),
-        z_denom: pos([0x5357db3873285b40, 0x85cf01f331d8465b, 0x3dab6f6dd8dc32b9, 0x2, 0x0, 0x0, 0x0, 0x0]),
-        t: Quaternion::<8>::new(Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)),
+        order_denom: pos([
+            0x5357db3873285b40,
+            0x85cf01f331d8465b,
+            0x3dab6f6dd8dc32b9,
+            0x2,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+        ]),
+        z: Quaternion::<8>::new(
+            Int::<8>::from_i64(0),
+            neg([
+                0xe28458cc4ddcb7ef,
+                0xc383dca9b9edc4a7,
+                0x7663d2bc5a13c3dd,
+                0x3,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+            pos([0x11, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        ),
+        z_denom: pos([
+            0x5357db3873285b40,
+            0x85cf01f331d8465b,
+            0x3dab6f6dd8dc32b9,
+            0x2,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+        ]),
+        t: Quaternion::<8>::new(
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+            Int::<8>::from_i64(0),
+        ),
         t_denom: pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
         q: 17,
     }
@@ -162,15 +429,126 @@ pub fn alternate_extremal_order_3_lvl3() -> AltExtremalOrder {
     let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
     AltExtremalOrder {
         order_basis: [
-            [pos([0x7c1cd4b8abc3dfda, 0x79cc21da66b24727, 0xa12d9b8d553de3a3, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xbe0e6a5c55e1efed, 0xbce610ed33592393, 0x5096cdc6aa9ef1d1, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-            [Int::<8>::from_i64(0), neg([0x2e5272f1ea6fe8e2, 0xfd0e5fe4c137152a, 0xc6bfa3d07a19736, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xa4216ae48a09a15, 0x2f5e26a7534a3772, 0x745ca36539ebce7c, 0x576a2576a2576a25, 0x2576a2576a2576a2, 0x6576a2576a2576a, 0x0, 0x0])],
-            [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0xbe0e6a5c55e1efed, 0xbce610ed33592393, 0x5096cdc6aa9ef1d1, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-            [Int::<8>::from_i64(0), pos([0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x2c45b03b253350e5, 0x8c73afffaaf10fde, 0x26c7bc0fb3ebfd, 0x0, 0x0, 0x0, 0x0, 0x0])],
+            [
+                pos([
+                    0x7c1cd4b8abc3dfda,
+                    0x79cc21da66b24727,
+                    0xa12d9b8d553de3a3,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+                pos([
+                    0xbe0e6a5c55e1efed,
+                    0xbce610ed33592393,
+                    0x5096cdc6aa9ef1d1,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                neg([
+                    0x2e5272f1ea6fe8e2,
+                    0xfd0e5fe4c137152a,
+                    0xc6bfa3d07a19736,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+                pos([
+                    0xa4216ae48a09a15,
+                    0x2f5e26a7534a3772,
+                    0x745ca36539ebce7c,
+                    0x576a2576a2576a25,
+                    0x2576a2576a2576a2,
+                    0x6576a2576a2576a,
+                    0x0,
+                    0x0,
+                ]),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                pos([
+                    0xbe0e6a5c55e1efed,
+                    0xbce610ed33592393,
+                    0x5096cdc6aa9ef1d1,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                pos([0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+                Int::<8>::from_i64(0),
+                pos([
+                    0x2c45b03b253350e5,
+                    0x8c73afffaaf10fde,
+                    0x26c7bc0fb3ebfd,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+            ],
         ],
-        order_denom: pos([0x7c1cd4b8abc3dfda, 0x79cc21da66b24727, 0xa12d9b8d553de3a3, 0x0, 0x0, 0x0, 0x0, 0x0]),
-        z: Quaternion::<8>::new(Int::<8>::from_i64(0), neg([0x2e5272f1ea6fe8e2, 0xfd0e5fe4c137152a, 0xc6bfa3d07a19736, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])),
-        z_denom: pos([0x7c1cd4b8abc3dfda, 0x79cc21da66b24727, 0xa12d9b8d553de3a3, 0x0, 0x0, 0x0, 0x0, 0x0]),
-        t: Quaternion::<8>::new(Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)),
+        order_denom: pos([
+            0x7c1cd4b8abc3dfda,
+            0x79cc21da66b24727,
+            0xa12d9b8d553de3a3,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+        ]),
+        z: Quaternion::<8>::new(
+            Int::<8>::from_i64(0),
+            neg([
+                0x2e5272f1ea6fe8e2,
+                0xfd0e5fe4c137152a,
+                0xc6bfa3d07a19736,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+            pos([0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        ),
+        z_denom: pos([
+            0x7c1cd4b8abc3dfda,
+            0x79cc21da66b24727,
+            0xa12d9b8d553de3a3,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+        ]),
+        t: Quaternion::<8>::new(
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+            Int::<8>::from_i64(0),
+        ),
         t_denom: pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
         q: 41,
     }
@@ -184,15 +562,126 @@ pub fn alternate_extremal_order_4_lvl3() -> AltExtremalOrder {
     let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
     AltExtremalOrder {
         order_basis: [
-            [pos([0x950c56e76067b000, 0xb9901bfb28e60b3d, 0x29aa227371840eb8, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xca862b73b033d800, 0x5cc80dfd9473059e, 0x14d51139b8c2075c, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-            [Int::<8>::from_i64(0), pos([0xdec96120ef7fffff, 0x2d72e8d7fcb43d80, 0x4bc9cd2aeecc4077, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0xedfb9519122773ba, 0xf0b21a200e80605b, 0xefd6b325a90cb418, 0x8fc7e3f1f8fc7e3e, 0xc7e3f1f8fc7e3f1f, 0x71f8fc7e3f1f8f, 0x0, 0x0])],
-            [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0xca862b73b033d800, 0x5cc80dfd9473059e, 0x14d51139b8c2075c, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-            [Int::<8>::from_i64(0), neg([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x130f681e08a773ba, 0xf78b4ebed966eee3, 0x245c4090fa9ba4d, 0x0, 0x0, 0x0, 0x0, 0x0])],
+            [
+                pos([
+                    0x950c56e76067b000,
+                    0xb9901bfb28e60b3d,
+                    0x29aa227371840eb8,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+                pos([
+                    0xca862b73b033d800,
+                    0x5cc80dfd9473059e,
+                    0x14d51139b8c2075c,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                pos([
+                    0xdec96120ef7fffff,
+                    0x2d72e8d7fcb43d80,
+                    0x4bc9cd2aeecc4077,
+                    0x1,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+                neg([
+                    0xedfb9519122773ba,
+                    0xf0b21a200e80605b,
+                    0xefd6b325a90cb418,
+                    0x8fc7e3f1f8fc7e3e,
+                    0xc7e3f1f8fc7e3f1f,
+                    0x71f8fc7e3f1f8f,
+                    0x0,
+                    0x0,
+                ]),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                pos([
+                    0xca862b73b033d800,
+                    0x5cc80dfd9473059e,
+                    0x14d51139b8c2075c,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                neg([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+                Int::<8>::from_i64(0),
+                neg([
+                    0x130f681e08a773ba,
+                    0xf78b4ebed966eee3,
+                    0x245c4090fa9ba4d,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+            ],
         ],
-        order_denom: pos([0x950c56e76067b000, 0xb9901bfb28e60b3d, 0x29aa227371840eb8, 0x0, 0x0, 0x0, 0x0, 0x0]),
-        z: Quaternion::<8>::new(Int::<8>::from_i64(0), pos([0xdec96120ef7fffff, 0x2d72e8d7fcb43d80, 0x4bc9cd2aeecc4077, 0x1, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])),
-        z_denom: pos([0x950c56e76067b000, 0xb9901bfb28e60b3d, 0x29aa227371840eb8, 0x0, 0x0, 0x0, 0x0, 0x0]),
-        t: Quaternion::<8>::new(Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)),
+        order_denom: pos([
+            0x950c56e76067b000,
+            0xb9901bfb28e60b3d,
+            0x29aa227371840eb8,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+        ]),
+        z: Quaternion::<8>::new(
+            Int::<8>::from_i64(0),
+            pos([
+                0xdec96120ef7fffff,
+                0x2d72e8d7fcb43d80,
+                0x4bc9cd2aeecc4077,
+                0x1,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+            neg([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        ),
+        z_denom: pos([
+            0x950c56e76067b000,
+            0xb9901bfb28e60b3d,
+            0x29aa227371840eb8,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+        ]),
+        t: Quaternion::<8>::new(
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+            Int::<8>::from_i64(0),
+        ),
         t_denom: pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
         q: 73,
     }
@@ -206,15 +695,126 @@ pub fn alternate_extremal_order_5_lvl3() -> AltExtremalOrder {
     let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
     AltExtremalOrder {
         order_basis: [
-            [pos([0x97d3c8dc37a07b26, 0x1df20931d6bd7f2f, 0x6ee725914a3e2918, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0xcbe9e46e1bd03d93, 0xef90498eb5ebf97, 0x377392c8a51f148c, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-            [Int::<8>::from_i64(0), pos([0x6a692b8a9faa4fae, 0x301c7892633a436c, 0xac500e41cb54ec62, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x617e87b7eb6630b3, 0x90c8dcf40fa7027c, 0xb7baaf369e3c7e8b, 0x75eebdd7baf75eeb, 0xd7baf75eebdd7baf, 0x2ebdd7baf75eebd, 0x0, 0x0])],
-            [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0xcbe9e46e1bd03d93, 0xef90498eb5ebf97, 0x377392c8a51f148c, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-            [Int::<8>::from_i64(0), neg([0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x51231b920986b5ab, 0xc0fd4896653b4b2a, 0xf7d20ec06c579e, 0x0, 0x0, 0x0, 0x0, 0x0])],
+            [
+                pos([
+                    0x97d3c8dc37a07b26,
+                    0x1df20931d6bd7f2f,
+                    0x6ee725914a3e2918,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+                pos([
+                    0xcbe9e46e1bd03d93,
+                    0xef90498eb5ebf97,
+                    0x377392c8a51f148c,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                pos([
+                    0x6a692b8a9faa4fae,
+                    0x301c7892633a436c,
+                    0xac500e41cb54ec62,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+                neg([
+                    0x617e87b7eb6630b3,
+                    0x90c8dcf40fa7027c,
+                    0xb7baaf369e3c7e8b,
+                    0x75eebdd7baf75eeb,
+                    0xd7baf75eebdd7baf,
+                    0x2ebdd7baf75eebd,
+                    0x0,
+                    0x0,
+                ]),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                pos([
+                    0xcbe9e46e1bd03d93,
+                    0xef90498eb5ebf97,
+                    0x377392c8a51f148c,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                neg([0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+                Int::<8>::from_i64(0),
+                neg([
+                    0x51231b920986b5ab,
+                    0xc0fd4896653b4b2a,
+                    0xf7d20ec06c579e,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+            ],
         ],
-        order_denom: pos([0x97d3c8dc37a07b26, 0x1df20931d6bd7f2f, 0x6ee725914a3e2918, 0x0, 0x0, 0x0, 0x0, 0x0]),
-        z: Quaternion::<8>::new(Int::<8>::from_i64(0), pos([0x6a692b8a9faa4fae, 0x301c7892633a436c, 0xac500e41cb54ec62, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])),
-        z_denom: pos([0x97d3c8dc37a07b26, 0x1df20931d6bd7f2f, 0x6ee725914a3e2918, 0x0, 0x0, 0x0, 0x0, 0x0]),
-        t: Quaternion::<8>::new(Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)),
+        order_denom: pos([
+            0x97d3c8dc37a07b26,
+            0x1df20931d6bd7f2f,
+            0x6ee725914a3e2918,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+        ]),
+        z: Quaternion::<8>::new(
+            Int::<8>::from_i64(0),
+            pos([
+                0x6a692b8a9faa4fae,
+                0x301c7892633a436c,
+                0xac500e41cb54ec62,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+            neg([0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        ),
+        z_denom: pos([
+            0x97d3c8dc37a07b26,
+            0x1df20931d6bd7f2f,
+            0x6ee725914a3e2918,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+        ]),
+        t: Quaternion::<8>::new(
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+            Int::<8>::from_i64(0),
+        ),
         t_denom: pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
         q: 89,
     }
@@ -228,15 +828,126 @@ pub fn alternate_extremal_order_6_lvl3() -> AltExtremalOrder {
     let neg = |l: [u64; 8]| (*Uint::<8>::from_words(l).as_int()).wrapping_neg();
     AltExtremalOrder {
         order_basis: [
-            [pos([0xf8744b4c6df0a194, 0x84f211bb362ab43e, 0xe5017d4261a2c623, 0x30, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), pos([0x7c3a25a636f850ca, 0xc27908dd9b155a1f, 0x7280bea130d16311, 0x18, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-            [Int::<8>::from_i64(0), pos([0x2154245e63ae83f7, 0x1b2d8f96544b883c, 0x118e7bdd8d73cc0c, 0x1df, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0xce46bd84489cbd79, 0x3c5a642ab1949344, 0x4dcb6e1f96f5db04, 0xffffffffffffff6e, 0xffffffffffffffff, 0x207fffffffffffff, 0x0, 0x0])],
-            [Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x7c3a25a636f850ca, 0xc27908dd9b155a1f, 0x7280bea130d16311, 0x18, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)],
-            [Int::<8>::from_i64(0), neg([0x61, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x71a805773fdaa1c9, 0x2a5decf24269f4d3, 0x782c47e56e4141b6, 0x2, 0x0, 0x0, 0x0, 0x0])],
+            [
+                pos([
+                    0xf8744b4c6df0a194,
+                    0x84f211bb362ab43e,
+                    0xe5017d4261a2c623,
+                    0x30,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+                pos([
+                    0x7c3a25a636f850ca,
+                    0xc27908dd9b155a1f,
+                    0x7280bea130d16311,
+                    0x18,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                pos([
+                    0x2154245e63ae83f7,
+                    0x1b2d8f96544b883c,
+                    0x118e7bdd8d73cc0c,
+                    0x1df,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+                neg([
+                    0xce46bd84489cbd79,
+                    0x3c5a642ab1949344,
+                    0x4dcb6e1f96f5db04,
+                    0xffffffffffffff6e,
+                    0xffffffffffffffff,
+                    0x207fffffffffffff,
+                    0x0,
+                    0x0,
+                ]),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                Int::<8>::from_i64(0),
+                pos([
+                    0x7c3a25a636f850ca,
+                    0xc27908dd9b155a1f,
+                    0x7280bea130d16311,
+                    0x18,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+                Int::<8>::from_i64(0),
+            ],
+            [
+                Int::<8>::from_i64(0),
+                neg([0x61, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+                Int::<8>::from_i64(0),
+                neg([
+                    0x71a805773fdaa1c9,
+                    0x2a5decf24269f4d3,
+                    0x782c47e56e4141b6,
+                    0x2,
+                    0x0,
+                    0x0,
+                    0x0,
+                    0x0,
+                ]),
+            ],
         ],
-        order_denom: pos([0xf8744b4c6df0a194, 0x84f211bb362ab43e, 0xe5017d4261a2c623, 0x30, 0x0, 0x0, 0x0, 0x0]),
-        z: Quaternion::<8>::new(Int::<8>::from_i64(0), pos([0x2154245e63ae83f7, 0x1b2d8f96544b883c, 0x118e7bdd8d73cc0c, 0x1df, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0), neg([0x61, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0])),
-        z_denom: pos([0xf8744b4c6df0a194, 0x84f211bb362ab43e, 0xe5017d4261a2c623, 0x30, 0x0, 0x0, 0x0, 0x0]),
-        t: Quaternion::<8>::new(Int::<8>::from_i64(0), Int::<8>::from_i64(0), pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]), Int::<8>::from_i64(0)),
+        order_denom: pos([
+            0xf8744b4c6df0a194,
+            0x84f211bb362ab43e,
+            0xe5017d4261a2c623,
+            0x30,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+        ]),
+        z: Quaternion::<8>::new(
+            Int::<8>::from_i64(0),
+            pos([
+                0x2154245e63ae83f7,
+                0x1b2d8f96544b883c,
+                0x118e7bdd8d73cc0c,
+                0x1df,
+                0x0,
+                0x0,
+                0x0,
+                0x0,
+            ]),
+            Int::<8>::from_i64(0),
+            neg([0x61, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+        ),
+        z_denom: pos([
+            0xf8744b4c6df0a194,
+            0x84f211bb362ab43e,
+            0xe5017d4261a2c623,
+            0x30,
+            0x0,
+            0x0,
+            0x0,
+            0x0,
+        ]),
+        t: Quaternion::<8>::new(
+            Int::<8>::from_i64(0),
+            Int::<8>::from_i64(0),
+            pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
+            Int::<8>::from_i64(0),
+        ),
         t_denom: pos([0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0]),
         q: 97,
     }
@@ -1041,6 +1752,8 @@ fn widen_int<const A: usize, const B: usize>(x: &Int<A>) -> Int<B> {
 
 /// Determinant of the 3×3 minor of `m` obtained by deleting row `skip_r` and
 /// column `skip_c` (Sarrus' rule, wrapping arithmetic).
+// Builds the 3×3 minor by skipping row skip_r / col skip_c into compacted
+// output indices ri/ci; the skip-and-compact index mapping is inherent.
 #[allow(clippy::needless_range_loop)]
 fn minor3_det<const L: usize>(m: &[[Int<L>; 4]; 4], skip_r: usize, skip_c: usize) -> Int<L> {
     let mut a = [[Int::<L>::from_i64(0); 3]; 3];
@@ -1071,6 +1784,8 @@ fn minor3_det<const L: usize>(m: &[[Int<L>; 4]; 4], skip_r: usize, skip_c: usize
 /// Adjugate matrix and determinant of a 4×4 integer matrix: returns
 /// `(adj, det)` with the invariant `adj · m = det · I`. `adj[i][j] =
 /// (−1)^(i+j) · minor3_det(m, j, i)` (cofactor transpose).
+// Adjugate is the cofactor transpose adj[i][j] = ±minor3_det(m, j, i) and det
+// is a Laplace expansion over column c; the transposed/index access is inherent.
 #[allow(clippy::needless_range_loop)]
 pub(crate) fn adjugate_with_det<const L: usize>(
     m: &[[Int<L>; 4]; 4],
@@ -1141,16 +1856,15 @@ pub fn lattice_coords_of<const L: usize>(
 
 /// Coordinates of `(x / x_denom)` in an alternate extremal order's basis,
 /// widened to `Int<16>` for the solve. `None` if `x ∉ order`.
-#[allow(dead_code, clippy::needless_range_loop)]
 pub fn alt_order_coords_of(
     order: &AltExtremalOrder,
     x: &Quaternion<8>,
     x_denom: &Int<8>,
 ) -> Option<[Int<16>; 4]> {
     let mut basis = [[Int::<16>::from_i64(0); 4]; 4];
-    for i in 0..4 {
-        for j in 0..4 {
-            basis[i][j] = widen_int::<8, 16>(&order.order_basis[i][j]);
+    for (brow, obrow) in basis.iter_mut().zip(&order.order_basis) {
+        for (bcell, ocell) in brow.iter_mut().zip(obrow) {
+            *bcell = widen_int::<8, 16>(ocell);
         }
     }
     let lat_denom = widen_int::<8, 16>(&order.order_denom);
@@ -1288,11 +2002,11 @@ mod tests {
         let (adj, det) = adjugate_with_det(&m);
         assert_eq!(det, Int::<8>::from_i64(74), "det must be 74");
         // (adj·m)[i][j] = det·δ_ij
-        for i in 0..4 {
-            for j in 0..4 {
+        for (i, adj_row) in adj.iter().enumerate() {
+            for (j, _) in m.iter().enumerate() {
                 let mut s = Int::<8>::from_i64(0);
                 for k in 0..4 {
-                    s = s.wrapping_add(&adj[i][k].wrapping_mul(&m[k][j]));
+                    s = s.wrapping_add(&adj_row[k].wrapping_mul(&m[k][j]));
                 }
                 let want = if i == j { det } else { Int::<8>::from_i64(0) };
                 assert_eq!(s, want, "adj·m must be det·I at ({i},{j})");
@@ -1327,9 +2041,9 @@ mod tests {
         for (k, o) in orders.iter().enumerate() {
             // Widen the order basis once for the round-trip check.
             let mut wbasis = [[Int::<16>::from_i64(0); 4]; 4];
-            for i in 0..4 {
-                for j in 0..4 {
-                    wbasis[i][j] = widen_int::<8, 16>(&o.order_basis[i][j]);
+            for (i, row) in wbasis.iter_mut().enumerate() {
+                for (j, entry) in row.iter_mut().enumerate() {
+                    *entry = widen_int::<8, 16>(&o.order_basis[i][j]);
                 }
             }
             let wdenom = widen_int::<8, 16>(&o.order_denom);

@@ -102,7 +102,9 @@ fn cswap_points<F: BaseField>(a: &mut MontgomeryPoint<F>, b: &mut MontgomeryPoin
 /// Returns `None` if a differential-addition formula hits a degenerate
 /// (zero-coordinate) input — the same fail-closed behaviour as the C ref's
 /// `return 0`.
-#[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+// Montgomery biscalar ladder: index i drives the constant-time bit recoding
+// into r[2i]/r[2i+1] and the reverse ladder pass; mirrors the C ladder schedule.
+#[allow(clippy::needless_range_loop)]
 pub(crate) fn xdblmul<F: BaseField>(
     p: &MontgomeryPoint<F>,
     k: &[u8],
@@ -235,7 +237,6 @@ pub(crate) fn xdblmul<F: BaseField>(
 /// Mirrors the C reference `ec_biscalar_mul`, including the `kbits == 1`
 /// 2-torsion special case (where `P − Q = (0 : 1)` breaks differential
 /// addition). Returns `None` on a degenerate basis or a failed ladder.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn ec_biscalar_mul<F: BaseField>(
     scalar_p: &[u8],
     scalar_q: &[u8],

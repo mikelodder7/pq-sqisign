@@ -48,7 +48,6 @@ pub fn protocols_sign<R: CryptoRng>(
         SignatureData, compute_and_set_basis_change_matrix, compute_challenge_codomain_signature,
         ec_dbl_iter_basis, hash_to_challenge,
     };
-    use crypto_bigint::U256;
 
     const TEP: usize = 248;
     const HD: u32 = 2;
@@ -192,7 +191,7 @@ pub fn protocols_sign<R: CryptoRng>(
             e_aux_a: e_aux2.a,
             backtracking: u8::try_from(backtracking).ok()?,
             two_resp_length: u8::try_from(two_resp).ok()?,
-            mat: [[U256::ZERO; 2]; 2],
+            mat: [[crypto_bigint::Uint::<8>::ZERO; 2]; 2],
             chall_coeff,
             hint_aux: 0,
             hint_chall: 0,
