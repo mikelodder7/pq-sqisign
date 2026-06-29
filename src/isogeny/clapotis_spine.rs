@@ -604,6 +604,23 @@ pub(crate) fn commit<P: FixedDegreeLevel, R: CryptoRng>(
     max_trials: usize,
     rng: &mut R,
 ) -> Option<CurveBasisIdeal<P>> {
+    // Per-level sampler/working widths: lvl1 keeps 64/64 (byte-identical path);
+    // lvl3's 2^768 norms + det blowups need 96/96. RNG draw is value-based, not
+    // width-based, so widening lvl3 here does not perturb lvl1 byte-exactness.
+    match P::LEVEL {
+        1 => commit_impl::<P, 64, 64, R>(witnesses, sample_bound, max_trials, rng),
+        3 => commit_impl::<P, 96, 96, R>(witnesses, sample_bound, max_trials, rng),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "kgen")]
+fn commit_impl<P: FixedDegreeLevel, const SL: usize, const WL: usize, R: CryptoRng>(
+    witnesses: &[Uint<QL>],
+    sample_bound: i64,
+    max_trials: usize,
+    rng: &mut R,
+) -> Option<CurveBasisIdeal<P>> {
     use crate::quaternion::lattice::narrow_int_lattice;
     use crate::quaternion::lll::quat_lideal_prime_norm_reduced_equivalent;
     use crate::quaternion::o0_mul::{c_ideal_to_left_ideal, ideal_basis_o0_to_standard_col};
@@ -617,10 +634,7 @@ pub(crate) fn commit<P: FixedDegreeLevel, R: CryptoRng>(
     // WL=64 (4096 bits) has the headroom (verified by left-closure of the
     // reduced ideal — `reduced_norm_vartime` itself false-negatives at this
     // scale because its own det_4x4 overflows, so it is NOT a validity oracle).
-    // TODO(lvl3): revisit SL/WL for level-3 real-scale norms and reductions.
-    const SL: usize = 64;
-    const WL: usize = 64;
-    // TODO(lvl3): expose com_degree/sec_degree through the level adapter.
+    // SL/WL are now per-level const-generic params (lvl1: 64/64, lvl3: 96/96).
     let com_sl = match P::LEVEL {
         1 => crate::params::lvl1::com_degree().resize::<SL>(),
         3 => crate::params::lvl3::com_degree().resize::<SL>(),
