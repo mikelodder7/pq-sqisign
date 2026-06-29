@@ -14,7 +14,7 @@
 use crate::error::{Error, Result};
 use crate::gf::fp::BaseField;
 use crate::gf::fp2::Fp2;
-use crate::params::lvl1::Fp1Element;
+use crate::params::lvl1::{Fp1Element, Level1};
 use crypto_bigint::{U256, Uint};
 use subtle::ConstantTimeEq;
 
@@ -339,12 +339,12 @@ pub(crate) fn dlog_2f<F: BaseField>(base: &Fp2<F>, target: &Fp2<F>, e: u32) -> U
 /// `add_components` to recover `x(R + S)` (= `(u − v)/w`), which the cubical
 /// Weil routine requires.
 #[cfg(feature = "alloc")]
-fn weil_jac(
+fn weil_jac<F: BaseField>(
     f: u32,
-    r: &crate::ec::jacobian::JacobianPoint<Fp1Element>,
-    s: &crate::ec::jacobian::JacobianPoint<Fp1Element>,
-    curve: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
-) -> Fp2<Fp1Element> {
+    r: &crate::ec::jacobian::JacobianPoint<F>,
+    s: &crate::ec::jacobian::JacobianPoint<F>,
+    curve: &crate::ec::montgomery::MontgomeryCurve<F>,
+) -> Fp2<F> {
     use crate::ec::montgomery::MontgomeryPoint;
     let (u, v, w) = r.add_components(s, &curve.a);
     let rs_plus = MontgomeryPoint::new(u.sub(&v), w); // x(R + S) = (u − v)/w
@@ -367,12 +367,13 @@ fn weil_jac(
 /// Computed from Weil pairings (the matrix is pairing-independent, so this
 /// matches C's Tate-based result): with `ζ = e(b2.P, b2.Q)`, for each target
 /// `R`, `e(R, b2.Q) = ζ^a` and `e(R, b2.P) = ζ^(−b)`. Returns `None` if a basis
-/// point fails to lift. lvl1-pinned.
+/// point fails to lift. Field-generic over the security level via
+/// [`LevelConstants`]; the pairing math is identical at every level.
 #[cfg(feature = "alloc")]
-pub fn change_of_basis_matrix(
-    b1: &crate::ec::couple::EcBasis<Fp1Element>,
-    b2: &crate::ec::couple::EcBasis<Fp1Element>,
-    curve: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
+pub fn change_of_basis_matrix<P: crate::level_constants::LevelConstants>(
+    b1: &crate::ec::couple::EcBasis<P::Field>,
+    b2: &crate::ec::couple::EcBasis<P::Field>,
+    curve: &crate::ec::montgomery::MontgomeryCurve<P::Field>,
     f: u32,
 ) -> Option<[[Uint<8>; 2]; 2]> {
     use crate::ec::jacobian::lift_basis;
@@ -386,7 +387,7 @@ pub fn change_of_basis_matrix(
     // Coordinates of R in (b2.P, b2.Q). With this implementation's Weil
     // orientation, e(R, b2.Q) = ζ^(−a) and e(R, b2.P) = ζ^b, so
     // a = −dlog(e(R,Q)) and b = dlog(e(R,P)) (mod 2^f).
-    let coords = |r: &crate::ec::jacobian::JacobianPoint<Fp1Element>| {
+    let coords = |r: &crate::ec::jacobian::JacobianPoint<P::Field>| {
         let a = neg_mod(dlog_2f(&zeta, &weil_jac(f, r, &q2, curve), f));
         let b = dlog_2f(&zeta, &weil_jac(f, r, &p2, curve), f);
         (a, b)
@@ -435,8 +436,10 @@ pub fn compute_and_set_basis_change_matrix(
     };
 
     // Canonical full-order bases + their hints.
-    let (b_can_chall, hint_chall) = ec_curve_to_basis_2f_to_hint(e_chall, TORSION_EVEN_POWER);
-    let (b_aux_2_can, hint_aux) = ec_curve_to_basis_2f_to_hint(e_aux_2, TORSION_EVEN_POWER);
+    let (b_can_chall, hint_chall) =
+        ec_curve_to_basis_2f_to_hint::<Level1>(e_chall, TORSION_EVEN_POWER);
+    let (b_aux_2_can, hint_aux) =
+        ec_curve_to_basis_2f_to_hint::<Level1>(e_aux_2, TORSION_EVEN_POWER);
     // Reduce canonical bases to order 2^f to match the supplied bases.
     let b_can_chall_f = ec_dbl_iter_basis(&b_can_chall, e_diff, e_chall);
     let b_aux_2_can_f = ec_dbl_iter_basis(&b_aux_2_can, e_diff, e_aux_2);
@@ -448,7 +451,7 @@ pub fn compute_and_set_basis_change_matrix(
     // "b_aux_2_can in terms of b_aux_2" = change_of_basis_matrix(b_aux_2_can, b_aux_2).
     // (The earlier (b_aux_2, b_aux_2_can) order gave A, producing a non-isotropic
     // verify kernel even though the sign's actual kernel is isotropic.)
-    let m_aux = match change_of_basis_matrix(&b_aux_2_can_f, b_aux_2, e_aux_2, f32) {
+    let m_aux = match change_of_basis_matrix::<Level1>(&b_aux_2_can_f, b_aux_2, e_aux_2, f32) {
         Some(m) => m,
         None => return false,
     };
@@ -468,10 +471,11 @@ pub fn compute_and_set_basis_change_matrix(
     let b_chall_2_adj = EcBasis::new(cp, cq, cpmq);
 
     // M_chall = canonical challenge basis → adjusted supplied basis.
-    let m_chall = match change_of_basis_matrix(&b_chall_2_adj, &b_can_chall_f, e_chall, f32) {
-        Some(m) => m,
-        None => return false,
-    };
+    let m_chall =
+        match change_of_basis_matrix::<Level1>(&b_chall_2_adj, &b_can_chall_f, e_chall, f32) {
+            Some(m) => m,
+            None => return false,
+        };
 
     sig.mat = m_chall;
     sig.hint_chall = hint_chall;
@@ -540,8 +544,7 @@ pub fn check_canonical_basis_change_matrix(sig: &SignatureData) -> bool {
     use crate::isogeny::theta_chain::HD_EXTRA_TORSION;
     use crate::params::Params;
     // SQIsign_response_length + HD_extra_torsion − backtracking (lvl1: 126 + 2).
-    let response_length =
-        i32::try_from(crate::params::lvl1::Level1::RESPONSE_BITS).expect("RESPONSE_BITS fits i32");
+    let response_length = i32::try_from(Level1::RESPONSE_BITS).expect("RESPONSE_BITS fits i32");
     let extra = i32::try_from(HD_EXTRA_TORSION).expect("HD_EXTRA_TORSION fits i32");
     let shift = response_length + extra - i32::from(sig.backtracking);
     if shift < 0 {
@@ -570,7 +573,7 @@ pub fn compute_challenge_verify(
     const TORSION_EVEN_POWER: usize = 248;
     let length = TORSION_EVEN_POWER - usize::from(sig.backtracking);
     // Canonical basis of E_pk[2^f] from the public-key hint.
-    let bas = ec_curve_to_basis_2f_from_hint(epk, TORSION_EVEN_POWER, hint_pk);
+    let bas = ec_curve_to_basis_2f_from_hint::<Level1>(epk, TORSION_EVEN_POWER, hint_pk);
     // kernel = P + [chall_coeff]·Q on E_pk.
     let a24 = epk.a24();
     let kernel = MontgomeryPoint::ladder3pt(
@@ -634,7 +637,8 @@ pub fn challenge_and_aux_basis_verify(
 
     // Challenge basis: from-hint at full order, doubled down to order
     // 2^(pow_dim2_deg_resp + HD_extra + two_resp).
-    let b_chall = ec_curve_to_basis_2f_from_hint(e_chall, TORSION_EVEN_POWER, sig.hint_chall);
+    let b_chall =
+        ec_curve_to_basis_2f_from_hint::<Level1>(e_chall, TORSION_EVEN_POWER, sig.hint_chall);
     let chall_dbl = TORSION_EVEN_POWER
         .checked_sub(pow_dim2_deg_resp)?
         .checked_sub(HD_EXTRA)?
@@ -642,7 +646,7 @@ pub fn challenge_and_aux_basis_verify(
     let b_chall = ec_dbl_iter_basis(&b_chall, u32::try_from(chall_dbl).ok()?, e_chall);
 
     // Auxiliary basis: from-hint, doubled to order 2^(pow_dim2_deg_resp + HD_extra).
-    let b_aux = ec_curve_to_basis_2f_from_hint(e_aux, TORSION_EVEN_POWER, sig.hint_aux);
+    let b_aux = ec_curve_to_basis_2f_from_hint::<Level1>(e_aux, TORSION_EVEN_POWER, sig.hint_aux);
     let aux_dbl = TORSION_EVEN_POWER
         .checked_sub(pow_dim2_deg_resp)?
         .checked_sub(HD_EXTRA)?;
@@ -1026,7 +1030,7 @@ mod tests {
         use crate::ec::montgomery::MontgomeryCurve;
         // E0 secret curve, its canonical basis; small challenge, no backtracking.
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
-        let basis = ec_basis_e0_2f(248);
+        let basis = ec_basis_e0_2f::<Level1>(248);
         let c = Uint::<8>::from_u64(98765);
         // Learn E_chall via compute_challenge_verify (same chain, E0 basis from
         // the E0 hint branch), then map with E_chall_2 == E_chall (identity isom).
@@ -1188,7 +1192,7 @@ mod tests {
 
         // Independent expected reduced basis: E0 basis doubled 6 times.
         let a24 = e0.to_a24();
-        let exp = ec_basis_e0_2f(248);
+        let exp = ec_basis_e0_2f::<Level1>(248);
         let exp_p = a24.x_double_n(&exp.p, 6);
         let exp_q = a24.x_double_n(&exp.q, 6);
         let exp_pmq = a24.x_double_n(&exp.p_minus_q, 6);
@@ -1210,7 +1214,7 @@ mod tests {
         // order = 2^(HD_extra2 + pow4 + two_resp2) = 2^8).
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
         let a24 = e0.to_a24();
-        let base = ec_basis_e0_2f(248);
+        let base = ec_basis_e0_2f::<Level1>(248);
         let b8 = crate::ec::couple::EcBasis::new(
             a24.x_double_n(&base.p, 240),
             a24.x_double_n(&base.q, 240),
@@ -1251,7 +1255,7 @@ mod tests {
         use crate::ec::montgomery::MontgomeryCurve;
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
         let a24 = e0.to_a24();
-        let base = ec_basis_e0_2f(248);
+        let base = ec_basis_e0_2f::<Level1>(248);
         // Order-4 basis (doubled 246 ⇒ order 2^2): pow==0 ⇒ E_com = E_chall = E0.
         let b4 = EcBasis::new(
             a24.x_double_n(&base.p, 246),
@@ -1284,7 +1288,7 @@ mod tests {
         // without panicking on the empty eval-point list.
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
         let a24 = e0.to_a24();
-        let base = ec_basis_e0_2f(248);
+        let base = ec_basis_e0_2f::<Level1>(248);
         let b6 = EcBasis::new(
             a24.x_double_n(&base.p, 242),
             a24.x_double_n(&base.q, 242),
@@ -1401,7 +1405,7 @@ mod tests {
         // A primitive 2^e root of unity from the Weil pairing of the E0 basis.
         let e: u32 = 24;
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
-        let b = ec_basis_e0_2f(e as usize);
+        let b = ec_basis_e0_2f::<Level1>(e as usize);
         let pq = b.p.x_add(&b.q, &b.p_minus_q); // x(P + Q)
         let zeta = weil(e, &b.p, &b.q, &pq, &e0);
         assert!(!bool::from(zeta.is_one()), "pairing is a non-trivial root");
@@ -1428,7 +1432,7 @@ mod tests {
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
         let a24 = e0.a24();
         // Canonical order-2^f basis b2 on E0.
-        let b2 = ec_basis_e0_2f(f as usize);
+        let b2 = ec_basis_e0_2f::<Level1>(f as usize);
         // Apply a known invertible matrix M0 (det 13 odd) to get a basis b1.
         let m0 = [
             [Uint::<8>::from_u8(3), Uint::<8>::from_u8(1)],
@@ -1439,7 +1443,7 @@ mod tests {
                 .expect("apply M0");
         let b1 = EcBasis::new(b1p, b1q, b1pmq);
         // change_of_basis must recover M0 (it inverts matrix_application).
-        let m = change_of_basis_matrix(&b1, &b2, &e0, f).expect("change of basis");
+        let m = change_of_basis_matrix::<Level1>(&b1, &b2, &e0, f).expect("change of basis");
         assert_eq!(m, m0, "change_of_basis_matrix recovers the applied matrix");
     }
 
@@ -1456,7 +1460,7 @@ mod tests {
         let e_diff = u32::try_from(248 - f).expect("difference fits in u32");
 
         // Canonical challenge basis reduced to order 2^f.
-        let (b_can_chall, _h) = ec_curve_to_basis_2f_to_hint(&e0, 248);
+        let (b_can_chall, _h) = ec_curve_to_basis_2f_to_hint::<Level1>(&e0, 248);
         let b_can_chall_f = ec_dbl_iter_basis(&b_can_chall, e_diff, &e0);
 
         // Supplied challenge basis = M_known applied to the canonical basis.

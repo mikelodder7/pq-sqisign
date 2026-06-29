@@ -17,16 +17,206 @@
 use crate::ec::couple::ThetaKernelCouplePoints;
 use crate::ec::couple::{CoupleCurve, CoupleJacobianPoint, CoupleMontgomeryPoint, EcBasis};
 use crate::ec::jacobian::lift_basis;
-use crate::ec::montgomery::MontgomeryCurve;
-use crate::isogeny::endomorphism::{basis_e0_lvl1, endomorphism_application_o0_coords};
+use crate::ec::montgomery::{MontgomeryCurve, MontgomeryPoint};
+use crate::gf::fp2::Fp2;
+use crate::isogeny::endomorphism::endomorphism_application_o0_coords;
 use crate::isogeny::theta_chain::theta_chain_compute_and_eval;
-use crate::params::lvl1::Fp1Element;
+use crate::level_constants::{EvenBasis, LevelConstants};
+use crate::params::lvl1::Level1;
+use crate::params::lvl3::Level3;
+use crate::quaternion::algebra::Quaternion;
 use crypto_bigint::{Int, Uint};
 use rand_core::CryptoRng;
 
 /// Quaternion-side precision for `RepresentInteger` at level 1
 /// (`64·LIMBS ≥ 3·bits(p)+2 = 755` ⇒ `LIMBS ≥ 12`).
+// TODO(lvl3): widen QL for ~2^768 norms / ~3·bits(p)+2 at level 3.
 const QL: usize = 12;
+
+pub(crate) trait FixedDegreeLevel: LevelConstants {
+    fn endomorphism_application_o0_coords<const LIMBS: usize>(
+        p: &MontgomeryPoint<Self::Field>,
+        q: &MontgomeryPoint<Self::Field>,
+        pmq: &MontgomeryPoint<Self::Field>,
+        o0_coords: &[Int<LIMBS>; 4],
+        f: usize,
+        a24: &Fp2<Self::Field>,
+    ) -> Option<EvenBasis<Self::Field>>;
+
+    // Mirrors the wrapped free function's allow: this mathematical signature is fixed.
+    #[allow(clippy::too_many_arguments)]
+    fn endomorphism_application_even_basis_indexed(
+        p: &MontgomeryPoint<Self::Field>,
+        q: &MontgomeryPoint<Self::Field>,
+        pmq: &MontgomeryPoint<Self::Field>,
+        index_alternate_curve: usize,
+        theta: &Quaternion<8>,
+        theta_denom: &Int<8>,
+        f: usize,
+        a24: &Fp2<Self::Field>,
+    ) -> Option<EvenBasis<Self::Field>>;
+
+    // Mirrors the wrapped free function's allow: this mathematical signature is fixed.
+    #[allow(clippy::too_many_arguments)]
+    fn endomorphism_application_rational_even_basis<const LIMBS: usize>(
+        p: &MontgomeryPoint<Self::Field>,
+        q: &MontgomeryPoint<Self::Field>,
+        pmq: &MontgomeryPoint<Self::Field>,
+        num: &Quaternion<LIMBS>,
+        denom: &Uint<LIMBS>,
+        d: &Uint<LIMBS>,
+        f: usize,
+        a24: &Fp2<Self::Field>,
+    ) -> Option<EvenBasis<Self::Field>>;
+
+    fn ec_curve_to_basis_2f_to_hint(
+        curve: &MontgomeryCurve<Self::Field>,
+        f: usize,
+    ) -> Option<(EcBasis<Self::Field>, u8)>;
+
+    fn change_of_basis_matrix(
+        b1: &EcBasis<Self::Field>,
+        b2: &EcBasis<Self::Field>,
+        curve: &MontgomeryCurve<Self::Field>,
+        f: u32,
+    ) -> Option<[[Uint<8>; 2]; 2]>;
+}
+
+impl FixedDegreeLevel for Level1 {
+    fn endomorphism_application_o0_coords<const LIMBS: usize>(
+        p: &MontgomeryPoint<Self::Field>,
+        q: &MontgomeryPoint<Self::Field>,
+        pmq: &MontgomeryPoint<Self::Field>,
+        o0_coords: &[Int<LIMBS>; 4],
+        f: usize,
+        a24: &Fp2<Self::Field>,
+    ) -> Option<EvenBasis<Self::Field>> {
+        endomorphism_application_o0_coords::<Self, LIMBS>(p, q, pmq, o0_coords, f, a24)
+    }
+
+    fn endomorphism_application_even_basis_indexed(
+        p: &MontgomeryPoint<Self::Field>,
+        q: &MontgomeryPoint<Self::Field>,
+        pmq: &MontgomeryPoint<Self::Field>,
+        index_alternate_curve: usize,
+        theta: &Quaternion<8>,
+        theta_denom: &Int<8>,
+        f: usize,
+        a24: &Fp2<Self::Field>,
+    ) -> Option<EvenBasis<Self::Field>> {
+        crate::isogeny::endomorphism::endomorphism_application_even_basis_indexed::<Self>(
+            p,
+            q,
+            pmq,
+            index_alternate_curve,
+            theta,
+            theta_denom,
+            f,
+            a24,
+        )
+    }
+
+    fn endomorphism_application_rational_even_basis<const LIMBS: usize>(
+        p: &MontgomeryPoint<Self::Field>,
+        q: &MontgomeryPoint<Self::Field>,
+        pmq: &MontgomeryPoint<Self::Field>,
+        num: &Quaternion<LIMBS>,
+        denom: &Uint<LIMBS>,
+        d: &Uint<LIMBS>,
+        f: usize,
+        a24: &Fp2<Self::Field>,
+    ) -> Option<EvenBasis<Self::Field>> {
+        crate::isogeny::endomorphism::endomorphism_application_rational_even_basis::<Self, LIMBS>(
+            p, q, pmq, num, denom, d, f, a24,
+        )
+    }
+
+    fn ec_curve_to_basis_2f_to_hint(
+        curve: &MontgomeryCurve<Self::Field>,
+        f: usize,
+    ) -> Option<(EcBasis<Self::Field>, u8)> {
+        Some(crate::ec::biscalar::ec_curve_to_basis_2f_to_hint::<Self>(
+            curve, f,
+        ))
+    }
+
+    fn change_of_basis_matrix(
+        b1: &EcBasis<Self::Field>,
+        b2: &EcBasis<Self::Field>,
+        curve: &MontgomeryCurve<Self::Field>,
+        f: u32,
+    ) -> Option<[[Uint<8>; 2]; 2]> {
+        crate::verification::change_of_basis_matrix::<Self>(b1, b2, curve, f)
+    }
+}
+
+impl FixedDegreeLevel for Level3 {
+    fn endomorphism_application_o0_coords<const LIMBS: usize>(
+        p: &MontgomeryPoint<Self::Field>,
+        q: &MontgomeryPoint<Self::Field>,
+        pmq: &MontgomeryPoint<Self::Field>,
+        o0_coords: &[Int<LIMBS>; 4],
+        f: usize,
+        a24: &Fp2<Self::Field>,
+    ) -> Option<EvenBasis<Self::Field>> {
+        endomorphism_application_o0_coords::<Self, LIMBS>(p, q, pmq, o0_coords, f, a24)
+    }
+
+    fn endomorphism_application_even_basis_indexed(
+        p: &MontgomeryPoint<Self::Field>,
+        q: &MontgomeryPoint<Self::Field>,
+        pmq: &MontgomeryPoint<Self::Field>,
+        index_alternate_curve: usize,
+        theta: &Quaternion<8>,
+        theta_denom: &Int<8>,
+        f: usize,
+        a24: &Fp2<Self::Field>,
+    ) -> Option<EvenBasis<Self::Field>> {
+        crate::isogeny::endomorphism::endomorphism_application_even_basis_indexed::<Self>(
+            p,
+            q,
+            pmq,
+            index_alternate_curve,
+            theta,
+            theta_denom,
+            f,
+            a24,
+        )
+    }
+
+    fn endomorphism_application_rational_even_basis<const LIMBS: usize>(
+        p: &MontgomeryPoint<Self::Field>,
+        q: &MontgomeryPoint<Self::Field>,
+        pmq: &MontgomeryPoint<Self::Field>,
+        num: &Quaternion<LIMBS>,
+        denom: &Uint<LIMBS>,
+        d: &Uint<LIMBS>,
+        f: usize,
+        a24: &Fp2<Self::Field>,
+    ) -> Option<EvenBasis<Self::Field>> {
+        crate::isogeny::endomorphism::endomorphism_application_rational_even_basis::<Self, LIMBS>(
+            p, q, pmq, num, denom, d, f, a24,
+        )
+    }
+
+    fn ec_curve_to_basis_2f_to_hint(
+        curve: &MontgomeryCurve<Self::Field>,
+        f: usize,
+    ) -> Option<(EcBasis<Self::Field>, u8)> {
+        Some(crate::ec::biscalar::ec_curve_to_basis_2f_to_hint::<Self>(
+            curve, f,
+        ))
+    }
+
+    fn change_of_basis_matrix(
+        b1: &EcBasis<Self::Field>,
+        b2: &EcBasis<Self::Field>,
+        curve: &MontgomeryCurve<Self::Field>,
+        f: u32,
+    ) -> Option<[[Uint<8>; 2]; 2]> {
+        crate::verification::change_of_basis_matrix::<Self>(b1, b2, curve, f)
+    }
+}
 
 /// Compute a fixed-degree `2^length` isogeny `E0 × E0 → E34` and evaluate
 /// `eval_points` through it, writing images into `out_points`.
@@ -38,17 +228,20 @@ const QL: usize = 12;
 /// `Some((length, E34))` on success, or `None` if `RepresentInteger`
 /// exhausts its budget, an inversion/lift fails, or the chain does not
 /// produce an isogeny.
-pub(crate) fn fixed_degree_isogeny_and_eval<R: CryptoRng>(
+pub(crate) fn fixed_degree_isogeny_and_eval<P: FixedDegreeLevel, R: CryptoRng>(
     u: &Uint<QL>,
-    eval_points: &[CoupleMontgomeryPoint<Fp1Element>],
-    out_points: &mut [CoupleMontgomeryPoint<Fp1Element>],
+    eval_points: &[CoupleMontgomeryPoint<P::Field>],
+    out_points: &mut [CoupleMontgomeryPoint<P::Field>],
     witnesses: &[Uint<QL>],
     sample_bound: i64,
     max_trials: usize,
     rng: &mut R,
-) -> Option<(u32, CoupleCurve<Fp1Element>)> {
-    let length: u32 = 246; // TORSION_EVEN_POWER (248) − HD_extra_torsion (2)
-    let f_basis: usize = 248; // length + HD_extra_torsion
+) -> Option<(u32, CoupleCurve<P::Field>)> {
+    // TODO(lvl3): expose the HD extra torsion per level if it differs from 2.
+    const HD: u32 = 2;
+    let torsion_even_power = u32::try_from(P::F).expect("F fits u32");
+    let length = torsion_even_power - HD;
+    let f_basis = P::F;
     debug_assert!(u.as_words()[0] & 1 == 1, "u must be odd");
 
     // target = u · (2^length − u)
@@ -56,7 +249,7 @@ pub(crate) fn fixed_degree_isogeny_and_eval<R: CryptoRng>(
     let two_len = Uint::<QL>::ONE.shl_vartime(length);
     let target = u12.wrapping_mul(&two_len.wrapping_sub(&u12));
 
-    let p = crate::params::lvl1::prime().resize::<QL>();
+    let p = P::prime::<QL>();
 
     // θ in O0-basis coords with N_red(θ) = target.
     let theta_o0 =
@@ -79,11 +272,11 @@ pub(crate) fn fixed_degree_isogeny_and_eval<R: CryptoRng>(
     }
 
     // B0 = canonical even-torsion basis; Bθ = θ(B0).
-    let curve = MontgomeryCurve::<Fp1Element>::e0();
+    let curve = MontgomeryCurve::<P::Field>::e0();
     let a24 = curve.a24();
-    let (bp, bq, bpmq) = basis_e0_lvl1();
+    let (bp, bq, bpmq) = P::basis_e0();
     let (rp, rq, rpmq) =
-        endomorphism_application_o0_coords::<QL>(&bp, &bq, &bpmq, &theta, f_basis, &a24)?;
+        P::endomorphism_application_o0_coords::<QL>(&bp, &bq, &bpmq, &theta, f_basis, &a24)?;
 
     // Lift both x-only bases to consistent Jacobian points.
     let bas1 = EcBasis::new(bp, bq, bpmq);
@@ -99,7 +292,7 @@ pub(crate) fn fixed_degree_isogeny_and_eval<R: CryptoRng>(
         CoupleJacobianPoint::infinity(),
     );
 
-    let e12 = CoupleCurve::e0_e0();
+    let e12 = CoupleCurve::<P::Field>::e0_e0();
     let e34 = theta_chain_compute_and_eval(length, &e12, &ker, true, eval_points, out_points)?;
     Some((length, e34))
 }
@@ -120,22 +313,22 @@ pub(crate) fn fixed_degree_isogeny_and_eval<R: CryptoRng>(
 ///
 /// The internal theta chain is already the deterministic
 /// [`theta_chain_compute_and_eval`] — the same one C keygen uses.
-pub(crate) fn fixed_degree_isogeny_and_eval_keygen<R: CryptoRng>(
+pub(crate) fn fixed_degree_isogeny_and_eval_keygen<P: FixedDegreeLevel, R: CryptoRng>(
     u: &Uint<QL>,
-    eval_points: &[CoupleMontgomeryPoint<Fp1Element>],
-    out_points: &mut [CoupleMontgomeryPoint<Fp1Element>],
+    eval_points: &[CoupleMontgomeryPoint<P::Field>],
+    out_points: &mut [CoupleMontgomeryPoint<P::Field>],
     witnesses: &[Uint<QL>],
     max_trials: usize,
     rng: &mut R,
-) -> Option<(u32, CoupleCurve<Fp1Element>)> {
-    use crate::quaternion::extremal_orders::standard_order_o0_l1;
+) -> Option<(u32, CoupleCurve<P::Field>)> {
     use crate::quaternion::o0_mul::standard_to_o0_basis;
     use crate::quaternion::represent_integer::represent_integer_over_alt_order;
 
-    const TORSION_EVEN_POWER: u32 = 248;
     const HD: u32 = 2;
+    let torsion_even_power = u32::try_from(P::F).expect("F fits u32");
     // bitsize(p) + QUAT_repres_bound_input at lvl1 (C-oracle-confirmed: φ_u
     // u_bitsize 121 → length 150; φ_v 123 → 148).
+    // TODO(lvl3): replace 271 with level-specific bitsize(p) + QUAT_repres_bound_input.
     const P_BITS_PLUS_BOUND: u32 = 271;
 
     debug_assert!(u.as_words()[0] & 1 == 1, "u must be odd");
@@ -146,8 +339,8 @@ pub(crate) fn fixed_degree_isogeny_and_eval_keygen<R: CryptoRng>(
     let two_len = Uint::<QL>::ONE.shl_vartime(length);
     let target = u.wrapping_mul(&two_len.wrapping_sub(u)); // u·(2^length − u)
 
-    let p = crate::params::lvl1::prime().resize::<QL>();
-    let o0 = standard_order_o0_l1();
+    let p = P::prime::<QL>();
+    let o0 = P::standard_order_o0();
     let (gamma, denom) =
         represent_integer_over_alt_order::<QL, R>(&o0, &target, &p, max_trials, witnesses, rng)?;
     debug_assert_eq!(
@@ -175,24 +368,24 @@ pub(crate) fn fixed_degree_isogeny_and_eval_keygen<R: CryptoRng>(
     }
 
     // B0 = canonical even basis, doubled down by TORSION_EVEN_POWER−length−HD.
-    let curve = MontgomeryCurve::<Fp1Element>::e0();
+    let curve = MontgomeryCurve::<P::Field>::e0();
     let a24 = curve.a24();
     let a24_curve = curve.to_a24();
-    let (bp0, bq0, bpmq0) = basis_e0_lvl1();
-    let ndbl = TORSION_EVEN_POWER - length - HD;
+    let (bp0, bq0, bpmq0) = P::basis_e0();
+    let ndbl = torsion_even_power - length - HD;
     let bp = a24_curve.x_double_n(&bp0, ndbl);
     let bq = a24_curve.x_double_n(&bq0, ndbl);
     let bpmq = a24_curve.x_double_n(&bpmq0, ndbl);
 
     let (rp, rq, rpmq) =
-        endomorphism_application_o0_coords::<QL>(&bp, &bq, &bpmq, &theta, f_basis, &a24)?;
+        P::endomorphism_application_o0_coords::<QL>(&bp, &bq, &bpmq, &theta, f_basis, &a24)?;
 
     let bas1 = EcBasis::new(bp, bq, bpmq);
     let bas2 = EcBasis::new(rp, rq, rpmq);
     #[cfg(feature = "kat")]
     if std::env::var("PQSQ_DUMP_AC").is_ok() {
         let mut b = [0u8; 64];
-        std::eprintln!("OURS_BTH length={length} ndbl={ndbl} HD={HD} TEP={TORSION_EVEN_POWER}");
+        std::eprintln!("OURS_BTH length={length} ndbl={ndbl} HD={HD} TEP={torsion_even_power}");
         a24.to_bytes_le(&mut b);
         std::eprint!("OURS_BTH a24=");
         for x in b {
@@ -228,7 +421,7 @@ pub(crate) fn fixed_degree_isogeny_and_eval_keygen<R: CryptoRng>(
         CoupleJacobianPoint::new(q1, q2),
         CoupleJacobianPoint::infinity(),
     );
-    let e12 = CoupleCurve::e0_e0();
+    let e12 = CoupleCurve::<P::Field>::e0_e0();
     let e34 = theta_chain_compute_and_eval(length, &e12, &ker, true, eval_points, out_points)?;
     Some((length, e34))
 }
@@ -254,24 +447,18 @@ pub(crate) fn fixed_degree_isogeny_and_eval_keygen<R: CryptoRng>(
 /// (identity-validated on all 6 curves).
 // Needs the alternate-curve index, target scalar, eval/output point slices, primality witnesses, search bounds, and RNG.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn fixed_degree_isogeny_and_eval_indexed<R: CryptoRng>(
+pub(crate) fn fixed_degree_isogeny_and_eval_indexed<P: FixedDegreeLevel, R: CryptoRng>(
     index_alternate_curve: usize,
     u: &Uint<QL>,
-    eval_points: &[CoupleMontgomeryPoint<Fp1Element>],
-    out_points: &mut [CoupleMontgomeryPoint<Fp1Element>],
+    eval_points: &[CoupleMontgomeryPoint<P::Field>],
+    out_points: &mut [CoupleMontgomeryPoint<P::Field>],
     witnesses: &[Uint<QL>],
     sample_bound: i64,
     max_trials: usize,
     rng: &mut R,
-) -> Option<(u32, CoupleCurve<Fp1Element>)> {
-    use crate::ec::montgomery::MontgomeryPoint;
-    use crate::isogeny::endomorphism::endomorphism_application_even_basis_indexed;
-    use crate::quaternion::algebra::Quaternion;
-    use crate::quaternion::curves_with_endomorphism as cwe_mod;
-    use crate::quaternion::extremal_orders as eo;
-
+) -> Option<(u32, CoupleCurve<P::Field>)> {
     if index_alternate_curve == 0 {
-        return fixed_degree_isogeny_and_eval(
+        return fixed_degree_isogeny_and_eval::<P, R>(
             u,
             eval_points,
             out_points,
@@ -283,25 +470,29 @@ pub(crate) fn fixed_degree_isogeny_and_eval_indexed<R: CryptoRng>(
     }
     let _ = sample_bound; // alt-order represent_integer does not take a sample bound
     let k = index_alternate_curve - 1;
-    let length: u32 = 246;
-    let f_basis: usize = 248;
+    // TODO(lvl3): expose the HD extra torsion per level if it differs from 2.
+    const HD: u32 = 2;
+    let torsion_even_power = u32::try_from(P::F).expect("F fits u32");
+    let length = torsion_even_power - HD;
+    let f_basis = P::F;
     debug_assert!(u.as_words()[0] & 1 == 1, "u must be odd");
 
     let u12 = *u;
     let two_len = Uint::<QL>::ONE.shl_vartime(length);
     let target = u12.wrapping_mul(&two_len.wrapping_sub(&u12));
-    let p = crate::params::lvl1::prime().resize::<QL>();
+    let p = P::prime::<QL>();
 
-    // θ over the alternate extremal order k (standard coords + denom).
-    let order = match k {
-        0 => eo::alternate_extremal_order_0_l1(),
-        1 => eo::alternate_extremal_order_1_l1(),
-        2 => eo::alternate_extremal_order_2_l1(),
-        3 => eo::alternate_extremal_order_3_l1(),
-        4 => eo::alternate_extremal_order_4_l1(),
-        5 => eo::alternate_extremal_order_5_l1(),
+    let alt_count = match P::LEVEL {
+        1 => 6,
+        3 => 7,
         _ => return None,
     };
+    if k >= alt_count {
+        return None;
+    }
+
+    // θ over the alternate extremal order k (standard coords + denom).
+    let order = P::alternate_extremal_order(k);
     let (theta_num, theta_denom) =
         crate::quaternion::represent_integer::represent_integer_over_alt_order::<QL, R>(
             &order, &target, &p, max_trials, witnesses, rng,
@@ -319,20 +510,12 @@ pub(crate) fn fixed_degree_isogeny_and_eval_indexed<R: CryptoRng>(
     );
 
     // E0_alt = NICE curve k (C = 1 ⇒ curve_a is affine A); B0 = its even basis.
-    let cwe = match k {
-        0 => cwe_mod::curve_with_endomorphism_0_l1(),
-        1 => cwe_mod::curve_with_endomorphism_1_l1(),
-        2 => cwe_mod::curve_with_endomorphism_2_l1(),
-        3 => cwe_mod::curve_with_endomorphism_3_l1(),
-        4 => cwe_mod::curve_with_endomorphism_4_l1(),
-        5 => cwe_mod::curve_with_endomorphism_5_l1(),
-        _ => return None,
-    };
-    let curve = MontgomeryCurve::<Fp1Element>::new(cwe.curve_a);
+    let cwe = P::nice_curve(k);
+    let curve = MontgomeryCurve::<P::Field>::new(cwe.curve_a);
     let a24 = curve.a24();
-    let bp = MontgomeryPoint::<Fp1Element>::new(cwe.p_x, cwe.p_z);
-    let bq = MontgomeryPoint::<Fp1Element>::new(cwe.q_x, cwe.q_z);
-    let bpmq = MontgomeryPoint::<Fp1Element>::new(cwe.pmq_x, cwe.pmq_z);
+    let bp = MontgomeryPoint::<P::Field>::new(cwe.p_x, cwe.p_z);
+    let bq = MontgomeryPoint::<P::Field>::new(cwe.q_x, cwe.q_z);
+    let bpmq = MontgomeryPoint::<P::Field>::new(cwe.pmq_x, cwe.pmq_z);
 
     // Bθ = θ(B0) via the indexed endomorphism application (item 6); θ narrows
     // to Int<8> (scaled coords ≤ ~2^493 < 2^511 at L1).
@@ -342,7 +525,7 @@ pub(crate) fn fixed_degree_isogeny_and_eval_indexed<R: CryptoRng>(
         theta_scaled.c.resize::<8>(),
         theta_scaled.d.resize::<8>(),
     );
-    let (rp, rq, rpmq) = endomorphism_application_even_basis_indexed(
+    let (rp, rq, rpmq) = P::endomorphism_application_even_basis_indexed(
         &bp,
         &bq,
         &bpmq,
@@ -371,6 +554,7 @@ pub(crate) fn fixed_degree_isogeny_and_eval_indexed<R: CryptoRng>(
 #[cfg(all(test, feature = "kat"))]
 mod tests {
     use super::*;
+    use crate::params::lvl1::Fp1Element;
     use crate::rng::NistPqcRng;
 
     fn witnesses() -> [Uint<QL>; 5] {
@@ -427,7 +611,7 @@ mod tests {
         let a24 = curve.a24();
         let (bp, bq, bpmq) = basis_e0_lvl1();
         let (rp, rq, rpmq) =
-            endomorphism_application_o0_coords::<QL>(&bp, &bq, &bpmq, &theta, 248, &a24)
+            endomorphism_application_o0_coords::<Level1, QL>(&bp, &bq, &bpmq, &theta, 248, &a24)
                 .expect("θ applies to the even-torsion basis");
 
         let bas1 = EcBasis::new(bp, bq, bpmq);
@@ -450,7 +634,7 @@ mod tests {
         let big = 1u64 << 40;
         let mut got = None;
         for u in [big | 1, big | 3, big | 5, big | 7, big | 9, big | 11] {
-            if let Some((length, e34)) = fixed_degree_isogeny_and_eval(
+            if let Some((length, e34)) = fixed_degree_isogeny_and_eval::<Level1, _>(
                 &Uint::<QL>::from_u64(u),
                 &[],
                 &mut [],
@@ -479,9 +663,15 @@ mod tests {
         let mut got = None;
         for odd in [1u64, 3, 5, 7, 9, 11] {
             let u = base.wrapping_add(&Uint::<QL>::from_u64(odd));
-            if let Some((length, e34)) =
-                fixed_degree_isogeny_and_eval(&u, &[], &mut [], &w, 64, 1 << 14, &mut rng)
-            {
+            if let Some((length, e34)) = fixed_degree_isogeny_and_eval::<Level1, _>(
+                &u,
+                &[],
+                &mut [],
+                &w,
+                64,
+                1 << 14,
+                &mut rng,
+            ) {
                 got = Some((length, e34));
                 break;
             }
@@ -523,7 +713,7 @@ mod tests {
         ];
         let mut out = [CoupleMontgomeryPoint::infinity(); 3];
 
-        let got = fixed_degree_isogeny_and_eval_indexed(
+        let got = fixed_degree_isogeny_and_eval_indexed::<Level1, _>(
             1,
             &u12,
             &eval,

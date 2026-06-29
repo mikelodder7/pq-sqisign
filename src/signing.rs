@@ -40,6 +40,7 @@ pub fn protocols_sign<R: CryptoRng>(
         commit, compute_dim2_isogeny_challenge, evaluate_random_aux_isogeny_lvl1,
     };
     use crate::isogeny::endomorphism::compute_challenge_ideal_signature;
+    use crate::params::lvl1::Level1;
     use crate::quaternion::lattice_ops::{
         compute_backtracking_signature, compute_response_quat_element,
     };
@@ -57,11 +58,12 @@ pub fn protocols_sign<R: CryptoRng>(
         [2u64, 3, 5, 7, 11].map(crypto_bigint::Uint::from_u64);
 
     let sk_curve = MontgomeryCurve::new(sk.curve_a);
-    let canonical_basis = ec_curve_to_basis_2f_from_hint(&sk_curve, TEP, sk.hint_pk);
+    let canonical_basis = ec_curve_to_basis_2f_from_hint::<Level1>(&sk_curve, TEP, sk.hint_pk);
 
     for _attempt in 0..8 {
         // 1. Commitment.
-        let Some((e_com, b_com, lideal_commit)) = commit(&wit_ql, 64, 1 << 14, rng) else {
+        let Some((e_com, b_com, lideal_commit)) = commit::<Level1, _>(&wit_ql, 64, 1 << 14, rng)
+        else {
             continue;
         };
         // 2. Challenge coefficient.

@@ -948,7 +948,7 @@ mod tests {
         use crate::ec::jacobian::lift_basis;
         use crate::ec::montgomery::MontgomeryCurve;
         use crate::isogeny::endomorphism::{basis_e0_lvl1, endomorphism_application_o0_coords};
-        use crate::params::lvl1::Fp1Element;
+        use crate::params::lvl1::{Fp1Element, Level1};
         use crate::rng::NistPqcRng;
         use crypto_bigint::{Int, Uint};
         use subtle::ConstantTimeEq;
@@ -993,8 +993,9 @@ mod tests {
             let curve = MontgomeryCurve::<Fp1Element>::e0();
             let a24 = curve.a24();
             let (bp, bq, bpmq) = basis_e0_lvl1();
-            let (rp, rq, rpmq) =
-                endomorphism_application_o0_coords::<QL>(&bp, &bq, &bpmq, &theta, f_basis, &a24)?;
+            let (rp, rq, rpmq) = endomorphism_application_o0_coords::<Level1, QL>(
+                &bp, &bq, &bpmq, &theta, f_basis, &a24,
+            )?;
 
             let bas1 = EcBasis::new(bp, bq, bpmq);
             let bas2 = EcBasis::new(rp, rq, rpmq);

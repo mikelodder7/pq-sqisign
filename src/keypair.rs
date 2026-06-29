@@ -5,6 +5,8 @@ use crate::params::Params;
 use crate::signing_key::SigningKey;
 use crate::verifying_key::VerifyingKey;
 use crate::{Error, Result};
+#[cfg(feature = "kgen")]
+use crate::{isogeny::clapotis_spine::keygen, params::lvl3::Level3};
 
 /// A SQIsign keypair (signing key + verifying key), parameterized by security level.
 ///
@@ -36,9 +38,8 @@ impl<P: Params> KeyPair<P> {
     pub fn generate<R: rand_core::CryptoRng>(rng: &mut R) -> Result<Self> {
         match P::LEVEL {
             1 => Self::generate_lvl1(rng),
-            _ => Err(Error::Unimplemented(
-                "keypair: only security level 1 supported",
-            )),
+            3 => Self::generate_lvl3(rng),
+            _ => Err(Error::Unimplemented("keypair: unsupported security level")),
         }
     }
 
@@ -72,6 +73,21 @@ impl<P: Params> KeyPair<P> {
             signing_key: SigningKey::from_secret_data(sk_data),
             verifying_key: VerifyingKey::from_bytes_unchecked(&pk_bytes),
         })
+    }
+
+    #[cfg(feature = "kgen")]
+    fn generate_lvl3<R: rand_core::CryptoRng>(rng: &mut R) -> Result<Self> {
+        let witnesses: [crypto_bigint::Uint<12>; 5] =
+            [2u64, 3, 5, 7, 11].map(crypto_bigint::Uint::from_u64);
+
+        let _ = keygen::<Level3, R>(&witnesses, 64, 1 << 14, rng)
+            .ok_or(Error::Internal("keygen_lvl3 exhausted retry budget"))?;
+
+        // The lvl3 spine dispatch is live here, but keypair/public-key
+        // serialization is still hard-wired to lvl1 field widths.
+        Err(Error::Unimplemented(
+            "keypair lvl3: PK serialization not implemented",
+        ))
     }
 
     /// Reconstruct a keypair from the secret-key wire-format bytes.

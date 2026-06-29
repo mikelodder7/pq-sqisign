@@ -16,10 +16,17 @@
 //! in via `ConstMontyForm::from_montgomery`, no conversion.
 
 use crate::ec::montgomery::MontgomeryPoint;
+use crate::gf::fp::BaseField;
 use crate::gf::fp2::Fp2;
+use crate::level_constants::LevelConstants;
 use crate::params::lvl1::Fp1Element;
 use crate::params::lvl3::Fp3Element;
 use crypto_bigint::{U256, U384, Uint};
+
+/// The `(R, S, R−S)` x-only torsion-point triple returned by an endomorphism
+/// application over the field `F`. Factored out to keep the application
+/// signatures within clippy's type-complexity budget.
+type EndoImageTriple<F> = (MontgomeryPoint<F>, MontgomeryPoint<F>, MontgomeryPoint<F>);
 
 /// An `Fp` element from the reference's 4-limb Montgomery (`R = 2^256`) words.
 #[inline]
@@ -564,18 +571,14 @@ fn sub_mod_2f(a: &Uint<8>, b: &Uint<8>, f: usize) -> Uint<8> {
 /// Port of the C reference `matrix_application_even_basis` (id2iso.c). `a24` is
 /// the affine doubling constant `(A + 2)/4`. Returns `None` if any biladder
 /// fails. `m` entries are taken mod `2^f`.
-pub(crate) fn matrix_application_even_basis(
-    p: &MontgomeryPoint<Fp1Element>,
-    q: &MontgomeryPoint<Fp1Element>,
-    pmq: &MontgomeryPoint<Fp1Element>,
+pub(crate) fn matrix_application_even_basis<F: BaseField>(
+    p: &MontgomeryPoint<F>,
+    q: &MontgomeryPoint<F>,
+    pmq: &MontgomeryPoint<F>,
     m: &[[Uint<8>; 2]; 2],
     f: usize,
-    a24: &Fp2<Fp1Element>,
-) -> Option<(
-    MontgomeryPoint<Fp1Element>,
-    MontgomeryPoint<Fp1Element>,
-    MontgomeryPoint<Fp1Element>,
-)> {
+    a24: &Fp2<F>,
+) -> Option<(MontgomeryPoint<F>, MontgomeryPoint<F>, MontgomeryPoint<F>)> {
     use crate::ec::biscalar::ec_biscalar_mul;
 
     let m00 = m[0][0] & mask_2f(f);
@@ -839,37 +842,29 @@ fn int_to_mod_2f<const L: usize>(x: &crypto_bigint::Int<L>, f: usize) -> Uint<8>
 /// `GEN2 == ACTION_I` (the O0 generator at index 1 is `i`); `GEN3`/`GEN4` are
 /// `(i+j)/2` and `(1+k)/2`. `a24 = (A+2)/4`. Returns `None` if a biladder
 /// fails.
-pub(crate) fn endomorphism_application_even_basis<const L: usize>(
-    p: &MontgomeryPoint<Fp1Element>,
-    q: &MontgomeryPoint<Fp1Element>,
-    pmq: &MontgomeryPoint<Fp1Element>,
+pub(crate) fn endomorphism_application_even_basis<P: LevelConstants, const L: usize>(
+    p: &MontgomeryPoint<P::Field>,
+    q: &MontgomeryPoint<P::Field>,
+    pmq: &MontgomeryPoint<P::Field>,
     theta: &crate::quaternion::Quaternion<L>,
     f: usize,
-    a24: &Fp2<Fp1Element>,
-) -> Option<(
-    MontgomeryPoint<Fp1Element>,
-    MontgomeryPoint<Fp1Element>,
-    MontgomeryPoint<Fp1Element>,
-)> {
+    a24: &Fp2<P::Field>,
+) -> Option<EndoImageTriple<P::Field>> {
     let o0 = crate::quaternion::o0_mul::standard_to_o0_basis(theta);
-    endomorphism_application_o0_coords::<L>(p, q, pmq, &o0, f, a24)
+    endomorphism_application_o0_coords::<P, L>(p, q, pmq, &o0, f, a24)
 }
 
 /// Same as [`endomorphism_application_even_basis`] but takes the endomorphism
 /// already in `O_0`-basis coordinates (the form `RepresentInteger` returns),
 /// skipping the standard→O_0 conversion.
-pub(crate) fn endomorphism_application_o0_coords<const L: usize>(
-    p: &MontgomeryPoint<Fp1Element>,
-    q: &MontgomeryPoint<Fp1Element>,
-    pmq: &MontgomeryPoint<Fp1Element>,
+pub(crate) fn endomorphism_application_o0_coords<P: LevelConstants, const L: usize>(
+    p: &MontgomeryPoint<P::Field>,
+    q: &MontgomeryPoint<P::Field>,
+    pmq: &MontgomeryPoint<P::Field>,
     o0_coords: &[crypto_bigint::Int<L>; 4],
     f: usize,
-    a24: &Fp2<Fp1Element>,
-) -> Option<(
-    MontgomeryPoint<Fp1Element>,
-    MontgomeryPoint<Fp1Element>,
-    MontgomeryPoint<Fp1Element>,
-)> {
+    a24: &Fp2<P::Field>,
+) -> Option<EndoImageTriple<P::Field>> {
     let (primitive, content) =
         crate::quaternion::o0_mul::make_primitive_from_o0_coords::<L>(o0_coords);
 
@@ -881,10 +876,10 @@ pub(crate) fn endomorphism_application_o0_coords<const L: usize>(
     ];
     let content_u = int_to_mod_2f(&content, f);
 
-    // GEN2 == ACTION_I (O0 basis element index 1 is i).
-    let gen2 = mat_from_limbs(&ACTION_I);
-    let gen3 = mat_from_limbs(&ACTION_GEN3);
-    let gen4 = mat_from_limbs(&ACTION_GEN4);
+    let curve = P::nice_curve_e0();
+    let gen2 = mat_int8_to_mod_2f(&curve.action_gen2, f);
+    let gen3 = mat_int8_to_mod_2f(&curve.action_gen3, f);
+    let gen4 = mat_int8_to_mod_2f(&curve.action_gen4, f);
 
     let mut m = [[Uint::<8>::ZERO; 2]; 2];
     for i in 0..2 {
@@ -929,8 +924,8 @@ fn mat_int8_to_mod_2f(t: &[[crypto_bigint::Int<8>; 2]; 2], f: usize) -> [[Uint<8
 /// `index_alternate_curve == 0` is the standard order `O_0` — delegated to the
 /// validated [`endomorphism_application_even_basis`] (which assumes an integer
 /// `theta`, i.e. `theta_denom == 1`); `index_alternate_curve == k ≥ 1` uses the
-/// alternate extremal order `alternate_extremal_order_{k-1}_l1` and curve
-/// `curve_with_endomorphism_{k-1}_l1` (both = C array slot `k`).
+/// level-selected alternate extremal order and NICE starting curve from
+/// [`LevelConstants`].
 ///
 /// Returns `None` if `theta/theta_denom ∉ EXTREMAL_ORDERS[k]` (the C `assert`
 /// fails), if the index is out of range, or if a biladder fails.
@@ -941,55 +936,39 @@ fn mat_int8_to_mod_2f(t: &[[crypto_bigint::Int<8>; 2]; 2], f: usize) -> [[Uint<8
 /// keygen KAT (item 8).
 // Carries an even basis, alternate-curve index, theta quaternion/denominator, torsion exponent, and A24 constant.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn endomorphism_application_even_basis_indexed(
-    p: &MontgomeryPoint<Fp1Element>,
-    q: &MontgomeryPoint<Fp1Element>,
-    pmq: &MontgomeryPoint<Fp1Element>,
+pub(crate) fn endomorphism_application_even_basis_indexed<P: LevelConstants>(
+    p: &MontgomeryPoint<P::Field>,
+    q: &MontgomeryPoint<P::Field>,
+    pmq: &MontgomeryPoint<P::Field>,
     index_alternate_curve: usize,
     theta: &crate::quaternion::Quaternion<8>,
     theta_denom: &crypto_bigint::Int<8>,
     f: usize,
-    a24: &Fp2<Fp1Element>,
-) -> Option<(
-    MontgomeryPoint<Fp1Element>,
-    MontgomeryPoint<Fp1Element>,
-    MontgomeryPoint<Fp1Element>,
-)> {
-    use crate::quaternion::curves_with_endomorphism as cwe;
-    use crate::quaternion::extremal_orders as eo;
-
+    a24: &Fp2<P::Field>,
+) -> Option<EndoImageTriple<P::Field>> {
     if index_alternate_curve == 0 {
         // Standard O_0 path (validated): integer theta only.
         debug_assert!(
             *theta_denom == crypto_bigint::Int::<8>::ONE,
             "index 0 (O_0) path requires integer theta (denom = 1)",
         );
-        return endomorphism_application_even_basis::<8>(p, q, pmq, theta, f, a24);
+        return endomorphism_application_even_basis::<P, 8>(p, q, pmq, theta, f, a24);
     }
 
     let k = index_alternate_curve - 1;
-    let order = match k {
-        0 => eo::alternate_extremal_order_0_l1(),
-        1 => eo::alternate_extremal_order_1_l1(),
-        2 => eo::alternate_extremal_order_2_l1(),
-        3 => eo::alternate_extremal_order_3_l1(),
-        4 => eo::alternate_extremal_order_4_l1(),
-        5 => eo::alternate_extremal_order_5_l1(),
-        _ => return None,
-    };
-    let curve = match k {
-        0 => cwe::curve_with_endomorphism_0_l1(),
-        1 => cwe::curve_with_endomorphism_1_l1(),
-        2 => cwe::curve_with_endomorphism_2_l1(),
-        3 => cwe::curve_with_endomorphism_3_l1(),
-        4 => cwe::curve_with_endomorphism_4_l1(),
-        5 => cwe::curve_with_endomorphism_5_l1(),
-        _ => return None,
-    };
+    if k >= P::NUM_ALTERNATE_EXTREMAL_ORDERS {
+        return None;
+    }
+    let order = P::alternate_extremal_order(k);
+    let curve = P::nice_curve(k);
 
     // Decompose theta/theta_denom over EXTREMAL_ORDERS[k] (C quat_alg_make_primitive):
     // coeffs in the order basis (index 0 = identity component), content odd.
-    let (coeffs, content) = eo::make_primitive_over_alt_order(&order, theta, theta_denom)?;
+    let (coeffs, content) = crate::quaternion::extremal_orders::make_primitive_over_alt_order(
+        &order,
+        theta,
+        theta_denom,
+    )?;
 
     let c: [Uint<8>; 4] = [
         int_to_mod_2f(&coeffs[0], f),
@@ -1054,20 +1033,16 @@ fn u256_to_int<const L: usize>(x: &Uint<8>) -> crypto_bigint::Int<L> {
 /// `None` if the inverse does not exist or a biladder fails.
 // Carries an even basis, rational theta numerator/denominator, extra odd factor, torsion exponent, and A24 constant.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn endomorphism_application_rational_even_basis<const L: usize>(
-    p: &MontgomeryPoint<Fp1Element>,
-    q: &MontgomeryPoint<Fp1Element>,
-    pmq: &MontgomeryPoint<Fp1Element>,
+pub(crate) fn endomorphism_application_rational_even_basis<P: LevelConstants, const L: usize>(
+    p: &MontgomeryPoint<P::Field>,
+    q: &MontgomeryPoint<P::Field>,
+    pmq: &MontgomeryPoint<P::Field>,
     num: &crate::quaternion::Quaternion<L>,
     denom: &Uint<L>,
     extra: &Uint<L>,
     f: usize,
-    a24: &Fp2<Fp1Element>,
-) -> Option<(
-    MontgomeryPoint<Fp1Element>,
-    MontgomeryPoint<Fp1Element>,
-    MontgomeryPoint<Fp1Element>,
-)> {
+    a24: &Fp2<P::Field>,
+) -> Option<EndoImageTriple<P::Field>> {
     // Split `denom` into its 2-adic part `2^t` and odd part `denom_odd`:
     // (num/denom)/extra = num / (2^t · denom_odd · extra). The odd factor
     // `denom_odd·extra` is invertible mod 2^f; the `2^t` factor is NOT, but it
@@ -1097,7 +1072,7 @@ pub(crate) fn endomorphism_application_rational_even_basis<const L: usize>(
         u256_to_int::<L>(&mul_mod_2f(&cm, &s, f))
     });
 
-    endomorphism_application_o0_coords::<L>(p, q, pmq, &scaled, f, a24)
+    endomorphism_application_o0_coords::<P, L>(p, q, pmq, &scaled, f, a24)
 }
 
 #[cfg(test)]
@@ -1105,6 +1080,7 @@ mod tests {
     use super::*;
     use crate::ec::jacobian::JacobianPoint;
     use crate::ec::montgomery::MontgomeryCurve;
+    use crate::params::lvl1::Level1;
     use subtle::ConstantTimeEq;
 
     #[test]
@@ -1277,7 +1253,8 @@ mod tests {
             Int::<8>::from_i64(0),
         );
         let (r, s, _rmq) =
-            endomorphism_application_even_basis(&p, &q, &pmq, &theta_i, f, &a24).expect("ok");
+            endomorphism_application_even_basis::<Level1, 8>(&p, &q, &pmq, &theta_i, f, &a24)
+                .expect("ok");
 
         assert!(
             bool::from(r.x.ct_eq(&p.x.negate().mul(&r.z))),
@@ -1308,7 +1285,8 @@ mod tests {
             Int::<8>::from_i64(0),
         );
         let (r, s, _rmq) =
-            endomorphism_application_even_basis(&p, &q, &pmq, &theta_one, f, &a24).expect("ok");
+            endomorphism_application_even_basis::<Level1, 8>(&p, &q, &pmq, &theta_one, f, &a24)
+                .expect("ok");
 
         // x(R) == x(P), x(S) == x(Q) projectively.
         assert!(
@@ -1365,7 +1343,7 @@ mod tests {
             let four_c_inv = four.mul(&c.curve_c).invert().unwrap_or(Fp2::zero());
             let a24 = c.curve_a.add(&two.mul(&c.curve_c)).mul(&four_c_inv);
 
-            let (r, s, _rmq) = endomorphism_application_even_basis_indexed(
+            let (r, s, _rmq) = endomorphism_application_even_basis_indexed::<Level1>(
                 &p,
                 &q,
                 &pmq,
@@ -1409,7 +1387,8 @@ mod tests {
             Int::<8>::from_i64(0),
         ];
         let (r, s, _rmq) =
-            endomorphism_application_o0_coords(&p, &q, &pmq, &i_o0, f, &a24).expect("ok");
+            endomorphism_application_o0_coords::<Level1, 8>(&p, &q, &pmq, &i_o0, f, &a24)
+                .expect("ok");
 
         assert!(
             bool::from(r.x.ct_eq(&p.x.negate().mul(&r.z))),
@@ -1448,7 +1427,7 @@ mod tests {
 
         // Plain i-endomorphism images, then post-multiply by [s].
         let (base_r, base_s, base_rmq) =
-            endomorphism_application_even_basis::<8>(&p, &q, &pmq, &i_quat, f, &a24)
+            endomorphism_application_even_basis::<Level1, 8>(&p, &q, &pmq, &i_quat, f, &a24)
                 .expect("plain i-endo");
         let f_u32 = u32::try_from(f).expect("f fits in u32");
         let modulus = (Uint::<8>::MAX >> (512 - f_u32)).wrapping_add(&Uint::<8>::ONE); // 2^f
@@ -1463,7 +1442,7 @@ mod tests {
         let exp_rmq = base_rmq.ladder(&s_le, &a24);
 
         // Fold-into-coords path.
-        let (got_r, got_s, got_rmq) = endomorphism_application_rational_even_basis::<8>(
+        let (got_r, got_s, got_rmq) = endomorphism_application_rational_even_basis::<Level1, 8>(
             &p, &q, &pmq, &i_quat, &denom, &extra, f, &a24,
         )
         .expect("rational i-endo");

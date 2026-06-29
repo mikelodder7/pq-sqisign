@@ -19,6 +19,7 @@
 use crate::ec::montgomery::MontgomeryPoint;
 use crate::gf::fp::BaseField;
 use crate::gf::fp2::Fp2;
+use crate::level_constants::LevelConstants;
 use subtle::{Choice, ConditionallySelectable};
 
 /// Scalar working-buffer width in bytes (512 bits) — covers every level's
@@ -268,29 +269,30 @@ pub(crate) fn ec_biscalar_mul<F: BaseField>(
 /// double down to exact order `2^f`. Port of the C reference
 /// `clear_cofactor_for_maximal_even_order` (`src/ec/ref/lvlx/basis.c`).
 ///
-/// lvl1 specifics: `#E(F_{p²}) = (p+1)² = (5·2^248)²`, so the odd cofactor is
-/// `p_cofactor_for_2f = 5` and `TORSION_EVEN_POWER = 248`. We multiply by 5
-/// (leaving order dividing `2^248`) then double `248 − f` times. A
-/// foundational primitive for `ec_curve_to_basis_2f[_to_hint]` (keygen
-/// `hint_pk` + verify challenge/aux bases).
-pub fn clear_cofactor_for_maximal_even_order<F: BaseField>(
-    p: &MontgomeryPoint<F>,
-    curve: &crate::ec::montgomery::MontgomeryCurve<F>,
+/// For a level with `p + 1 = C·2^F`, the odd cofactor on `E(F_{p²})` is `C`.
+/// Multiply by `C` (leaving order dividing `2^F`) then double `F − f` times to
+/// reach exact order `2^f`. A foundational primitive for
+/// `ec_curve_to_basis_2f[_to_hint]` (keygen `hint_pk` + verify challenge/aux
+/// bases).
+pub fn clear_cofactor_for_maximal_even_order<P: LevelConstants>(
+    p: &MontgomeryPoint<P::Field>,
+    curve: &crate::ec::montgomery::MontgomeryCurve<P::Field>,
     f: usize,
-) -> MontgomeryPoint<F> {
-    const TORSION_EVEN_POWER: usize = 248;
-    const ODD_COFACTOR: u8 = 5; // p_cofactor_for_2f, lvl1
-    debug_assert!(f <= TORSION_EVEN_POWER);
+) -> MontgomeryPoint<P::Field> {
+    debug_assert!(f <= P::F);
     let a24 = curve.a24();
     // [5]·P clears the odd cofactor (order now divides 2^248). C `ec_mul` uses
     // kbits = bitlength(cofactor); the exact bitlength (3 for 5) is REQUIRED so
     // the projective representative matches C — leading-zero ladder iterations
     // would change the representative and break the representative-fragile
     // `difference_point` in the verify basis recompute.
-    let cof_bits = (8 - ODD_COFACTOR.leading_zeros()) as usize;
-    let p_cleared = p.ladder_nbits(&[ODD_COFACTOR], cof_bits, &a24);
+    let odd_cofactor = P::C.to_le_bytes();
+    let cof_bits =
+        usize::try_from(u64::BITS - P::C.leading_zeros()).expect("bit length fits usize");
+    let cof_bytes = cof_bits.div_ceil(8);
+    let p_cleared = p.ladder_nbits(&odd_cofactor[..cof_bytes], cof_bits, &a24);
     // Double down to exact order 2^f.
-    let n_dbl = u32::try_from(TORSION_EVEN_POWER - f).expect("f <= TORSION_EVEN_POWER ⇒ fits u32");
+    let n_dbl = u32::try_from(P::F - f).expect("f <= P::F => fits u32");
     curve.to_a24().x_double_n(&p_cleared, n_dbl)
 }
 
@@ -447,16 +449,11 @@ pub fn difference_point<F: BaseField>(
 /// Entangled basis for `E0` (`A = 0`), where the QR/NQR x-selectors do not
 /// apply. Port of C `ec_basis_E0_2f`: start from the precomputed full-order
 /// `E0` basis points, double both down to order `2^f`, and recompute `x(P−Q)`.
-/// lvl1-pinned (uses the lvl1 precomputed basis and `TORSION_EVEN_POWER = 248`).
-pub(crate) fn ec_basis_e0_2f(
-    f: usize,
-) -> crate::ec::couple::EcBasis<crate::params::lvl1::Fp1Element> {
-    use crate::isogeny::endomorphism::basis_e0_lvl1;
-    const TORSION_EVEN_POWER: usize = 248;
-    let (p, q, _) = basis_e0_lvl1();
-    let curve = crate::ec::montgomery::MontgomeryCurve::new(Fp2::zero());
+pub(crate) fn ec_basis_e0_2f<P: LevelConstants>(f: usize) -> crate::ec::couple::EcBasis<P::Field> {
+    let (p, q, _) = P::basis_e0();
+    let curve = crate::ec::montgomery::MontgomeryCurve::<P::Field>::new(Fp2::zero());
     let a24 = curve.to_a24();
-    let n = u32::try_from(TORSION_EVEN_POWER - f).expect("f ≤ TORSION_EVEN_POWER");
+    let n = u32::try_from(P::F - f).expect("f <= P::F");
     let p = a24.x_double_n(&p, n);
     let q = a24.x_double_n(&q, n);
     let pmq = difference_point(&p, &q, &curve.a);
@@ -467,24 +464,19 @@ pub(crate) fn ec_basis_e0_2f(
 /// `(0 : 0)`, returning a compressed `u8` hint for fast recomputation. Port of
 /// C `ec_curve_to_basis_2f_to_hint` (`basis.c`). The Rust `MontgomeryCurve`
 /// already stores affine `A` (`C = 1`), so the C `ec_normalize_curve_and_A24`
-/// step is a no-op here. lvl1-pinned via `clear_cofactor_for_maximal_even_order`
-/// and `ec_basis_e0_2f`.
+/// step is a no-op here.
 ///
 /// Hint layout: `(hint_P << 1) | hint_A`, where `hint_A` is the LSB recording
 /// whether `A` is a QR (which x-selector was used) and `hint_P` is the 7-bit
 /// selector hint. The stored basis relabels so that `p_minus_q` holds the point
 /// above `(0 : 0)`: `q = x(P − Q_raw)`, `p_minus_q = Q_raw`.
-pub(crate) fn ec_curve_to_basis_2f_to_hint(
-    curve: &crate::ec::montgomery::MontgomeryCurve<crate::params::lvl1::Fp1Element>,
+pub(crate) fn ec_curve_to_basis_2f_to_hint<P: LevelConstants>(
+    curve: &crate::ec::montgomery::MontgomeryCurve<P::Field>,
     f: usize,
-) -> (
-    crate::ec::couple::EcBasis<crate::params::lvl1::Fp1Element>,
-    u8,
-) {
-    use crate::params::lvl1::Fp1Element;
+) -> (crate::ec::couple::EcBasis<P::Field>, u8) {
     let a = curve.a;
     if bool::from(a.is_zero()) {
-        return (ec_basis_e0_2f(f), 0);
+        return (ec_basis_e0_2f::<P>(f), 0);
     }
     let hint_a = bool::from(a.is_square());
     let (px, hint) = if hint_a {
@@ -492,11 +484,11 @@ pub(crate) fn ec_curve_to_basis_2f_to_hint(
     } else {
         find_na_x_coord(&a, 1)
     };
-    let one = Fp2::<Fp1Element>::one();
+    let one = Fp2::<P::Field>::one();
     let p_raw = MontgomeryPoint::new(px, one);
     let q_raw = MontgomeryPoint::new(a.add(&px).negate(), one);
-    let p = clear_cofactor_for_maximal_even_order(&p_raw, curve, f);
-    let q = clear_cofactor_for_maximal_even_order(&q_raw, curve, f);
+    let p = clear_cofactor_for_maximal_even_order::<P>(&p_raw, curve, f);
+    let q = clear_cofactor_for_maximal_even_order::<P>(&q_raw, curve, f);
     // Relabel so the stored P−Q is Q (above (0,0)): basis.q = x(P−Q).
     let r = difference_point(&p, &q, &a);
     let basis = crate::ec::couple::EcBasis::new(p, r, q);
@@ -504,17 +496,16 @@ pub(crate) fn ec_curve_to_basis_2f_to_hint(
 }
 
 /// Recompute the basis from a hint produced by [`ec_curve_to_basis_2f_to_hint`].
-/// Port of C `ec_curve_to_basis_2f_from_hint` (`basis.c`). Same relabeling and
-/// lvl1 pinning as the `_to_hint` variant.
-pub(crate) fn ec_curve_to_basis_2f_from_hint(
-    curve: &crate::ec::montgomery::MontgomeryCurve<crate::params::lvl1::Fp1Element>,
+/// Port of C `ec_curve_to_basis_2f_from_hint` (`basis.c`). Same relabeling as
+/// the `_to_hint` variant.
+pub(crate) fn ec_curve_to_basis_2f_from_hint<P: LevelConstants>(
+    curve: &crate::ec::montgomery::MontgomeryCurve<P::Field>,
     f: usize,
     hint: u8,
-) -> crate::ec::couple::EcBasis<crate::params::lvl1::Fp1Element> {
-    use crate::params::lvl1::Fp1Element;
+) -> crate::ec::couple::EcBasis<P::Field> {
     let a = curve.a;
     if bool::from(a.is_zero()) {
-        return ec_basis_e0_2f(f);
+        return ec_basis_e0_2f::<P>(f);
     }
     let hint_a = (hint & 1) == 1;
     let hint_p = hint >> 1;
@@ -527,19 +518,18 @@ pub(crate) fn ec_curve_to_basis_2f_from_hint(
         }
     } else if hint_a {
         // A is a QR: x(P) = −A / (1 + i·hint_P).
-        let z =
-            Fp2::<Fp1Element>::new(Fp1Element::one(), fp_small::<Fp1Element>(u32::from(hint_p)));
+        let z = Fp2::<P::Field>::new(P::Field::one(), fp_small::<P::Field>(u32::from(hint_p)));
         let inv = z.invert().into_option().unwrap_or_else(Fp2::zero);
         a.mul(&inv).negate()
     } else {
         // A is a NQR: x(P) = hint_P · A.
         fp2_mul_small(&a, u32::from(hint_p))
     };
-    let one = Fp2::<Fp1Element>::one();
+    let one = Fp2::<P::Field>::one();
     let p_raw = MontgomeryPoint::new(px, one);
     let q_raw = MontgomeryPoint::new(a.add(&px).negate(), one);
-    let p = clear_cofactor_for_maximal_even_order(&p_raw, curve, f);
-    let q = clear_cofactor_for_maximal_even_order(&q_raw, curve, f);
+    let p = clear_cofactor_for_maximal_even_order::<P>(&p_raw, curve, f);
+    let q = clear_cofactor_for_maximal_even_order::<P>(&q_raw, curve, f);
     let r = difference_point(&p, &q, &a);
     crate::ec::couple::EcBasis::new(p, r, q)
 }
@@ -549,7 +539,7 @@ mod tests {
     extern crate alloc;
     use super::*;
     use crate::ec::montgomery::MontgomeryCurve;
-    use crate::params::lvl1::Fp1Element;
+    use crate::params::lvl1::{Fp1Element, Level1};
     use alloc::vec::Vec;
     use subtle::ConstantTimeEq;
 
@@ -677,7 +667,7 @@ mod tests {
         use crate::isogeny::endomorphism::basis_e0_lvl1;
         let (p, q, _) = basis_e0_lvl1();
         // f = TORSION_EVEN_POWER ⇒ zero doublings; P, Q are the precomputed pts.
-        let basis = ec_basis_e0_2f(248);
+        let basis = ec_basis_e0_2f::<Level1>(248);
         assert_eq!(basis.p.affine_x(), p.affine_x(), "E0 basis P matches");
         assert_eq!(basis.q.affine_x(), q.affine_x(), "E0 basis Q matches");
     }
@@ -687,8 +677,8 @@ mod tests {
         // QR-A curve: A = t² exercises the find_nqr_factor selector path.
         let t = Fp2::<Fp1Element>::new(fp_small::<Fp1Element>(2), fp_small::<Fp1Element>(1));
         let cqr = MontgomeryCurve::new(t.square());
-        let (b0, h0) = ec_curve_to_basis_2f_to_hint(&cqr, 248);
-        let b0r = ec_curve_to_basis_2f_from_hint(&cqr, 248, h0);
+        let (b0, h0) = ec_curve_to_basis_2f_to_hint::<Level1>(&cqr, 248);
+        let b0r = ec_curve_to_basis_2f_from_hint::<Level1>(&cqr, 248, h0);
         assert_eq!(h0 & 1, 1, "A QR ⇒ hint_A bit set");
         assert_eq!(b0.p.affine_x(), b0r.p.affine_x(), "QR P round-trips");
         assert_eq!(b0.q.affine_x(), b0r.q.affine_x(), "QR Q round-trips");
@@ -708,8 +698,8 @@ mod tests {
             assert!(g < 2000, "found a NQR A");
         }
         let cnqr = MontgomeryCurve::new(a);
-        let (b1, h1) = ec_curve_to_basis_2f_to_hint(&cnqr, 248);
-        let b1r = ec_curve_to_basis_2f_from_hint(&cnqr, 248, h1);
+        let (b1, h1) = ec_curve_to_basis_2f_to_hint::<Level1>(&cnqr, 248);
+        let b1r = ec_curve_to_basis_2f_from_hint::<Level1>(&cnqr, 248, h1);
         assert_eq!(h1 & 1, 0, "A NQR ⇒ hint_A bit clear");
         assert_eq!(b1.p.affine_x(), b1r.p.affine_x(), "NQR P round-trips");
         assert_eq!(b1.q.affine_x(), b1r.q.affine_x(), "NQR Q round-trips");
@@ -762,7 +752,7 @@ mod tests {
         };
         // Sanity: P itself is NOT killed by 2^248 (has the odd part).
         assert!(!bool::from(p.ladder(&pow248, &a24).is_infinity()));
-        let cleared = clear_cofactor_for_maximal_even_order(&p, &curve, 248);
+        let cleared = clear_cofactor_for_maximal_even_order::<Level1>(&p, &curve, 248);
         // After clearing the odd cofactor, order divides 2^248 …
         assert!(
             bool::from(cleared.ladder(&pow248, &a24).is_infinity()),

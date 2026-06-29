@@ -29,9 +29,8 @@ use crate::ec::jacobian::lift_basis;
 use crate::ec::montgomery::{MontgomeryCurve, MontgomeryPoint};
 use crate::ec::weil::weil;
 use crate::isogeny::clapotis::{find_uv, lattice_reduced_norm, theta_endomorphism};
-use crate::isogeny::endomorphism::{basis_e0_lvl1, endomorphism_application_rational_even_basis};
 use crate::isogeny::fixed_degree::{
-    fixed_degree_isogeny_and_eval, fixed_degree_isogeny_and_eval_keygen,
+    FixedDegreeLevel, fixed_degree_isogeny_and_eval, fixed_degree_isogeny_and_eval_keygen,
 };
 use crate::isogeny::theta_chain::theta_chain_compute_and_eval_randomized;
 use crate::level_constants::{EvenBasis, LevelConstants};
@@ -41,8 +40,6 @@ use crypto_bigint::{Int, Uint};
 use rand_core::CryptoRng;
 use subtle::ConstantTimeEq;
 
-/// Level-1 even-torsion power `TORSION_EVEN_POWER` (`E0[2^248]`).
-const F: u32 = 248;
 /// `find_uv` quaternion-side limb width. L=16 (1024-bit) so the real
 /// connecting/secret ideals — norm up to SEC_DEGREE ~ 2^512, basis entries
 /// ~2^512 — fit `Int<L>` (the toy/small fixtures fit too, just wider). The EC
@@ -50,6 +47,20 @@ const F: u32 = 248;
 const L: usize = 16;
 /// `fixed_degree` quaternion-side limb width (`64·QL ≥ 3·bits(p)+2`).
 const QL: usize = 12;
+
+/// A Clapotis codomain curve paired with its transported even-torsion basis.
+pub(crate) type CurveAndBasis<P> = (
+    MontgomeryCurve<<P as LevelConstants>::Field>,
+    EcBasis<<P as LevelConstants>::Field>,
+);
+
+/// A Clapotis codomain curve and basis together with the retained spine ideal.
+#[cfg(feature = "kgen")]
+pub(crate) type CurveBasisIdeal<P> = (
+    MontgomeryCurve<<P as LevelConstants>::Field>,
+    EcBasis<<P as LevelConstants>::Field>,
+    LeftIdeal<L>,
+);
 
 /// `|x|` of a signed `Int<L>` as a `Uint<L>`.
 #[inline]
@@ -65,7 +76,7 @@ fn abs_uint(x: &Int<L>) -> Uint<L> {
 /// Returns `None` if `find_uv` finds no Bézout decomposition, a
 /// fixed-degree isogeny / lift / endomorphism scaling fails, or the
 /// `(2,2)`-chain does not split.
-pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
+pub(crate) fn ideal_to_isogeny_clapotis_idx0<P: FixedDegreeLevel, R: CryptoRng>(
     lideal: &LeftIdeal<L>,
     p: &Uint<L>,
     witnesses: &[Uint<QL>],
@@ -73,9 +84,10 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
     max_trials: usize,
     keygen: bool,
     rng: &mut R,
-) -> Option<(MontgomeryCurve<Fp1Element>, EcBasis<Fp1Element>)> {
+) -> Option<CurveAndBasis<P>> {
+    let f = u32::try_from(P::F).expect("F fits u32");
     // 1. find_uv at the production target 2^F.
-    let target = *Uint::<L>::ONE.shl_vartime(F).as_int();
+    let target = *Uint::<L>::ONE.shl_vartime(f).as_int();
     let r = find_uv::<L>(&target, lideal, p, &[], 2).ok()?;
     debug_assert!(r.index_alternate_order_1 == 0 && r.index_alternate_order_2 == 0);
     // N(I) from the lattice determinant — convention-independent (the
@@ -93,7 +105,7 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
     let u_abs = abs_uint(&r.u);
     let v_abs = abs_uint(&r.v);
     let exp_gcd = u_abs.trailing_zeros().min(v_abs.trailing_zeros());
-    let exp = F - exp_gcd;
+    let exp = f - exp_gcd;
     let u_s = u_abs.wrapping_shr(exp_gcd);
     let v_s = v_abs.wrapping_shr(exp_gcd);
     let d1 = abs_uint(&r.d1);
@@ -119,11 +131,11 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
     }
 
     // 4. φ_u and φ_v: push the E0[2^F] basis (E2-factor = O).
-    let (bp, bq, bpmq) = basis_e0_lvl1();
-    let inf = MontgomeryPoint::<Fp1Element>::infinity();
-    let push_basis = |a: MontgomeryPoint<Fp1Element>,
-                      b: MontgomeryPoint<Fp1Element>,
-                      c: MontgomeryPoint<Fp1Element>| {
+    let (bp, bq, bpmq) = P::basis_e0();
+    let inf = MontgomeryPoint::<P::Field>::infinity();
+    let push_basis = |a: MontgomeryPoint<P::Field>,
+                      b: MontgomeryPoint<P::Field>,
+                      c: MontgomeryPoint<P::Field>| {
         [
             CoupleMontgomeryPoint::new(a, inf),
             CoupleMontgomeryPoint::new(b, inf),
@@ -134,7 +146,7 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
     let eval_u = push_basis(bp, bq, bpmq);
     let mut out_u = [CoupleMontgomeryPoint::infinity(); 3];
     let (_lu, fu) = if keygen {
-        fixed_degree_isogeny_and_eval_keygen(
+        fixed_degree_isogeny_and_eval_keygen::<P, _>(
             &u_s.resize::<QL>(),
             &eval_u,
             &mut out_u,
@@ -143,7 +155,7 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
             rng,
         )?
     } else {
-        fixed_degree_isogeny_and_eval(
+        fixed_degree_isogeny_and_eval::<P, _>(
             &u_s.resize::<QL>(),
             &eval_u,
             &mut out_u,
@@ -158,7 +170,7 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
     let eval_v = push_basis(bp, bq, bpmq);
     let mut out_v = [CoupleMontgomeryPoint::infinity(); 3];
     let (_lv, fv) = if keygen {
-        fixed_degree_isogeny_and_eval_keygen(
+        fixed_degree_isogeny_and_eval_keygen::<P, _>(
             &v_s.resize::<QL>(),
             &eval_v,
             &mut out_v,
@@ -167,7 +179,7 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
             rng,
         )?
     } else {
-        fixed_degree_isogeny_and_eval(
+        fixed_degree_isogeny_and_eval::<P, _>(
             &v_s.resize::<QL>(),
             &eval_v,
             &mut out_v,
@@ -199,14 +211,14 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
 
     // 5. Apply θ (scaled by 1/d1) to φ_v's image basis on Fv.E1.
     let a24_fv1 = fv.e1.a24();
-    let (t2p, t2q, t2pmq) = endomorphism_application_rational_even_basis::<L>(
+    let (t2p, t2q, t2pmq) = P::endomorphism_application_rational_even_basis::<L>(
         &bas2.0,
         &bas2.1,
         &bas2.2,
         &theta.num,
         &theta.denom,
         &d1,
-        F as usize,
+        f as usize,
         &a24_fv1,
     )?;
 
@@ -240,7 +252,7 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
         CoupleJacobianPoint::new(q1, q2),
         CoupleJacobianPoint::infinity(),
     )
-    .double_iter(F - exp, &e01);
+    .double_iter(f - exp, &e01);
 
     #[cfg(feature = "kat")]
     if keygen && std::env::var("PQSQ_DUMP_AC").is_ok() {
@@ -295,10 +307,10 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
 
     // 7. Weil-pairing factor selection: the correct factor pairs as
     //    e(bas)^{d1·u²}.
-    let e0 = MontgomeryCurve::<Fp1Element>::e0();
-    let w0 = weil(F, &bp, &bq, &bpmq, &e0);
-    let w1 = weil(F, &tt1.p1, &tt2.p1, &tt1m2.p1, &theta_cod.e1);
-    let mask_f = Uint::<L>::ONE.shl_vartime(F).wrapping_sub(&Uint::ONE);
+    let e0 = MontgomeryCurve::<P::Field>::e0();
+    let w0 = weil(f, &bp, &bq, &bpmq, &e0);
+    let w1 = weil(f, &tt1.p1, &tt2.p1, &tt1m2.p1, &theta_cod.e1);
+    let mask_f = Uint::<L>::ONE.shl_vartime(f).wrapping_sub(&Uint::ONE);
     let k = d1.wrapping_mul(&u_s).wrapping_mul(&u_s) & mask_f; // d1·u² mod 2^F
     let test_pow = w0.pow_vartime(&k.to_le_bytes());
 
@@ -311,14 +323,14 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<R: CryptoRng>(
     // 8. Apply β1 (scaled by 1/(u·d1)) to the selected basis.
     let a24_cod = codomain.a24();
     let ud1 = u_s.wrapping_mul(&d1);
-    let (op, oq, opmq) = endomorphism_application_rational_even_basis::<L>(
+    let (op, oq, opmq) = P::endomorphism_application_rational_even_basis::<L>(
         &basis_pts.0,
         &basis_pts.1,
         &basis_pts.2,
         &r.beta1.num,
         &r.beta1.denom,
         &ud1,
-        F as usize,
+        f as usize,
         &a24_cod,
     )?;
 
@@ -370,7 +382,7 @@ fn connecting_norm_indexed<P: LevelConstants>(idx: usize) -> Uint<L> {
 /// and β1 endomorphism APPLICATIONS stay index-0 (the elements are in the
 /// standard frame post-β); the alternate curve enters only via the starting-φ
 /// and the Weil reference.
-fn clapotis_combine_indexed<R: CryptoRng>(
+fn clapotis_combine_indexed<P: FixedDegreeLevel, R: CryptoRng>(
     r: &crate::isogeny::clapotis::FindUvResult<L>,
     lideal: &LeftIdeal<L>,
     p: &Uint<L>,
@@ -378,9 +390,10 @@ fn clapotis_combine_indexed<R: CryptoRng>(
     sample_bound: i64,
     max_trials: usize,
     rng: &mut R,
-) -> Option<(MontgomeryCurve<Fp1Element>, EcBasis<Fp1Element>)> {
+) -> Option<CurveAndBasis<P>> {
     use crate::isogeny::fixed_degree::fixed_degree_isogeny_and_eval_indexed;
 
+    let f = u32::try_from(P::F).expect("F fits u32");
     let index1 = r.index_alternate_order_1;
     let index2 = r.index_alternate_order_2;
 
@@ -390,15 +403,15 @@ fn clapotis_combine_indexed<R: CryptoRng>(
     let u_abs = abs_uint(&r.u);
     let v_abs = abs_uint(&r.v);
     let exp_gcd = u_abs.trailing_zeros().min(v_abs.trailing_zeros());
-    let exp = F - exp_gcd;
+    let exp = f - exp_gcd;
     let u_s = u_abs.wrapping_shr(exp_gcd);
     let v_s = v_abs.wrapping_shr(exp_gcd);
     let d1 = abs_uint(&r.d1);
 
-    let inf = MontgomeryPoint::<Fp1Element>::infinity();
-    let push = |a: MontgomeryPoint<Fp1Element>,
-                b: MontgomeryPoint<Fp1Element>,
-                c: MontgomeryPoint<Fp1Element>| {
+    let inf = MontgomeryPoint::<P::Field>::infinity();
+    let push = |a: MontgomeryPoint<P::Field>,
+                b: MontgomeryPoint<P::Field>,
+                c: MontgomeryPoint<P::Field>| {
         [
             CoupleMontgomeryPoint::new(a, inf),
             CoupleMontgomeryPoint::new(b, inf),
@@ -407,10 +420,10 @@ fn clapotis_combine_indexed<R: CryptoRng>(
     };
 
     // 4. φ_u from the index1 NICE curve (D1); φ_v from index2 (D2).
-    let (bp1, bq1, bpmq1) = starting_basis_indexed::<Level1>(index1);
+    let (bp1, bq1, bpmq1) = starting_basis_indexed::<P>(index1);
     let eval_u = push(bp1, bq1, bpmq1);
     let mut out_u = [CoupleMontgomeryPoint::infinity(); 3];
-    let (_lu, fu) = fixed_degree_isogeny_and_eval_indexed(
+    let (_lu, fu) = fixed_degree_isogeny_and_eval_indexed::<P, _>(
         index1,
         &u_s.resize::<QL>(),
         &eval_u,
@@ -422,10 +435,10 @@ fn clapotis_combine_indexed<R: CryptoRng>(
     )?;
     let bas_u = (out_u[0].p1, out_u[1].p1, out_u[2].p1);
 
-    let (bp2, bq2, bpmq2) = starting_basis_indexed::<Level1>(index2);
+    let (bp2, bq2, bpmq2) = starting_basis_indexed::<P>(index2);
     let eval_v = push(bp2, bq2, bpmq2);
     let mut out_v = [CoupleMontgomeryPoint::infinity(); 3];
-    let (_lv, fv) = fixed_degree_isogeny_and_eval_indexed(
+    let (_lv, fv) = fixed_degree_isogeny_and_eval_indexed::<P, _>(
         index2,
         &v_s.resize::<QL>(),
         &eval_v,
@@ -439,16 +452,16 @@ fn clapotis_combine_indexed<R: CryptoRng>(
 
     // 5. Apply θ (scaled by 1/(d1·N(conn[index2]))) to φ_v's image (D3); the
     //    application itself is index-0 (standard-frame θ).
-    let extra_theta = d1.wrapping_mul(&connecting_norm_indexed::<Level1>(index2));
+    let extra_theta = d1.wrapping_mul(&connecting_norm_indexed::<P>(index2));
     let a24_fv1 = fv.e1.a24();
-    let (t2p, t2q, t2pmq) = endomorphism_application_rational_even_basis::<L>(
+    let (t2p, t2q, t2pmq) = P::endomorphism_application_rational_even_basis::<L>(
         &bas2.0,
         &bas2.1,
         &bas2.2,
         &theta.num,
         &theta.denom,
         &extra_theta,
-        F as usize,
+        f as usize,
         &a24_fv1,
     )?;
 
@@ -461,7 +474,7 @@ fn clapotis_combine_indexed<R: CryptoRng>(
         CoupleJacobianPoint::new(q1, q2),
         CoupleJacobianPoint::infinity(),
     )
-    .double_iter(F - exp, &e01);
+    .double_iter(f - exp, &e01);
 
     let eval_chain = push(bas_u.0, bas_u.1, bas_u.2);
     let mut out_chain = [CoupleMontgomeryPoint::infinity(); 3];
@@ -478,10 +491,10 @@ fn clapotis_combine_indexed<R: CryptoRng>(
 
     // 7. Weil-pairing factor selection — reference on the index1 NICE
     //    curve/basis (D5); correct factor pairs as e(bas1)^{d1·u²}.
-    let e1_curve = starting_curve_indexed::<Level1>(index1);
-    let w0 = weil(F, &bp1, &bq1, &bpmq1, &e1_curve);
-    let w1 = weil(F, &tt1.p1, &tt2.p1, &tt1m2.p1, &theta_cod.e1);
-    let mask_f = Uint::<L>::ONE.shl_vartime(F).wrapping_sub(&Uint::ONE);
+    let e1_curve = starting_curve_indexed::<P>(index1);
+    let w0 = weil(f, &bp1, &bq1, &bpmq1, &e1_curve);
+    let w1 = weil(f, &tt1.p1, &tt2.p1, &tt1m2.p1, &theta_cod.e1);
+    let mask_f = Uint::<L>::ONE.shl_vartime(f).wrapping_sub(&Uint::ONE);
     let k = d1.wrapping_mul(&u_s).wrapping_mul(&u_s) & mask_f;
     let test_pow = w0.pow_vartime(&k.to_le_bytes());
 
@@ -495,15 +508,15 @@ fn clapotis_combine_indexed<R: CryptoRng>(
     let a24_cod = codomain.a24();
     let ud1 = u_s
         .wrapping_mul(&d1)
-        .wrapping_mul(&connecting_norm_indexed::<Level1>(index1));
-    let (op, oq, opmq) = endomorphism_application_rational_even_basis::<L>(
+        .wrapping_mul(&connecting_norm_indexed::<P>(index1));
+    let (op, oq, opmq) = P::endomorphism_application_rational_even_basis::<L>(
         &basis_pts.0,
         &basis_pts.1,
         &basis_pts.2,
         &r.beta1.num,
         &r.beta1.denom,
         &ud1,
-        F as usize,
+        f as usize,
         &a24_cod,
     )?;
 
@@ -519,20 +532,21 @@ fn clapotis_combine_indexed<R: CryptoRng>(
 /// SQIsign-shaped input (`find_uv_alternate_orders` rescales by the smallest
 /// basis element ⇒ `cached_norm` must be a perfect square `N²`); the real
 /// keygen secret ideal is so shaped.
-pub(crate) fn ideal_to_isogeny_clapotis<R: CryptoRng>(
+pub(crate) fn ideal_to_isogeny_clapotis<P: FixedDegreeLevel, R: CryptoRng>(
     lideal: &LeftIdeal<L>,
     p: &Uint<L>,
     witnesses: &[Uint<QL>],
     sample_bound: i64,
     max_trials: usize,
     rng: &mut R,
-) -> Option<(MontgomeryCurve<Fp1Element>, EcBasis<Fp1Element>)> {
-    use crate::quaternion::connecting_ideals as ci;
+) -> Option<CurveAndBasis<P>> {
     use crate::quaternion::lattice::widen_int_lattice;
 
-    let target = *Uint::<L>::ONE.shl_vartime(F).as_int();
+    let f = u32::try_from(P::F).expect("F fits u32");
+    let target = *Uint::<L>::ONE.shl_vartime(f).as_int();
 
-    // Widen the 6 real ALTERNATE_CONNECTING_IDEALS (L8) to the spine width L16.
+    // TODO(lvl3): widen L/QL for ~2^768 norms before exercising the lvl3 spine.
+    // Widen the per-level ALTERNATE_CONNECTING_IDEALS (L8) to the spine width L16.
     let widen = |id: &LeftIdeal<8>| -> LeftIdeal<L> {
         let mut basis = [[Int::<L>::from_i64(0); 4]; 4];
         for (brow, idrow) in basis.iter_mut().zip(&id.basis) {
@@ -546,14 +560,12 @@ pub(crate) fn ideal_to_isogeny_clapotis<R: CryptoRng>(
             id.cached_norm.resize::<L>(),
         )
     };
-    let alts = [
-        widen(&ci::alternate_connecting_ideal_0_l1()),
-        widen(&ci::alternate_connecting_ideal_1_l1()),
-        widen(&ci::alternate_connecting_ideal_2_l1()),
-        widen(&ci::alternate_connecting_ideal_3_l1()),
-        widen(&ci::alternate_connecting_ideal_4_l1()),
-        widen(&ci::alternate_connecting_ideal_5_l1()),
-    ];
+    // TODO(lvl3): array length is lvl1's NUM_ALTERNATE_EXTREMAL_ORDERS (6); lvl3
+    // is 7. `P::NUM_ALTERNATE_EXTREMAL_ORDERS` is the right count but can't be a
+    // const-generic array length on stable without `generic_const_exprs`, so the
+    // length is pinned to 6 here. Correct for lvl1 (the byte-exact gate).
+    let alts: [LeftIdeal<L>; 6] =
+        core::array::from_fn(|idx| widen(&P::alternate_connecting_ideal(idx)));
 
     // Try the proven j=0-only decomposition first (empty alts → the
     // find_uv path that enumerates the LLL-reduced input directly, with no
@@ -568,7 +580,7 @@ pub(crate) fn ideal_to_isogeny_clapotis<R: CryptoRng>(
             Err(_) => return None,
         },
     };
-    clapotis_combine_indexed(&r, lideal, p, witnesses, sample_bound, max_trials, rng)
+    clapotis_combine_indexed::<P, _>(&r, lideal, p, witnesses, sample_bound, max_trials, rng)
 }
 
 /// SQIsign signing commitment — C `commit` (`sign.c`). Sample a random `O_0`
@@ -586,17 +598,12 @@ pub(crate) fn ideal_to_isogeny_clapotis<R: CryptoRng>(
 ///
 /// `kgen`-gated: used by both keygen and signing commitment steps.
 #[cfg(feature = "kgen")]
-pub(crate) fn commit<R: CryptoRng>(
+pub(crate) fn commit<P: FixedDegreeLevel, R: CryptoRng>(
     witnesses: &[Uint<QL>],
     sample_bound: i64,
     max_trials: usize,
     rng: &mut R,
-) -> Option<(
-    MontgomeryCurve<Fp1Element>,
-    EcBasis<Fp1Element>,
-    LeftIdeal<L>,
-)> {
-    use crate::params::lvl1::{com_degree, prime};
+) -> Option<CurveBasisIdeal<P>> {
     use crate::quaternion::lattice::narrow_int_lattice;
     use crate::quaternion::lll::quat_lideal_prime_norm_reduced_equivalent;
     use crate::quaternion::o0_mul::{c_ideal_to_left_ideal, ideal_basis_o0_to_standard_col};
@@ -610,12 +617,18 @@ pub(crate) fn commit<R: CryptoRng>(
     // WL=64 (4096 bits) has the headroom (verified by left-closure of the
     // reduced ideal — `reduced_norm_vartime` itself false-negatives at this
     // scale because its own det_4x4 overflows, so it is NOT a validity oracle).
+    // TODO(lvl3): revisit SL/WL for level-3 real-scale norms and reductions.
     const SL: usize = 64;
     const WL: usize = 64;
-    let com_sl = com_degree().resize::<SL>();
-    let p_sl = prime().resize::<SL>();
-    let p_wl = prime().resize::<WL>();
-    let p16 = prime().resize::<L>();
+    // TODO(lvl3): expose com_degree/sec_degree through the level adapter.
+    let com_sl = match P::LEVEL {
+        1 => crate::params::lvl1::com_degree().resize::<SL>(),
+        3 => crate::params::lvl3::com_degree().resize::<SL>(),
+        _ => return None,
+    };
+    let p_sl = P::prime::<SL>();
+    let p_wl = P::prime::<WL>();
+    let p16 = P::prime::<L>();
     let wit_sl: [Uint<SL>; 12] =
         [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
     let wit_wl: [Uint<WL>; 12] =
@@ -663,7 +676,7 @@ pub(crate) fn commit<R: CryptoRng>(
     let spine_ideal = c_ideal_to_left_ideal::<L>(&jb16, &jd16, &q16);
     // Try the index-0 spine first (C tries index 0 before the alternate
     // orders); fall back to the general alt-orders spine if idx0 doesn't apply.
-    let (e_com, basis) = ideal_to_isogeny_clapotis_idx0(
+    let (e_com, basis) = ideal_to_isogeny_clapotis_idx0::<P, _>(
         &spine_ideal,
         &p16,
         witnesses,
@@ -673,7 +686,14 @@ pub(crate) fn commit<R: CryptoRng>(
         rng,
     )
     .or_else(|| {
-        ideal_to_isogeny_clapotis(&spine_ideal, &p16, witnesses, sample_bound, max_trials, rng)
+        ideal_to_isogeny_clapotis::<P, _>(
+            &spine_ideal,
+            &p16,
+            witnesses,
+            sample_bound,
+            max_trials,
+            rng,
+        )
     })?;
     Some((e_com, basis, spine_ideal))
 }
@@ -753,14 +773,17 @@ pub(crate) fn compute_dim2_isogeny_challenge<R: CryptoRng>(
 /// the basis-change matrix `mat_BAcan_BA0`, the canonical basis `B_Acan`, the
 /// public-key hint, and the pushed E0 basis `B_A0`.
 #[cfg(feature = "kgen")]
-pub(crate) type KeygenLvl1Output = (
-    MontgomeryCurve<Fp1Element>,
+pub(crate) type KeygenOutput<P> = (
+    MontgomeryCurve<<P as LevelConstants>::Field>,
     LeftIdeal<L>,
     [[Uint<8>; 2]; 2],
-    EcBasis<Fp1Element>,
+    EcBasis<<P as LevelConstants>::Field>,
     u8,
-    EcBasis<Fp1Element>,
+    EcBasis<<P as LevelConstants>::Field>,
 );
+
+#[cfg(feature = "kgen")]
+pub(crate) type KeygenLvl1Output = KeygenOutput<Level1>;
 
 /// Functional (self-consistent, NOT byte-exact) keygen at lvl1. Reuses
 /// [`commit`]'s sampler→prime-norm-reduce→Clapotis-spine pipeline (the secret
@@ -778,26 +801,34 @@ pub(crate) type KeygenLvl1Output = (
 /// applies it directly to `[1, chall_coeff]` (canonical-basis kernel coords) to
 /// get the kernel coords in the secret-pushed E0 frame.
 #[cfg(feature = "kgen")]
+pub(crate) fn keygen<P: FixedDegreeLevel, R: CryptoRng>(
+    witnesses: &[Uint<QL>],
+    sample_bound: i64,
+    max_trials: usize,
+    rng: &mut R,
+) -> Option<KeygenOutput<P>> {
+    let torsion_even_power = P::F;
+
+    // E_A + the pushed E0 basis (B_A0) + the (prime-norm-reduced) secret ideal.
+    let (e_a, b_a0, secret_ideal) = commit::<P, _>(witnesses, sample_bound, max_trials, rng)?;
+    // Canonical basis of E_A[2^f] + its hint.
+    let (b_acan, hint_pk) = P::ec_curve_to_basis_2f_to_hint(&e_a, torsion_even_power)?;
+    // Basis-change matrix = B_Acan expressed in B_A0 coords (C keygen.c:54
+    // change_of_basis_matrix_tate(canonical, B_0_two) = change_of_basis_matrix(
+    // B_Acan, B_A0)). Both bases at order 2^f.
+    let f = u32::try_from(torsion_even_power).ok()?;
+    let mat = P::change_of_basis_matrix(&b_acan, &b_a0, &e_a, f)?;
+    Some((e_a, secret_ideal, mat, b_acan, hint_pk, b_a0))
+}
+
+#[cfg(feature = "kgen")]
 pub(crate) fn keygen_lvl1<R: CryptoRng>(
     witnesses: &[Uint<QL>],
     sample_bound: i64,
     max_trials: usize,
     rng: &mut R,
 ) -> Option<KeygenLvl1Output> {
-    use crate::ec::biscalar::ec_curve_to_basis_2f_to_hint;
-    use crate::verification::change_of_basis_matrix;
-    const TORSION_EVEN_POWER: usize = 248;
-
-    // E_A + the pushed E0 basis (B_A0) + the (prime-norm-reduced) secret ideal.
-    let (e_a, b_a0, secret_ideal) = commit(witnesses, sample_bound, max_trials, rng)?;
-    // Canonical basis of E_A[2^f] + its hint.
-    let (b_acan, hint_pk) = ec_curve_to_basis_2f_to_hint(&e_a, TORSION_EVEN_POWER);
-    // Basis-change matrix = B_Acan expressed in B_A0 coords (C keygen.c:54
-    // change_of_basis_matrix_tate(canonical, B_0_two) = change_of_basis_matrix(
-    // B_Acan, B_A0)). Both bases at order 2^f.
-    let f = u32::try_from(TORSION_EVEN_POWER).expect("248 fits u32");
-    let mat = change_of_basis_matrix(&b_acan, &b_a0, &e_a, f)?;
-    Some((e_a, secret_ideal, mat, b_acan, hint_pk, b_a0))
+    keygen::<Level1, R>(witnesses, sample_bound, max_trials, rng)
 }
 
 /// Sign — the auxiliary isogeny step. Port of C
@@ -852,7 +883,7 @@ pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
     // (the (0,0) decomposition the commit uses; keygen=false), falling back to
     // the general alternate-orders evaluator. The general combine_indexed
     // (0,0) path's randomized (2,2)-split fails on these aux ideals.
-    ideal_to_isogeny_clapotis_idx0(
+    ideal_to_isogeny_clapotis_idx0::<Level1, _>(
         &aux_resp_com,
         &p16,
         witnesses,
@@ -862,7 +893,7 @@ pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
         rng,
     )
     .or_else(|| {
-        ideal_to_isogeny_clapotis(
+        ideal_to_isogeny_clapotis::<Level1, _>(
             &aux_resp_com,
             &p16,
             witnesses,
@@ -876,6 +907,8 @@ pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
 #[cfg(all(test, feature = "kat"))]
 mod tests {
     use super::*;
+    use crate::isogeny::endomorphism::basis_e0_lvl1;
+    use crate::params::Params;
     use crate::rng::NistPqcRng;
 
     fn witnesses() -> [Uint<QL>; 5] {
@@ -919,7 +952,7 @@ mod tests {
         use crate::verification::ec_curve_verify_a;
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
         let a24 = e0.to_a24();
-        let base = ec_basis_e0_2f(248);
+        let base = ec_basis_e0_2f::<Level1>(248);
         // order 2^(HD_extra2 + pow4) = 2^6.
         let b = EcBasis::new(
             a24.x_double_n(&base.p, 242),
@@ -1070,13 +1103,13 @@ mod tests {
             widen_id(&ci::alternate_connecting_ideal_4_l1()),
             widen_id(&ci::alternate_connecting_ideal_5_l1()),
         ];
-        let target = *Uint::<L>::ONE.shl_vartime(F).as_int();
+        let target = *Uint::<L>::ONE.shl_vartime(Level1::F as u32).as_int();
         let fuv = find_uv::<L>(&target, &spine_ideal, &p16, &alts, 2);
         std::eprintln!("STEP4a find_uv(alts) = {:?}", fuv.as_ref().map(|_| "Ok"));
         let fuv0 = find_uv::<L>(&target, &spine_ideal, &p16, &[], 2);
         std::eprintln!("STEP4b find_uv(idx0) = {:?}", fuv0.as_ref().map(|_| "Ok"));
         let wit_ql: [Uint<QL>; 5] = [2u64, 3, 5, 7, 11].map(Uint::from_u64);
-        let idx0 = ideal_to_isogeny_clapotis_idx0(
+        let idx0 = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
             &spine_ideal,
             &p16,
             &wit_ql,
@@ -1253,14 +1286,15 @@ mod tests {
     fn commit_produces_valid_commitment_curve_and_basis() {
         let w = witnesses();
         let mut rng = NistPqcRng::new(&[0x42u8; 48]);
-        let (e_com, basis, ideal) = commit(&w, 64, 1 << 14, &mut rng).expect("commit succeeds");
+        let (e_com, basis, ideal) =
+            commit::<Level1, _>(&w, 64, 1 << 14, &mut rng).expect("commit succeeds");
 
         // Weil-degree oracle on the pushed canonical basis. The isogeny degree
         // is N(ideal) = the reduced norm (= sqrt of cached_norm, which stores
         // the index N²), NOT cached_norm itself.
         let (bp, bq, bpmq) = basis_e0_lvl1();
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
-        let w_in = weil(F, &bp, &bq, &bpmq, &e0);
+        let w_in = weil(Level1::F as u32, &bp, &bq, &bpmq, &e0);
         let q = ideal
             .reduced_norm_vartime()
             .expect("reduced ideal norm (small q fits L16)");
@@ -1268,7 +1302,7 @@ mod tests {
         let expected_inv = expected.invert().expect("pairing value is a unit");
 
         let pq_out = basis.p.x_add(&basis.q, &basis.p_minus_q);
-        let w_out = weil(F, &basis.p, &basis.q, &pq_out, &e_com);
+        let w_out = weil(Level1::F as u32, &basis.p, &basis.q, &pq_out, &e_com);
         assert!(
             w_out == expected || w_out == expected_inv,
             "Weil-degree oracle: e(out) must be e(E0)^N(ideal)",
@@ -1337,7 +1371,7 @@ mod tests {
         // the codomain. A strong correctness oracle on the isogeny degree.
         let (bp, bq, bpmq) = basis_e0_lvl1();
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
-        let w_in = weil(F, &bp, &bq, &bpmq, &e0);
+        let w_in = weil(Level1::F as u32, &bp, &bq, &bpmq, &e0);
         let n1_8 = n1.resize::<L>();
         let expected = w_in.pow_vartime(&n1_8.to_le_bytes());
         let expected_inv = expected.invert().expect("Weil pairing value is a unit");
@@ -1373,13 +1407,24 @@ mod tests {
                 ideal_bl.cached_norm.resize::<L>(),
             );
 
-            let (codomain, basis) =
-                ideal_to_isogeny_clapotis_idx0(&lideal, &p, &w, 64, 1 << 14, false, &mut rng)
-                    .unwrap_or_else(|| {
-                        panic!("spine must produce codomain+basis (seed {seed:#x})")
-                    });
+            let (codomain, basis) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+                &lideal,
+                &p,
+                &w,
+                64,
+                1 << 14,
+                false,
+                &mut rng,
+            )
+            .unwrap_or_else(|| panic!("spine must produce codomain+basis (seed {seed:#x})"));
 
-            let w_out = weil(F, &basis.p, &basis.q, &basis.p_minus_q, &codomain);
+            let w_out = weil(
+                Level1::F as u32,
+                &basis.p,
+                &basis.q,
+                &basis.p_minus_q,
+                &codomain,
+            );
             let matches =
                 bool::from(w_out.ct_eq(&expected)) || bool::from(w_out.ct_eq(&expected_inv));
             assert!(
@@ -1438,7 +1483,7 @@ mod tests {
 
         let (bp, bq, bpmq) = basis_e0_lvl1();
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
-        let w_in = weil(F, &bp, &bq, &bpmq, &e0);
+        let w_in = weil(Level1::F as u32, &bp, &bq, &bpmq, &e0);
 
         for seed in [0x11u8, 0x22] {
             let mut rng = NistPqcRng::new(&[seed; 48]);
@@ -1480,9 +1525,16 @@ mod tests {
             );
 
             // Run the Clapotis isogeny → public-key curve E_A.
-            let (e_a, basis) =
-                ideal_to_isogeny_clapotis_idx0(&lideal, &p16, &w, 64, 1 << 14, false, &mut rng)
-                    .unwrap_or_else(|| panic!("keygen spine must produce E_A (seed {seed:#x})"));
+            let (e_a, basis) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+                &lideal,
+                &p16,
+                &w,
+                64,
+                1 << 14,
+                false,
+                &mut rng,
+            )
+            .unwrap_or_else(|| panic!("keygen spine must produce E_A (seed {seed:#x})"));
 
             // Public key = E_A's Montgomery A-coefficient (PK_BYTES = 65).
             let pk = crate::wire::PublicKey::<Fp1Element>::new(e_a.a, 0);
@@ -1493,7 +1545,7 @@ mod tests {
             let n16 = n.resize::<L>();
             let expected = w_in.pow_vartime(&n16.to_le_bytes());
             let expected_inv = expected.invert().expect("Weil value is a unit");
-            let w_out = weil(F, &basis.p, &basis.q, &basis.p_minus_q, &e_a);
+            let w_out = weil(Level1::F as u32, &basis.p, &basis.q, &basis.p_minus_q, &e_a);
             assert!(
                 bool::from(w_out.ct_eq(&expected)) || bool::from(w_out.ct_eq(&expected_inv)),
                 "keygen E_A must be the degree-N(I) isogeny codomain (seed {seed:#x})",
@@ -1654,9 +1706,16 @@ mod tests {
         // the C oracle — prime suspect `basis_e0_lvl1()` vs C
         // `CURVES_WITH_ENDOMORPHISMS[0].basis_even`. SQIsign keygen applies NO
         // post-hoc normalization, so the fix is a construction match.
-        let (e_a, _basis) =
-            ideal_to_isogeny_clapotis_idx0(&lideal, &p16, &w, 64, 1 << 14, true, &mut rng)
-                .expect("idx0 spine produces E_A for the KAT[0] secret ideal");
+        let (e_a, _basis) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+            &lideal,
+            &p16,
+            &w,
+            64,
+            1 << 14,
+            true,
+            &mut rng,
+        )
+        .expect("idx0 spine produces E_A for the KAT[0] secret ideal");
 
         // pk[0..64] = ec_curve_to_bytes(E_A) = fp2_encode(A·C⁻¹). Our
         // `MontgomeryCurve.a` is the AFFINE coefficient (C ≡ 1), so it already
@@ -1728,9 +1787,16 @@ mod tests {
         );
         let p16 = crate::params::lvl1::prime().resize::<L>();
         let w = witnesses();
-        let (e_a, _basis) =
-            ideal_to_isogeny_clapotis_idx0(&lideal, &p16, &w, 64, 1 << 14, true, &mut rng)
-                .expect("idx0 spine produces E_A");
+        let (e_a, _basis) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+            &lideal,
+            &p16,
+            &w,
+            64,
+            1 << 14,
+            true,
+            &mut rng,
+        )
+        .expect("idx0 spine produces E_A");
 
         let kat_first64: [u8; 64] = [
             0x07, 0xcc, 0xd2, 0x14, 0x25, 0x13, 0x6f, 0x6e, 0x86, 0x5e, 0x49, 0x7d, 0x2d, 0x4d,
@@ -1831,9 +1897,16 @@ mod tests {
         );
         let p16 = crate::params::lvl1::prime().resize::<L>();
         let w = witnesses();
-        let (e_a, _basis) =
-            ideal_to_isogeny_clapotis_idx0(&lideal, &p16, &w, 64, 1 << 14, false, &mut rng)
-                .expect("idx0 spine produces E_A");
+        let (e_a, _basis) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+            &lideal,
+            &p16,
+            &w,
+            64,
+            1 << 14,
+            false,
+            &mut rng,
+        )
+        .expect("idx0 spine produces E_A");
 
         // E_kat from the official pk.
         let kat_first64: [u8; 64] = [
@@ -1910,12 +1983,26 @@ mod tests {
         // Two independent chain RNGs (distinct seeds), same ideal.
         let mut rng_a = NistPqcRng::new(&[0x11u8; 48]);
         let mut rng_b = NistPqcRng::new(&[0x22u8; 48]);
-        let (ea, _) =
-            ideal_to_isogeny_clapotis_idx0(&lideal, &p16, &w, 64, 1 << 14, false, &mut rng_a)
-                .expect("spine A");
-        let (eb, _) =
-            ideal_to_isogeny_clapotis_idx0(&lideal, &p16, &w, 64, 1 << 14, false, &mut rng_b)
-                .expect("spine B");
+        let (ea, _) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+            &lideal,
+            &p16,
+            &w,
+            64,
+            1 << 14,
+            false,
+            &mut rng_a,
+        )
+        .expect("spine A");
+        let (eb, _) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+            &lideal,
+            &p16,
+            &w,
+            64,
+            1 << 14,
+            false,
+            &mut rng_b,
+        )
+        .expect("spine B");
         let mut a = [0u8; 64];
         let mut b = [0u8; 64];
         ea.a.to_bytes_le(&mut a);
@@ -1978,7 +2065,7 @@ mod tests {
             j.cached_norm.resize::<L>(),
         );
         let p16 = crate::params::lvl1::prime().resize::<L>();
-        let target_2f = *Uint::<L>::ONE.shl_vartime(F).as_int();
+        let target_2f = *Uint::<L>::ONE.shl_vartime(Level1::F as u32).as_int();
         let r = find_uv::<L>(&target_2f, &lideal, &p16, &[], 2).expect("find_uv");
         let u_abs = abs_uint(&r.u);
         let v_abs = abs_uint(&r.v);
@@ -2121,7 +2208,7 @@ mod tests {
             j16.denom.bits_vartime(),
             n_j_det.map(|n| n.bits_vartime())
         );
-        let tgt = *Uint::<L>::ONE.shl_vartime(F).as_int();
+        let tgt = *Uint::<L>::ONE.shl_vartime(Level1::F as u32).as_int();
         match find_uv::<L>(&tgt, &j16, &p16, &[], 2) {
             Ok(rr) => std::eprintln!(
                 "DIAG J find_uv: idx=({},{}) u_bits={} d1_bits={} d2_bits={}",
