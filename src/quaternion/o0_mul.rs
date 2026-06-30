@@ -266,6 +266,95 @@ pub fn quat_lideal_create<const LIMBS: usize>(
     (basis, denom, ideal_norm)
 }
 
+/// Recover a generator of the left ideal `I = (1/denom)·Z⟨basis columns⟩` and
+/// return its integer `O_0`-basis coordinates. Port of the C reference
+/// `quat_lideal_generator` (`ideal.c`): a brute-force search over primitive
+/// integer 4-vectors in an expanding `L∞` ball. For each primitive `vec`, the
+/// element `α = (basis · vec) / denom` is tested; the first whose reduced norm
+/// `N_red(α)` is divisible by the ideal norm `N(I)` with quotient coprime to
+/// `N(I)` is returned — that `α` generates `I` together with `N(I)·O_0`.
+///
+/// `basis` is COLUMN-major standard `(1, i, j, k)`-coords (the
+/// [`quat_lideal_create`] output); `q.norm` on `basis · vec = denom·α` yields
+/// `denom²·N_red(α)`, and the generator's `O_0` coords are
+/// `standard_to_o0_basis(denom·α) / denom` (an exact integer division because
+/// `α ∈ O_0`). Returns `None` only if no generator is found within the
+/// defensive radius cap — not expected for a well-formed ideal.
+pub fn quat_lideal_generator_o0<const LIMBS: usize>(
+    basis: &[[Int<LIMBS>; 4]; 4],
+    denom: &Int<LIMBS>,
+    ideal_norm: &Uint<LIMBS>,
+    p: &Uint<LIMBS>,
+) -> Option<[Int<LIMBS>; 4]> {
+    use crate::quaternion::lattice::mat_4x4_eval;
+    const MAX_RADIUS: i64 = 96;
+
+    let denom_abs = denom.abs();
+    let denom_sq = denom_abs.wrapping_mul(&denom_abs);
+    let denom_sq_nz = NonZero::new(denom_sq).into_option()?;
+    let idnz = NonZero::new(*ideal_norm).into_option()?;
+    let one = Uint::<LIMBS>::ONE;
+
+    // gcd of two small integers (used to test 4-vector primitivity / content).
+    fn gcd2(mut x: i64, mut y: i64) -> i64 {
+        x = x.abs();
+        y = y.abs();
+        while y != 0 {
+            let t = x % y;
+            x = y;
+            y = t;
+        }
+        x
+    }
+
+    for radius in 1..=MAX_RADIUS {
+        for a in -radius..=radius {
+            let ra = radius - a.abs();
+            for b in -ra..=ra {
+                let rb = ra - b.abs();
+                for c in -rb..=rb {
+                    let d = rb - c.abs(); // ≥ 0; the d<0 half is covered by ±(a,b,c,d)
+                    if gcd2(gcd2(a, b), gcd2(c, d)) != 1 {
+                        continue; // not a primitive vector
+                    }
+                    let vec = [
+                        Int::<LIMBS>::from_i64(a),
+                        Int::<LIMBS>::from_i64(b),
+                        Int::<LIMBS>::from_i64(c),
+                        Int::<LIMBS>::from_i64(d),
+                    ];
+                    // denom·α in standard coords = basis · vec.
+                    let gen_std = mat_4x4_eval::<LIMBS>(basis, &vec);
+                    let q =
+                        Quaternion::<LIMBS>::new(gen_std[0], gen_std[1], gen_std[2], gen_std[3]);
+                    // q.norm = N_red(denom·α) = denom²·N_red(α).
+                    let m = q.norm(p).abs();
+                    let (nred, r1) = m.div_rem_vartime(&denom_sq_nz);
+                    if r1 != Uint::<LIMBS>::ZERO {
+                        continue; // non-integral reduced norm: not an ideal generator
+                    }
+                    let (quot, r2) = nred.div_rem_vartime(&idnz);
+                    if r2 != Uint::<LIMBS>::ZERO {
+                        continue; // N(I) ∤ N_red(α): not a generator
+                    }
+                    if uint_gcd_vartime::<LIMBS>(ideal_norm, &quot) != one {
+                        continue; // quotient not coprime to N(I)
+                    }
+                    // O_0 coords of α = standard_to_o0_basis(denom·α) / denom (exact).
+                    let num = standard_to_o0_basis::<LIMBS>(&q);
+                    return Some([
+                        int_div_floor(&num[0], denom),
+                        int_div_floor(&num[1], denom),
+                        int_div_floor(&num[2], denom),
+                        int_div_floor(&num[3], denom),
+                    ]);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Bridge the C-faithful ideal representation — COLUMN-major standard
 /// `(1, i, j, ij)` coords + scalar `denom`, the output of
 /// [`quat_lideal_create`] and
@@ -695,6 +784,39 @@ mod tests {
     use super::*;
     #[cfg(all(not(feature = "std"), feature = "alloc"))]
     use alloc::string::ToString;
+
+    /// `quat_lideal_generator_o0` returns an element `α` of the ideal whose
+    /// reduced norm is divisible by the ideal norm with a coprime quotient —
+    /// the defining property of an ideal generator (C `quat_lideal_generator`).
+    #[test]
+    fn quat_lideal_generator_recovers_valid_generator() {
+        let p = crate::params::lvl1::prime().resize::<16>();
+        // γ = 1 + i has reduced norm 2; the ideal O_0·γ + 2·O_0 has norm 2.
+        let g = Quaternion::<16>::new(
+            Int::from_i64(1),
+            Int::from_i64(1),
+            Int::from_i64(0),
+            Int::from_i64(0),
+        );
+        let (basis, denom, norm) =
+            quat_lideal_create::<16>(&g, &Int::from_i64(1), &Uint::from_u64(2), &p);
+        let generator =
+            quat_lideal_generator_o0::<16>(&basis, &denom, &norm, &p).expect("generator exists");
+
+        let nred = reduced_norm_o0_basis::<16>(&generator, &p).abs();
+        let nnz = NonZero::new(norm).into_option().expect("ideal norm > 0");
+        let (quot, rem) = nred.div_rem_vartime(&nnz);
+        assert_eq!(
+            rem,
+            Uint::<16>::ZERO,
+            "N_red(gen) must be divisible by N(I)"
+        );
+        assert_eq!(
+            uint_gcd_vartime::<16>(&norm, &quot),
+            Uint::<16>::ONE,
+            "N_red(gen)/N(I) must be coprime to N(I)",
+        );
+    }
 
     /// Round-trip: our O_0-row-major ideal basis → C standard-column-major
     /// (doubled) → back must be the identity. Also checks the forward map

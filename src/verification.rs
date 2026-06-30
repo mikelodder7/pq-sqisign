@@ -1031,11 +1031,47 @@ pub fn compute_small_chain_isogeny_signature<P: crate::level_constants::LevelCon
     use crate::ec::montgomery::MontgomeryCurve;
     use crate::isogeny::endomorphism::id2iso_ideal_to_kernel_dlogs_even;
     use crate::isogeny::two::IsogenyChain2e;
+    use crate::quaternion::lattice::{narrow_int_lattice, widen_int_lattice};
+    use crate::quaternion::o0_mul::{
+        o0_basis_to_standard_doubled, quat_lideal_create, quat_lideal_generator_o0,
+    };
     const HD: u32 = 2;
 
     let length = usize::try_from(two_resp_length).ok()?;
-    // Kernel coordinates of the response ideal (norm 2^two_resp).
-    let vec2 = id2iso_ideal_to_kernel_dlogs_even::<P, 16>(resp_o0, length);
+    // Response-isogeny kernel coordinates. Match the C reference exactly: build
+    // the left ideal `O_0·resp + 2^length·O_0` from the FULL response quaternion,
+    // recover its canonical generator (`quat_lideal_generator`), and feed THAT to
+    // `id2iso_ideal_to_kernel_dlogs_even`. Feeding the raw / manually-primitivised
+    // response instead yields a kernel that is not the basis vector the verifier
+    // recovers from the matrix parity, so the signature fails to verify. The ideal
+    // construction runs at a wider limb count `WIDE` (its internal determinants
+    // reach ~N(resp)²); the recovered generator's `O_0` coords are small.
+    const WIDE: usize = 32;
+    let p_wide = P::prime::<WIDE>();
+    let resp_wide: [crypto_bigint::Int<WIDE>; 4] = [
+        widen_int_lattice::<16, WIDE>(&resp_o0[0]),
+        widen_int_lattice::<16, WIDE>(&resp_o0[1]),
+        widen_int_lattice::<16, WIDE>(&resp_o0[2]),
+        widen_int_lattice::<16, WIDE>(&resp_o0[3]),
+    ];
+    // γ = 2·resp in standard coords (denom 2) ⇒ ideal O_0·resp + 2^length·O_0.
+    let gamma = o0_basis_to_standard_doubled::<WIDE>(&resp_wide);
+    let two_pow = Uint::<WIDE>::ONE.shl_vartime(u32::try_from(length).ok()?);
+    let (ideal_basis, ideal_denom, ideal_norm) = quat_lideal_create::<WIDE>(
+        &gamma,
+        &crypto_bigint::Int::<WIDE>::from_i64(2),
+        &two_pow,
+        &p_wide,
+    );
+    let gen_o0 =
+        quat_lideal_generator_o0::<WIDE>(&ideal_basis, &ideal_denom, &ideal_norm, &p_wide)?;
+    let gen16: [crypto_bigint::Int<16>; 4] = [
+        narrow_int_lattice::<WIDE, 16>(&gen_o0[0]),
+        narrow_int_lattice::<WIDE, 16>(&gen_o0[1]),
+        narrow_int_lattice::<WIDE, 16>(&gen_o0[2]),
+        narrow_int_lattice::<WIDE, 16>(&gen_o0[3]),
+    ];
+    let vec2 = id2iso_ideal_to_kernel_dlogs_even::<P, 16>(&gen16, length);
     // Reduce the challenge basis to order 2^two_resp; form the kernel point.
     let b_red = ec_dbl_iter_basis(b_chall_2, pow_dim2 + HD, e_chall_2);
     let a24 = e_chall_2.a24();
@@ -1063,10 +1099,8 @@ pub fn compute_small_chain_isogeny_signature<P: crate::level_constants::LevelCon
         push(&b_chall_2.q),
         push(&b_chall_2.p_minus_q),
     );
-    Some((
-        MontgomeryCurve::new(chain.codomain.to_affine_a()),
-        new_basis,
-    ))
+    let out_curve = MontgomeryCurve::new(chain.codomain.to_affine_a());
+    Some((out_curve, new_basis))
 }
 
 /// Sign step 5 — recompute the challenge curve `E_chall` from the secret curve

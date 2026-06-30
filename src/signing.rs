@@ -84,9 +84,9 @@ fn protocols_sign_impl<
     let sk_curve = MontgomeryCurve::new(sk.curve_a);
     let canonical_basis = ec_curve_to_basis_2f_from_hint::<P>(&sk_curve, tep, sk.hint_pk);
 
-    // Budget raised from 8 to 16: the interim two_resp>0 rejection (~30% of
-    // attempts) lowers the per-attempt success rate, so more tries are needed to
-    // keep the overall signing-failure probability negligible.
+    // Signing is rejection-sampled (commitment, response, aux-isogeny, and
+    // basis-change steps each reject a fraction of attempts), so the budget needs
+    // headroom: 8 occasionally exhausts for statistically unlucky messages.
     for _attempt in 0..16 {
         // 1. Commitment.
         let Some((e_com, b_com, lideal_commit)) = commit::<P, QL, _>(&wit_ql, 64, 1 << 14, rng)
@@ -179,14 +179,19 @@ fn protocols_sign_impl<
             eprintln!("[sign L{}] attempt {_attempt}: pow={pow} (skip)", P::LEVEL);
             continue;
         }
-        // INTERIM MITIGATION (two_resp>0 bug): the short 2^r response-isogeny
-        // branch produces signatures that fail verification at every level (the
-        // sign/verify kernel-and-ordering contract for that branch diverges from
-        // the SQIsign C reference and is not yet reconciled). Reject those
-        // attempts and resample a fresh commitment so every emitted signature
-        // takes the verified-correct common path. This is sound rejection
-        // sampling — accepted signatures remain uniformly valid — at the cost of
-        // ~30% more sign attempts. Remove once the `two_resp>0` path is fixed.
+        // INTERIM MITIGATION (two_resp>0 bug, still active): the short 2^r
+        // response branch is partially fixed — `compute_small_chain_isogeny_signature`
+        // now builds the response ideal from the primitive response and recovers a
+        // canonical generator via `quat_lideal_generator_o0` (matching the C
+        // reference, verified: the kernel coords are now primitive). What remains
+        // is the sign↔verify kernel reconciliation for MIXED kernels: sign forms a
+        // general `vec2[0]·P + vec2[1]·Q` kernel while verify selects a single
+        // basis point by matrix parity, so the basis-change matrix
+        // (`compute_and_set_basis_change_matrix`) must rotate the kernel onto a
+        // basis vector. Until that lands, reject `two_resp>0` attempts so every
+        // emitted signature takes the verified-correct common path (sound
+        // rejection sampling). Remove this skip once the matrix reconciliation is
+        // complete.
         if two_resp > 0 {
             #[cfg(feature = "std")]
             eprintln!(
@@ -229,16 +234,12 @@ fn protocols_sign_impl<
         let mut e_chall2 = codomain.e1;
         let b_aux2 = EcBasis::new(pushed[0].p2, pushed[1].p2, pushed[2].p2);
         let mut b_chall2 = EcBasis::new(pushed[0].p1, pushed[1].p1, pushed[2].p1);
-        // 8b. Optional short 2^r response isogeny (two_resp_length > 0).
+        // 8b. Optional short 2^r response isogeny (two_resp_length > 0). Pass the
+        // PRIMITIVE response `prim` (C `sign.c` applies `quat_alg_make_primitive`
+        // before this step): `compute_small_chain` builds the ideal
+        // `O_0·prim + 2^two_resp·O_0` and recovers its canonical generator, which
+        // yields the kernel the verifier reconstructs from the matrix parity.
         if two_resp > 0 {
-            // Divergence from C (sign.c:325): C builds the 2^two_resp response
-            // ideal from the FULL resp_quat, whereas we pass `prim`. Using
-            // `&resp` here breaks our kernel — id2iso_ideal_to_kernel_dlogs_even
-            // computes conj(resp)'s action DIRECTLY, and full resp has even
-            // coords → a non-primitive kernel column → codomain order >2^f. With
-            // `prim` the sign↔verify roundtrip is correct; reproducing C's exact
-            // KAT signature bytes would instead require building the ideal
-            // O_0·resp + 2^two_resp·O_0 as C does.
             let Some((e2, b2)) = crate::verification::compute_small_chain_isogeny_signature::<P>(
                 &e_chall2, &b_chall2, &prim, pow, two_resp,
             ) else {
