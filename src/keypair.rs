@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! [`KeyPair`] — typed SQIsign keypair generation and access.
 
-use crate::params::Params;
+#[cfg(feature = "kgen")]
+use crate::isogeny::clapotis_spine::keygen;
+use crate::params::{Params, lvl1::Level1, lvl3::Level3};
 use crate::signing_key::SigningKey;
 use crate::verifying_key::VerifyingKey;
 use crate::{Error, Result};
-#[cfg(feature = "kgen")]
-use crate::{isogeny::clapotis_spine::keygen, params::lvl3::Level3};
 
 /// A SQIsign keypair (signing key + verifying key), parameterized by security level.
 ///
@@ -27,75 +27,31 @@ impl<P: Params> core::fmt::Debug for KeyPair<P> {
 }
 
 impl<P: Params> KeyPair<P> {
-    /// Generate a fresh keypair using the provided randomness source.
-    ///
-    /// Currently only security level 1 is supported. The generated
-    /// [`SigningKey`] cannot be serialized to bytes (see
-    /// [`SigningKey::to_bytes`] for details); use
-    /// [`from_signing_key_bytes`](Self::from_signing_key_bytes) to create a
-    /// round-trippable keypair from stored secret-key bytes.
+    /// Generate a fresh keypair using the provided randomness source. Level-1
+    /// and level-3 are supported; the level-specific keygen and public-key
+    /// serialization are dispatched through [`KeyLevel`]. Generated keys hold a
+    /// live secret — [`SigningKey::to_bytes`] is only available for keys loaded
+    /// via [`from_signing_key_bytes`](Self::from_signing_key_bytes).
     #[cfg(feature = "kgen")]
-    pub fn generate<R: rand_core::CryptoRng>(rng: &mut R) -> Result<Self> {
-        match P::LEVEL {
-            1 => Self::generate_lvl1(rng),
-            3 => Self::generate_lvl3(rng),
-            _ => Err(Error::Unimplemented("keypair: unsupported security level")),
-        }
-    }
-
-    #[cfg(feature = "kgen")]
-    fn generate_lvl1<R: rand_core::CryptoRng>(rng: &mut R) -> Result<Self> {
-        use crate::isogeny::clapotis_spine::keygen_lvl1;
-        use crate::verification::{PublicKeyData, SecretKeyData};
-
-        let witnesses: [crypto_bigint::Uint<12>; 5] =
-            [2u64, 3, 5, 7, 11].map(crypto_bigint::Uint::from_u64);
-
-        let (e_a, secret_ideal, mat, _b_acan, hint_pk, _b_a0) =
-            keygen_lvl1(&witnesses, 64, 1 << 14, rng)
-                .ok_or(Error::Internal("keygen_lvl1 exhausted retry budget"))?;
-
-        let sk_data = SecretKeyData {
-            curve_a: e_a.a,
-            hint_pk,
-            secret_ideal,
-            mat_bacan_to_ba0_two: mat,
-        };
-
-        let pk_data = PublicKeyData {
-            curve_a: e_a.a,
-            hint_pk,
-        };
-        let mut pk_bytes = alloc::vec![0u8; P::PK_BYTES];
-        pk_data.to_bytes_lvl1(&mut pk_bytes)?;
-
+    pub fn generate<R: rand_core::CryptoRng>(rng: &mut R) -> Result<Self>
+    where
+        P: KeyLevel,
+    {
+        let (sk_data, pk_bytes) = P::generate_keypair(rng)?;
         Ok(Self {
             signing_key: SigningKey::from_secret_data(sk_data),
             verifying_key: VerifyingKey::from_bytes_unchecked(&pk_bytes),
         })
     }
 
-    #[cfg(feature = "kgen")]
-    fn generate_lvl3<R: rand_core::CryptoRng>(rng: &mut R) -> Result<Self> {
-        // Level-3 quaternion precision is QL=18 (3·bits(p)+2 = 1151 ⇒ 18 limbs).
-        let witnesses: [crypto_bigint::Uint<18>; 5] =
-            [2u64, 3, 5, 7, 11].map(crypto_bigint::Uint::from_u64);
-
-        let _ = keygen::<Level3, 18, R>(&witnesses, 64, 1 << 14, rng)
-            .ok_or(Error::Internal("keygen_lvl3 exhausted retry budget"))?;
-
-        // The lvl3 spine dispatch is live here, but keypair/public-key
-        // serialization is still hard-wired to lvl1 field widths.
-        Err(Error::Unimplemented(
-            "keypair lvl3: PK serialization not implemented",
-        ))
-    }
-
     /// Reconstruct a keypair from the secret-key wire-format bytes.
     ///
     /// The public key is embedded in the first `P::PK_BYTES` of the
     /// secret-key encoding and extracted automatically.
-    pub fn from_signing_key_bytes(sk_bytes: &[u8]) -> Result<Self> {
+    pub fn from_signing_key_bytes(sk_bytes: &[u8]) -> Result<Self>
+    where
+        P: KeyLevel,
+    {
         if sk_bytes.len() < P::SK_BYTES {
             return Err(Error::BufferTooSmall {
                 required: P::SK_BYTES,
@@ -127,6 +83,124 @@ impl<P: Params> KeyPair<P> {
     }
 }
 
+/// Per-level key operations that depend on the field type `P::Field`, dispatched
+/// from the otherwise field-generic [`KeyPair`] / [`SigningKey`]. Level-1 uses the
+/// byte-exact lvl1 wire paths; level-3 uses the generalized spine + generic
+/// `fp2_encode`. This is the seam that keeps the key types field-agnostic.
+pub trait KeyLevel: Params {
+    /// Decode secret-key data from this level's wire bytes.
+    fn sk_from_bytes(bytes: &[u8]) -> Result<crate::verification::SecretKeyData<Self::Field>>;
+
+    /// Run keygen → (live secret-key data, encoded public-key bytes).
+    #[cfg(feature = "kgen")]
+    fn generate_keypair<R: rand_core::CryptoRng>(
+        rng: &mut R,
+    ) -> Result<(crate::verification::SecretKeyData<Self::Field>, Vec<u8>)>;
+
+    /// Produce signature bytes; `None` if signing is unsupported at this level.
+    #[cfg(feature = "sign")]
+    fn protocols_sign<R: rand_core::CryptoRng>(
+        sk: &crate::verification::SecretKeyData<Self::Field>,
+        msg: &[u8],
+        rng: &mut R,
+    ) -> Option<Vec<u8>>;
+}
+
+impl KeyLevel for Level1 {
+    fn sk_from_bytes(
+        bytes: &[u8],
+    ) -> Result<crate::verification::SecretKeyData<crate::params::lvl1::Fp1Element>> {
+        crate::verification::SecretKeyData::from_bytes_lvl1(bytes)
+    }
+
+    #[cfg(feature = "kgen")]
+    fn generate_keypair<R: rand_core::CryptoRng>(
+        rng: &mut R,
+    ) -> Result<(
+        crate::verification::SecretKeyData<crate::params::lvl1::Fp1Element>,
+        Vec<u8>,
+    )> {
+        use crate::isogeny::clapotis_spine::keygen_lvl1;
+        use crate::verification::{PublicKeyData, SecretKeyData};
+
+        let witnesses: [crypto_bigint::Uint<12>; 5] =
+            [2u64, 3, 5, 7, 11].map(crypto_bigint::Uint::from_u64);
+        let (e_a, secret_ideal, mat, _b_acan, hint_pk, _b_a0) =
+            keygen_lvl1(&witnesses, 64, 1 << 14, rng)
+                .ok_or(Error::Internal("keygen_lvl1 exhausted retry budget"))?;
+        let sk_data = SecretKeyData {
+            curve_a: e_a.a,
+            hint_pk,
+            secret_ideal,
+            mat_bacan_to_ba0_two: mat,
+        };
+        let mut pk_bytes = alloc::vec![0u8; Self::PK_BYTES];
+        PublicKeyData {
+            curve_a: e_a.a,
+            hint_pk,
+        }
+        .to_bytes_lvl1(&mut pk_bytes)?;
+        Ok((sk_data, pk_bytes))
+    }
+
+    #[cfg(feature = "sign")]
+    fn protocols_sign<R: rand_core::CryptoRng>(
+        sk: &crate::verification::SecretKeyData<crate::params::lvl1::Fp1Element>,
+        msg: &[u8],
+        rng: &mut R,
+    ) -> Option<Vec<u8>> {
+        crate::signing::protocols_sign::<Level1, R>(sk, msg, rng)
+    }
+}
+
+impl KeyLevel for Level3 {
+    fn sk_from_bytes(
+        _bytes: &[u8],
+    ) -> Result<crate::verification::SecretKeyData<crate::params::lvl3::Fp3Element>> {
+        Err(Error::Unimplemented(
+            "signing key lvl3: byte decode not implemented",
+        ))
+    }
+
+    #[cfg(feature = "kgen")]
+    fn generate_keypair<R: rand_core::CryptoRng>(
+        rng: &mut R,
+    ) -> Result<(
+        crate::verification::SecretKeyData<crate::params::lvl3::Fp3Element>,
+        Vec<u8>,
+    )> {
+        use crate::gf::fp2::Fp2;
+        use crate::verification::SecretKeyData;
+
+        let witnesses: [crypto_bigint::Uint<18>; 5] =
+            [2u64, 3, 5, 7, 11].map(crypto_bigint::Uint::from_u64);
+        let (e_a, secret_ideal, mat, _b_acan, hint_pk, _b_a0) =
+            keygen::<Level3, 18, R>(&witnesses, 64, 1 << 14, rng)
+                .ok_or(Error::Internal("keygen_lvl3 exhausted retry budget"))?;
+        let sk_data = SecretKeyData {
+            curve_a: e_a.a,
+            hint_pk,
+            secret_ideal,
+            mat_bacan_to_ba0_two: mat,
+        };
+        // PK wire format = fp2_encode(A) || hint_pk, generic over the field width.
+        let fp2_bytes = Level3::FP2_BYTES;
+        let mut pk_bytes = alloc::vec![0u8; Level3::PK_BYTES];
+        Fp2::<crate::params::lvl3::Fp3Element>::to_bytes_le(&e_a.a, &mut pk_bytes[..fp2_bytes]);
+        pk_bytes[fp2_bytes] = hint_pk;
+        Ok((sk_data, pk_bytes))
+    }
+
+    #[cfg(feature = "sign")]
+    fn protocols_sign<R: rand_core::CryptoRng>(
+        sk: &crate::verification::SecretKeyData<crate::params::lvl3::Fp3Element>,
+        msg: &[u8],
+        rng: &mut R,
+    ) -> Option<Vec<u8>> {
+        crate::signing::protocols_sign::<Level3, R>(sk, msg, rng)
+    }
+}
+
 #[cfg(all(test, feature = "kat"))]
 mod lvl3_probe {
     use super::KeyPair;
@@ -143,5 +217,50 @@ mod lvl3_probe {
         let mut rng = NistPqcRng::new(&[0x42u8; 48]);
         let result = KeyPair::<Level3>::generate(&mut rng);
         eprintln!("[lvl3-probe] generate::<Level3> => {result:?}");
+    }
+
+    /// Full lvl3 end-to-end: keygen → sign → verify, the level-3 analogue of
+    /// `signing::tests::sign_verify_roundtrip`. Exercises the field-generic
+    /// `protocols_sign` / `protocols_verify` via the typed API. HEAVY.
+    #[test]
+    #[ignore = "heavy: full lvl3 keygen → sign → verify roundtrip (real-scale spine)"]
+    fn sign_verify_roundtrip_lvl3() {
+        use crate::params::Params;
+        let mut rng = NistPqcRng::new(&[0x99u8; 48]);
+        let kp = KeyPair::<Level3>::generate(&mut rng).expect("lvl3 keygen");
+        let msg = b"sqisign lvl3 roundtrip";
+        let sig = kp
+            .signing_key()
+            .sign(msg, &mut rng)
+            .expect("lvl3 sign produces a signature");
+
+        // Positive: verify accepts the genuine signature.
+        kp.verifying_key()
+            .verify(msg, &sig)
+            .expect("lvl3 verify must accept the produced signature");
+
+        // Negative tests — prove verify actually checks (a self-consistent
+        // roundtrip alone is also satisfied by a verifier that always accepts).
+        let sig_bytes = sig.as_bytes();
+
+        // (a) Wrong message must be rejected.
+        assert!(
+            kp.verifying_key()
+                .verify(b"a different message", &sig)
+                .is_err(),
+            "lvl3 verify must reject the signature under a different message",
+        );
+
+        // (b) A single flipped bit anywhere in the signature must be rejected.
+        for &byte_idx in &[0usize, Level3::FP2_BYTES, Level3::SIG_BYTES - 2] {
+            let mut tampered = sig_bytes.to_vec();
+            tampered[byte_idx] ^= 0x01;
+            let tampered_sig =
+                crate::sqisignature::SqiSignature::<Level3>::from_bytes_unchecked(&tampered);
+            assert!(
+                kp.verifying_key().verify(msg, &tampered_sig).is_err(),
+                "lvl3 verify must reject a signature with byte {byte_idx} flipped",
+            );
+        }
     }
 }

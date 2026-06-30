@@ -23,6 +23,7 @@ pub type Fp3Element = crypto_bigint::modular::ConstMontyForm<Lvl3Modulus, { Lvl3
 pub struct Level3;
 
 impl Params for Level3 {
+    type Field = Fp3Element;
     const LEVEL: u8 = 3;
     const P_BITS: usize = 383;
     const C: u64 = 65;

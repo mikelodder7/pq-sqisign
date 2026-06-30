@@ -11,7 +11,6 @@
 //! Level 5 is not yet provided.
 
 use crate::ec::montgomery::MontgomeryPoint;
-use crate::gf::fp::BaseField;
 use crate::isogeny::endomorphism;
 use crate::params::Params;
 use crate::params::lvl1::{Fp1Element, Level1};
@@ -26,9 +25,6 @@ pub type EvenBasis<F> = (MontgomeryPoint<F>, MontgomeryPoint<F>, MontgomeryPoint
 
 /// Provider of a security level's precomputed isogeny / quaternion constants.
 pub trait LevelConstants: Params {
-    /// Base field for this level (`Fp1Element` at lvl1, `Fp3Element` at lvl3).
-    type Field: BaseField;
-
     /// E0 `2^F`-torsion basis `(P, Q, P − Q)` as x-only Montgomery points.
     fn basis_e0() -> EvenBasis<Self::Field>;
 
@@ -55,8 +51,6 @@ pub trait LevelConstants: Params {
 }
 
 impl LevelConstants for Level1 {
-    type Field = Fp1Element;
-
     fn basis_e0() -> EvenBasis<Fp1Element> {
         endomorphism::basis_e0_lvl1()
     }
@@ -108,8 +102,6 @@ impl LevelConstants for Level1 {
 }
 
 impl LevelConstants for Level3 {
-    type Field = Fp3Element;
-
     fn basis_e0() -> EvenBasis<Fp3Element> {
         endomorphism::basis_e0_lvl3()
     }

@@ -50,31 +50,18 @@ impl<P: Params> VerifyingKey<P> {
     /// Verify that `signature` on `msg` is valid under this key.
     ///
     /// Returns `Ok(())` on success; [`Error::InvalidSignature`] on failure.
-    pub fn verify(&self, msg: &[u8], signature: &SqiSignature<P>) -> Result<()> {
-        match P::LEVEL {
-            1 => {
-                #[cfg(feature = "alloc")]
-                {
-                    if crate::verification::protocols_verify(signature.as_bytes(), &self.bytes, msg)
-                    {
-                        return Ok(());
-                    }
-                    Err(Error::InvalidSignature)
-                }
-                #[cfg(not(feature = "alloc"))]
-                {
-                    Err(Error::Unimplemented("verify: requires alloc feature"))
-                }
-            }
-            _ => Err(Error::Unimplemented("verify: only level 1 supported")),
-        }
+    pub fn verify(&self, msg: &[u8], signature: &SqiSignature<P>) -> Result<()>
+    where
+        P: crate::verification::VerifyLevel,
+    {
+        P::verify_bytes(signature.as_bytes(), &self.bytes, msg)
     }
 }
 
 impl_bytes_conversions!(bytes_field: VerifyingKey<P>);
 
 #[cfg(feature = "signature")]
-impl<P: Params> signature::Verifier<SqiSignature<P>> for VerifyingKey<P> {
+impl<P: crate::verification::VerifyLevel> signature::Verifier<SqiSignature<P>> for VerifyingKey<P> {
     fn verify(
         &self,
         msg: &[u8],

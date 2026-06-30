@@ -23,6 +23,7 @@ pub type Fp5Element = crypto_bigint::modular::ConstMontyForm<Lvl5Modulus, { Lvl5
 pub struct Level5;
 
 impl Params for Level5 {
+    type Field = Fp5Element;
     const LEVEL: u8 = 5;
     const P_BITS: usize = 505;
     const C: u64 = 27;

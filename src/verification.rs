@@ -18,16 +18,26 @@ use crate::params::lvl1::{Fp1Element, Level1};
 use crypto_bigint::{U256, Uint};
 use subtle::ConstantTimeEq;
 
-/// lvl1 wire sizes (bytes). `SIG_BYTES = 64 (E_aux_A) + 1 + 1 + 4·16 (matrix)
-/// + 16 (chall_coeff) + 1 + 1 = 148`; `PK_BYTES = 64 (A) + 1 (hint) = 65`.
-const SIG_BYTES_LVL1: usize = 148;
+/// A Montgomery curve paired with an even-torsion basis on it, over field `F`.
+type CurveBasis<F> = (
+    crate::ec::montgomery::MontgomeryCurve<F>,
+    crate::ec::couple::EcBasis<F>,
+);
+/// A pair of even-torsion bases over field `F` (challenge basis, auxiliary basis).
+type BasisPair<F> = (crate::ec::couple::EcBasis<F>, crate::ec::couple::EcBasis<F>);
+
+/// lvl1 PK wire size (bytes): `PK_BYTES = 64 (A) + 1 (hint) = 65`.
 const PK_BYTES_LVL1: usize = 65;
+/// lvl1 signature/field wire widths, retained for the byte-layout tests now
+/// that the production encode/decode derive these from [`Params`].
+#[cfg(test)]
+const SIG_BYTES_LVL1: usize = 148;
 /// fp2 encoding width at lvl1 (`2 × Fp1Element::ENCODED_BYTES`).
+#[cfg(test)]
 const FP2_BYTES_LVL1: usize = 64;
 /// Matrix-entry width: `(RESPONSE_BITS + 9) / 8 = (126 + 9) / 8 = 16` at lvl1.
+#[cfg(test)]
 const MAT_ENTRY_BYTES_LVL1: usize = 16;
-/// Challenge-coefficient width: `SECURITY_BITS / 8 = 128 / 8 = 16` at lvl1.
-const CHALL_BYTES_LVL1: usize = 16;
 /// lvl1 secret-key wire size and field widths (C `secret_key_from_bytes`).
 /// `SK_BYTES = 65 (pk) + 32 (norm) + 4·32 (gen coords) + 4·32 (matrix) = 353`.
 const SK_BYTES_LVL1: usize = 353;
@@ -59,9 +69,9 @@ fn decode_int_le<const W: usize>(bytes: &[u8], signed: bool) -> crypto_bigint::I
 /// Decoded secret key — C `secret_key_t` (the wire-relevant fields). Lives here
 /// alongside the other decoded wire forms. lvl1-pinned.
 #[derive(Clone, Debug)]
-pub struct SecretKeyData {
+pub struct SecretKeyData<F: BaseField> {
     /// Affine Montgomery `A` of the public curve (== pk curve).
-    pub curve_a: Fp2<Fp1Element>,
+    pub curve_a: Fp2<F>,
     /// Public-key basis hint.
     pub hint_pk: u8,
     /// The secret left ideal `O_0·gen + norm·O_0`, reconstructed from the
@@ -71,7 +81,7 @@ pub struct SecretKeyData {
     pub mat_bacan_to_ba0_two: [[Uint<8>; 2]; 2],
 }
 
-impl SecretKeyData {
+impl SecretKeyData<Fp1Element> {
     /// Decode from the 353-byte lvl1 wire format — C `secret_key_from_bytes`.
     /// Layout: `pk (65) || norm (32, unsigned) || gen.coord[0..3] (4×32, signed)
     /// || mat[0][0],[0][1],[1][0],[1][1] (4×32, unsigned)`. The secret ideal is
@@ -142,52 +152,64 @@ impl SecretKeyData {
 /// Decoded public key — C `public_key_t`. The curve is stored by its
 /// normalized affine Montgomery coefficient `A` (`C = 1`).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct PublicKeyData {
+pub struct PublicKeyData<F: BaseField> {
     /// Affine Montgomery coefficient `A` of the public curve.
-    pub curve_a: Fp2<Fp1Element>,
+    pub curve_a: Fp2<F>,
     /// Basis hint for the public curve (`ec_curve_to_basis_2f` recomputation).
     pub hint_pk: u8,
 }
 
-impl PublicKeyData {
-    /// Encode to the 65-byte lvl1 wire format — C `public_key_to_bytes`.
-    /// Inverse of [`Self::from_bytes_lvl1`].
-    pub fn to_bytes_lvl1(&self, out: &mut [u8]) -> Result<()> {
-        if out.len() < PK_BYTES_LVL1 {
+impl<F: BaseField> PublicKeyData<F> {
+    /// Encode to the `P::PK_BYTES`-byte wire format — C `public_key_to_bytes`.
+    /// Inverse of [`Self::from_bytes`]; layout `A (FP2_BYTES) || hint_pk (1)`.
+    pub fn to_bytes<P: crate::params::Params<Field = F>>(&self, out: &mut [u8]) -> Result<()> {
+        if out.len() < P::PK_BYTES {
             return Err(Error::BufferTooSmall {
-                required: PK_BYTES_LVL1,
+                required: P::PK_BYTES,
                 provided: out.len(),
             });
         }
-        self.curve_a.to_bytes_le(&mut out[..FP2_BYTES_LVL1]);
-        out[FP2_BYTES_LVL1] = self.hint_pk;
+        self.curve_a.to_bytes_le(&mut out[..P::FP2_BYTES]);
+        out[P::FP2_BYTES] = self.hint_pk;
         Ok(())
     }
 
-    /// Decode from the 65-byte lvl1 wire format — C `public_key_from_bytes`.
-    /// Layout: `A (64) || hint_pk (1)`.
-    pub fn from_bytes_lvl1(enc: &[u8]) -> Result<Self> {
-        if enc.len() < PK_BYTES_LVL1 {
+    /// Decode from the `P::PK_BYTES`-byte wire format — C `public_key_from_bytes`.
+    /// Layout: `A (FP2_BYTES) || hint_pk (1)`.
+    pub fn from_bytes<P: crate::params::Params<Field = F>>(enc: &[u8]) -> Result<Self> {
+        if enc.len() < P::PK_BYTES {
             return Err(Error::BufferTooSmall {
-                required: PK_BYTES_LVL1,
+                required: P::PK_BYTES,
                 provided: enc.len(),
             });
         }
-        let curve_a = Fp2::<Fp1Element>::from_bytes_le(&enc[..FP2_BYTES_LVL1])
+        let curve_a = Fp2::<F>::from_bytes_le(&enc[..P::FP2_BYTES])
             .into_option()
             .ok_or(Error::InvalidPublicKey)?;
         Ok(Self {
             curve_a,
-            hint_pk: enc[FP2_BYTES_LVL1],
+            hint_pk: enc[P::FP2_BYTES],
         })
+    }
+}
+
+impl PublicKeyData<Fp1Element> {
+    /// lvl1 wire encode — thin alias for [`Self::to_bytes::<Level1>`].
+    pub fn to_bytes_lvl1(&self, out: &mut [u8]) -> Result<()> {
+        self.to_bytes::<Level1>(out)
+    }
+
+    /// lvl1 wire decode — thin alias for [`Self::from_bytes::<Level1>`].
+    pub fn from_bytes_lvl1(enc: &[u8]) -> Result<Self> {
+        Self::from_bytes::<Level1>(enc)
     }
 }
 
 /// Decoded signature — C `signature_t`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct SignatureData {
+pub struct SignatureData<F: BaseField> {
     /// Montgomery `A`-coefficient of the auxiliary curve.
-    pub e_aux_a: Fp2<Fp1Element>,
+    pub e_aux_a: Fp2<F>,
     /// Backtracking length consumed by the response isogeny.
     pub backtracking: u8,
     /// Length of the short `2^r` response isogeny (`0` if absent).
@@ -202,20 +224,33 @@ pub struct SignatureData {
     pub hint_chall: u8,
 }
 
-impl SignatureData {
-    /// Encode to the 148-byte lvl1 wire format — C `signature_to_bytes`.
-    /// Inverse of [`Self::from_bytes_lvl1`]; the matrix entries and challenge
+/// Per-level signature wire widths, derived from [`Params`]. At lvl1 these are
+/// `(64, 16, 16, 148)`; at lvl3 `(96, 25, 24, 224)`.
+/// `mat_entry = (RESPONSE_BITS + 9) / 8`, `chall = SECURITY_BITS / 8`.
+const fn sig_wire_widths<P: crate::params::Params>() -> (usize, usize, usize, usize) {
+    (
+        P::FP2_BYTES,
+        (P::RESPONSE_BITS + 9) / 8,
+        P::SECURITY_BITS / 8,
+        P::SIG_BYTES,
+    )
+}
+
+impl<F: BaseField> SignatureData<F> {
+    /// Encode to the `P::SIG_BYTES`-byte wire format — C `signature_to_bytes`.
+    /// Inverse of [`Self::from_bytes`]; the matrix entries and challenge
     /// coefficient are written as fixed-width little-endian (C `encode_digits`),
-    /// taking the low `MAT_ENTRY_BYTES_LVL1` / `CHALL_BYTES_LVL1` bytes.
-    pub fn to_bytes_lvl1(&self, out: &mut [u8]) -> Result<()> {
-        if out.len() < SIG_BYTES_LVL1 {
+    /// taking the low `mat_entry` / `chall` bytes.
+    pub fn to_bytes<P: crate::params::Params<Field = F>>(&self, out: &mut [u8]) -> Result<()> {
+        let (fp2_bytes, mat_entry, chall_bytes, sig_bytes) = sig_wire_widths::<P>();
+        if out.len() < sig_bytes {
             return Err(Error::BufferTooSmall {
-                required: SIG_BYTES_LVL1,
+                required: sig_bytes,
                 provided: out.len(),
             });
         }
-        self.e_aux_a.to_bytes_le(&mut out[..FP2_BYTES_LVL1]);
-        let mut off = FP2_BYTES_LVL1;
+        self.e_aux_a.to_bytes_le(&mut out[..fp2_bytes]);
+        let mut off = fp2_bytes;
         out[off] = self.backtracking;
         out[off + 1] = self.two_resp_length;
         off += 2;
@@ -223,50 +258,36 @@ impl SignatureData {
         let write_digits = |out: &mut [u8], o: usize, width: usize, v: &Uint<8>| {
             out[o..o + width].copy_from_slice(&v.to_le_bytes()[..width]);
         };
-        write_digits(out, off, MAT_ENTRY_BYTES_LVL1, &self.mat[0][0]);
-        write_digits(
-            out,
-            off + MAT_ENTRY_BYTES_LVL1,
-            MAT_ENTRY_BYTES_LVL1,
-            &self.mat[0][1],
-        );
-        write_digits(
-            out,
-            off + 2 * MAT_ENTRY_BYTES_LVL1,
-            MAT_ENTRY_BYTES_LVL1,
-            &self.mat[1][0],
-        );
-        write_digits(
-            out,
-            off + 3 * MAT_ENTRY_BYTES_LVL1,
-            MAT_ENTRY_BYTES_LVL1,
-            &self.mat[1][1],
-        );
-        off += 4 * MAT_ENTRY_BYTES_LVL1;
+        write_digits(out, off, mat_entry, &self.mat[0][0]);
+        write_digits(out, off + mat_entry, mat_entry, &self.mat[0][1]);
+        write_digits(out, off + 2 * mat_entry, mat_entry, &self.mat[1][0]);
+        write_digits(out, off + 3 * mat_entry, mat_entry, &self.mat[1][1]);
+        off += 4 * mat_entry;
 
-        write_digits(out, off, CHALL_BYTES_LVL1, &self.chall_coeff);
-        off += CHALL_BYTES_LVL1;
+        write_digits(out, off, chall_bytes, &self.chall_coeff);
+        off += chall_bytes;
 
         out[off] = self.hint_aux;
         out[off + 1] = self.hint_chall;
         Ok(())
     }
 
-    /// Decode from the 148-byte lvl1 wire format — C `signature_from_bytes`.
-    /// Layout: `E_aux_A (64) || backtracking (1) || two_resp_length (1) ||
+    /// Decode from the `P::SIG_BYTES`-byte wire format — C `signature_from_bytes`.
+    /// Layout (lvl1): `E_aux_A (64) || backtracking (1) || two_resp_length (1) ||
     /// m00 (16) || m01 (16) || m10 (16) || m11 (16) || chall_coeff (16) ||
-    /// hint_aux (1) || hint_chall (1)`.
-    pub fn from_bytes_lvl1(enc: &[u8]) -> Result<Self> {
-        if enc.len() < SIG_BYTES_LVL1 {
+    /// hint_aux (1) || hint_chall (1)`; widths scale with the level.
+    pub fn from_bytes<P: crate::params::Params<Field = F>>(enc: &[u8]) -> Result<Self> {
+        let (fp2_bytes, mat_entry, chall_bytes, sig_bytes) = sig_wire_widths::<P>();
+        if enc.len() < sig_bytes {
             return Err(Error::BufferTooSmall {
-                required: SIG_BYTES_LVL1,
+                required: sig_bytes,
                 provided: enc.len(),
             });
         }
-        let e_aux_a = Fp2::<Fp1Element>::from_bytes_le(&enc[..FP2_BYTES_LVL1])
+        let e_aux_a = Fp2::<F>::from_bytes_le(&enc[..fp2_bytes])
             .into_option()
             .ok_or(Error::NonCanonicalEncoding)?;
-        let mut off = FP2_BYTES_LVL1;
+        let mut off = fp2_bytes;
         let backtracking = enc[off];
         let two_resp_length = enc[off + 1];
         off += 2;
@@ -278,14 +299,14 @@ impl SignatureData {
             Uint::<8>::from_le_slice(&buf)
         };
 
-        let m00 = read_u256(enc, off, MAT_ENTRY_BYTES_LVL1);
-        let m01 = read_u256(enc, off + MAT_ENTRY_BYTES_LVL1, MAT_ENTRY_BYTES_LVL1);
-        let m10 = read_u256(enc, off + 2 * MAT_ENTRY_BYTES_LVL1, MAT_ENTRY_BYTES_LVL1);
-        let m11 = read_u256(enc, off + 3 * MAT_ENTRY_BYTES_LVL1, MAT_ENTRY_BYTES_LVL1);
-        off += 4 * MAT_ENTRY_BYTES_LVL1;
+        let m00 = read_u256(enc, off, mat_entry);
+        let m01 = read_u256(enc, off + mat_entry, mat_entry);
+        let m10 = read_u256(enc, off + 2 * mat_entry, mat_entry);
+        let m11 = read_u256(enc, off + 3 * mat_entry, mat_entry);
+        off += 4 * mat_entry;
 
-        let chall_coeff = read_u256(enc, off, CHALL_BYTES_LVL1);
-        off += CHALL_BYTES_LVL1;
+        let chall_coeff = read_u256(enc, off, chall_bytes);
+        off += chall_bytes;
 
         let hint_aux = enc[off];
         let hint_chall = enc[off + 1];
@@ -299,6 +320,19 @@ impl SignatureData {
             hint_aux,
             hint_chall,
         })
+    }
+}
+
+impl SignatureData<Fp1Element> {
+    /// lvl1 wire encode — thin alias for [`Self::to_bytes::<Level1>`], preserved
+    /// for the byte-exact lvl1 call sites and tests.
+    pub fn to_bytes_lvl1(&self, out: &mut [u8]) -> Result<()> {
+        self.to_bytes::<Level1>(out)
+    }
+
+    /// lvl1 wire decode — thin alias for [`Self::from_bytes::<Level1>`].
+    pub fn from_bytes_lvl1(enc: &[u8]) -> Result<Self> {
+        Self::from_bytes::<Level1>(enc)
     }
 }
 
@@ -410,19 +444,19 @@ pub fn change_of_basis_matrix<P: crate::level_constants::LevelConstants>(
 /// directly-computed opposite-direction coordinates), so no explicit matrix
 /// inversion is needed.
 #[cfg(feature = "alloc")]
-pub fn compute_and_set_basis_change_matrix(
-    sig: &mut SignatureData,
-    b_aux_2: &crate::ec::couple::EcBasis<Fp1Element>,
-    b_chall_2: &crate::ec::couple::EcBasis<Fp1Element>,
-    e_aux_2: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
-    e_chall: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
+pub fn compute_and_set_basis_change_matrix<P: crate::level_constants::LevelConstants>(
+    sig: &mut SignatureData<P::Field>,
+    b_aux_2: &crate::ec::couple::EcBasis<P::Field>,
+    b_chall_2: &crate::ec::couple::EcBasis<P::Field>,
+    e_aux_2: &crate::ec::montgomery::MontgomeryCurve<P::Field>,
+    e_chall: &crate::ec::montgomery::MontgomeryCurve<P::Field>,
     f: usize,
 ) -> bool {
     use crate::ec::biscalar::ec_curve_to_basis_2f_to_hint;
     use crate::ec::couple::EcBasis;
     use crate::isogeny::endomorphism::matrix_application_even_basis;
-    const TORSION_EVEN_POWER: usize = 248;
-    let e_diff = match TORSION_EVEN_POWER.checked_sub(f) {
+    let torsion_even_power = P::F;
+    let e_diff = match torsion_even_power.checked_sub(f) {
         Some(d) => d,
         None => return false,
     };
@@ -436,10 +470,8 @@ pub fn compute_and_set_basis_change_matrix(
     };
 
     // Canonical full-order bases + their hints.
-    let (b_can_chall, hint_chall) =
-        ec_curve_to_basis_2f_to_hint::<Level1>(e_chall, TORSION_EVEN_POWER);
-    let (b_aux_2_can, hint_aux) =
-        ec_curve_to_basis_2f_to_hint::<Level1>(e_aux_2, TORSION_EVEN_POWER);
+    let (b_can_chall, hint_chall) = ec_curve_to_basis_2f_to_hint::<P>(e_chall, torsion_even_power);
+    let (b_aux_2_can, hint_aux) = ec_curve_to_basis_2f_to_hint::<P>(e_aux_2, torsion_even_power);
     // Reduce canonical bases to order 2^f to match the supplied bases.
     let b_can_chall_f = ec_dbl_iter_basis(&b_can_chall, e_diff, e_chall);
     let b_aux_2_can_f = ec_dbl_iter_basis(&b_aux_2_can, e_diff, e_aux_2);
@@ -451,7 +483,7 @@ pub fn compute_and_set_basis_change_matrix(
     // "b_aux_2_can in terms of b_aux_2" = change_of_basis_matrix(b_aux_2_can, b_aux_2).
     // (The earlier (b_aux_2, b_aux_2_can) order gave A, producing a non-isotropic
     // verify kernel even though the sign's actual kernel is isotropic.)
-    let m_aux = match change_of_basis_matrix::<Level1>(&b_aux_2_can_f, b_aux_2, e_aux_2, f32) {
+    let m_aux = match change_of_basis_matrix::<P>(&b_aux_2_can_f, b_aux_2, e_aux_2, f32) {
         Some(m) => m,
         None => return false,
     };
@@ -471,11 +503,10 @@ pub fn compute_and_set_basis_change_matrix(
     let b_chall_2_adj = EcBasis::new(cp, cq, cpmq);
 
     // M_chall = canonical challenge basis → adjusted supplied basis.
-    let m_chall =
-        match change_of_basis_matrix::<Level1>(&b_chall_2_adj, &b_can_chall_f, e_chall, f32) {
-            Some(m) => m,
-            None => return false,
-        };
+    let m_chall = match change_of_basis_matrix::<P>(&b_chall_2_adj, &b_can_chall_f, e_chall, f32) {
+        Some(m) => m,
+        None => return false,
+    };
 
     sig.mat = m_chall;
     sig.hint_chall = hint_chall;
@@ -487,13 +518,13 @@ pub fn compute_and_set_basis_change_matrix(
 /// map on `(x : z)`: `x ↦ Nx·x + Nz·z`, `z ↦ D·z`. Port of C `ec_isomorphism`
 /// (`isog_chains.c`) specialized to the affine `C = 1` representation. Returns
 /// `(Nx, Nz, D)`, or `None` in the rare degenerate case (`Nx = 0` or `D = 0`).
-pub fn ec_isomorphism(
-    from_a: &Fp2<Fp1Element>,
-    to_a: &Fp2<Fp1Element>,
-) -> Option<(Fp2<Fp1Element>, Fp2<Fp1Element>, Fp2<Fp1Element>)> {
-    let three = Fp2::<Fp1Element>::one().double().add(&Fp2::one());
+pub fn ec_isomorphism<F: BaseField>(
+    from_a: &Fp2<F>,
+    to_a: &Fp2<F>,
+) -> Option<(Fp2<F>, Fp2<F>, Fp2<F>)> {
+    let three = Fp2::<F>::one().double().add(&Fp2::one());
     let nine = three.double().add(&three);
-    let cube = |x: &Fp2<Fp1Element>| x.square().mul(x);
+    let cube = |x: &Fp2<F>| x.square().mul(x);
     // λx = (2·toA³ − 9·toA)·(3 − fromA²);  λz = (2·fromA³ − 9·fromA)·(3 − toA²).
     let mut nx = cube(to_a)
         .double()
@@ -515,10 +546,10 @@ pub fn ec_isomorphism(
 }
 
 /// Apply an [`ec_isomorphism`] `(Nx, Nz, D)` to an x-only point.
-pub fn apply_iso(
-    p: &crate::ec::montgomery::MontgomeryPoint<Fp1Element>,
-    isom: &(Fp2<Fp1Element>, Fp2<Fp1Element>, Fp2<Fp1Element>),
-) -> crate::ec::montgomery::MontgomeryPoint<Fp1Element> {
+pub fn apply_iso<F: BaseField>(
+    p: &crate::ec::montgomery::MontgomeryPoint<F>,
+    isom: &(Fp2<F>, Fp2<F>, Fp2<F>),
+) -> crate::ec::montgomery::MontgomeryPoint<F> {
     let (nx, nz, d) = isom;
     crate::ec::montgomery::MontgomeryPoint::new(p.x.mul(nx).add(&p.z.mul(nz)), p.z.mul(d))
 }
@@ -540,11 +571,12 @@ pub fn ec_curve_verify_a<F: BaseField>(a: &Fp2<F>) -> bool {
 /// every entry must be strictly less than that bound (C rejects when the bound
 /// is `≤` an entry). Assumes all entries are non-negative (they decode from
 /// unsigned bytes). lvl1-pinned constants.
-pub fn check_canonical_basis_change_matrix(sig: &SignatureData) -> bool {
+pub fn check_canonical_basis_change_matrix<P: crate::params::Params>(
+    sig: &SignatureData<P::Field>,
+) -> bool {
     use crate::isogeny::theta_chain::HD_EXTRA_TORSION;
-    use crate::params::Params;
     // SQIsign_response_length + HD_extra_torsion − backtracking (lvl1: 126 + 2).
-    let response_length = i32::try_from(Level1::RESPONSE_BITS).expect("RESPONSE_BITS fits i32");
+    let response_length = i32::try_from(P::RESPONSE_BITS).expect("RESPONSE_BITS fits i32");
     let extra = i32::try_from(HD_EXTRA_TORSION).expect("HD_EXTRA_TORSION fits i32");
     let shift = response_length + extra - i32::from(sig.backtracking);
     if shift < 0 {
@@ -562,18 +594,18 @@ pub fn check_canonical_basis_change_matrix(sig: &SignatureData) -> bool {
 /// it `backtracking` times to order `2^(f − backtracking)`, then take the
 /// codomain of that even isogeny. lvl1-pinned (`TORSION_EVEN_POWER = 248`).
 #[cfg(feature = "alloc")]
-pub fn compute_challenge_verify(
-    epk: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
-    sig: &SignatureData,
+pub fn compute_challenge_verify<P: crate::level_constants::LevelConstants>(
+    epk: &crate::ec::montgomery::MontgomeryCurve<P::Field>,
+    sig: &SignatureData<P::Field>,
     hint_pk: u8,
-) -> crate::ec::montgomery::MontgomeryCurve<Fp1Element> {
+) -> crate::ec::montgomery::MontgomeryCurve<P::Field> {
     use crate::ec::biscalar::ec_curve_to_basis_2f_from_hint;
     use crate::ec::montgomery::{MontgomeryCurve, MontgomeryPoint};
     use crate::isogeny::two::IsogenyChain2e;
-    const TORSION_EVEN_POWER: usize = 248;
-    let length = TORSION_EVEN_POWER - usize::from(sig.backtracking);
+    let torsion_even_power = P::F;
+    let length = torsion_even_power - usize::from(sig.backtracking);
     // Canonical basis of E_pk[2^f] from the public-key hint.
-    let bas = ec_curve_to_basis_2f_from_hint::<Level1>(epk, TORSION_EVEN_POWER, hint_pk);
+    let bas = ec_curve_to_basis_2f_from_hint::<P>(epk, torsion_even_power, hint_pk);
     // kernel = P + [chall_coeff]·Q on E_pk.
     let a24 = epk.a24();
     let kernel = MontgomeryPoint::ladder3pt(
@@ -599,11 +631,11 @@ pub fn compute_challenge_verify(
 /// Double every point of a basis `n` times — C `ec_dbl_iter_basis`. Reduces a
 /// basis of order `2^k` to one of order `2^(k − n)`.
 #[cfg(feature = "alloc")]
-pub(crate) fn ec_dbl_iter_basis(
-    bas: &crate::ec::couple::EcBasis<Fp1Element>,
+pub(crate) fn ec_dbl_iter_basis<F: BaseField>(
+    bas: &crate::ec::couple::EcBasis<F>,
     n: u32,
-    curve: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
-) -> crate::ec::couple::EcBasis<Fp1Element> {
+    curve: &crate::ec::montgomery::MontgomeryCurve<F>,
+) -> crate::ec::couple::EcBasis<F> {
     let a24 = curve.to_a24();
     crate::ec::couple::EcBasis::new(
         a24.x_double_n(&bas.p, n),
@@ -619,35 +651,31 @@ pub(crate) fn ec_dbl_iter_basis(
 /// basis. Returns `(B_chall, B_aux)`, or `None` on order underflow / a failed
 /// biladder. lvl1-pinned (`TORSION_EVEN_POWER = 248`, `HD_extra_torsion = 2`).
 #[cfg(feature = "alloc")]
-pub fn challenge_and_aux_basis_verify(
-    e_chall: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
-    e_aux: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
-    sig: &SignatureData,
+pub fn challenge_and_aux_basis_verify<P: crate::level_constants::LevelConstants>(
+    e_chall: &crate::ec::montgomery::MontgomeryCurve<P::Field>,
+    e_aux: &crate::ec::montgomery::MontgomeryCurve<P::Field>,
+    sig: &SignatureData<P::Field>,
     pow_dim2_deg_resp: usize,
-) -> Option<(
-    crate::ec::couple::EcBasis<Fp1Element>,
-    crate::ec::couple::EcBasis<Fp1Element>,
-)> {
+) -> Option<BasisPair<P::Field>> {
     use crate::ec::biscalar::ec_curve_to_basis_2f_from_hint;
     use crate::ec::couple::EcBasis;
     use crate::isogeny::endomorphism::matrix_application_even_basis;
-    const TORSION_EVEN_POWER: usize = 248;
+    let torsion_even_power = P::F;
     const HD_EXTRA: usize = 2;
     let two_resp = usize::from(sig.two_resp_length);
 
     // Challenge basis: from-hint at full order, doubled down to order
     // 2^(pow_dim2_deg_resp + HD_extra + two_resp).
-    let b_chall =
-        ec_curve_to_basis_2f_from_hint::<Level1>(e_chall, TORSION_EVEN_POWER, sig.hint_chall);
-    let chall_dbl = TORSION_EVEN_POWER
+    let b_chall = ec_curve_to_basis_2f_from_hint::<P>(e_chall, torsion_even_power, sig.hint_chall);
+    let chall_dbl = torsion_even_power
         .checked_sub(pow_dim2_deg_resp)?
         .checked_sub(HD_EXTRA)?
         .checked_sub(two_resp)?;
     let b_chall = ec_dbl_iter_basis(&b_chall, u32::try_from(chall_dbl).ok()?, e_chall);
 
     // Auxiliary basis: from-hint, doubled to order 2^(pow_dim2_deg_resp + HD_extra).
-    let b_aux = ec_curve_to_basis_2f_from_hint::<Level1>(e_aux, TORSION_EVEN_POWER, sig.hint_aux);
-    let aux_dbl = TORSION_EVEN_POWER
+    let b_aux = ec_curve_to_basis_2f_from_hint::<P>(e_aux, torsion_even_power, sig.hint_aux);
+    let aux_dbl = torsion_even_power
         .checked_sub(pow_dim2_deg_resp)?
         .checked_sub(HD_EXTRA)?;
     let b_aux = ec_dbl_iter_basis(&b_aux, u32::try_from(aux_dbl).ok()?, e_aux);
@@ -674,14 +702,14 @@ pub fn challenge_and_aux_basis_verify(
 /// the challenge basis through it. Returns the updated `(E_chall, B_chall)`.
 /// lvl1-pinned (`HD_extra_torsion = 2`).
 #[cfg(feature = "alloc")]
-pub fn two_response_isogeny_verify(
-    e_chall: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
-    b_chall: &crate::ec::couple::EcBasis<Fp1Element>,
-    sig: &SignatureData,
+pub fn two_response_isogeny_verify<F: BaseField>(
+    e_chall: &crate::ec::montgomery::MontgomeryCurve<F>,
+    b_chall: &crate::ec::couple::EcBasis<F>,
+    sig: &SignatureData<F>,
     pow_dim2_deg_resp: usize,
 ) -> Option<(
-    crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
-    crate::ec::couple::EcBasis<Fp1Element>,
+    crate::ec::montgomery::MontgomeryCurve<F>,
+    crate::ec::couple::EcBasis<F>,
 )> {
     use crate::ec::couple::EcBasis;
     use crate::ec::montgomery::MontgomeryCurve;
@@ -704,7 +732,7 @@ pub fn two_response_isogeny_verify(
 
     // Build the 2^e-isogeny once, then push all three basis points through it.
     let (chain, _) = IsogenyChain2e::new(a24, ker, e, None);
-    let push = |p: &crate::ec::montgomery::MontgomeryPoint<Fp1Element>| {
+    let push = |p: &crate::ec::montgomery::MontgomeryPoint<F>| {
         let mut q = *p;
         for step in &chain.steps {
             q = step.eval(&q);
@@ -720,12 +748,12 @@ pub fn two_response_isogeny_verify(
 /// basis). Port of C `ec_is_basis_four_torsion` (used in the `pow == 0`
 /// supersingularity check, which assumes `HD_extra_torsion == 2`).
 #[cfg(feature = "alloc")]
-fn is_basis_four_torsion(
-    bas: &crate::ec::couple::EcBasis<Fp1Element>,
-    curve: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
+fn is_basis_four_torsion<F: BaseField>(
+    bas: &crate::ec::couple::EcBasis<F>,
+    curve: &crate::ec::montgomery::MontgomeryCurve<F>,
 ) -> bool {
     let a24 = curve.to_a24();
-    let order_4 = |p: &crate::ec::montgomery::MontgomeryPoint<Fp1Element>| {
+    let order_4 = |p: &crate::ec::montgomery::MontgomeryPoint<F>| {
         // [4]P = O and [2]P ≠ O ⇒ order exactly 4.
         bool::from(a24.x_double_n(p, 2).is_infinity())
             && !bool::from(a24.x_double_n(p, 1).is_infinity())
@@ -740,13 +768,13 @@ fn is_basis_four_torsion(
 /// not describe an isogeny between elliptic products (it must split). `E_com`
 /// is always the first codomain factor. lvl1-pinned.
 #[cfg(feature = "alloc")]
-pub fn compute_commitment_curve_verify(
-    b_chall: &crate::ec::couple::EcBasis<Fp1Element>,
-    b_aux: &crate::ec::couple::EcBasis<Fp1Element>,
-    e_chall: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
-    e_aux: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
+pub fn compute_commitment_curve_verify<F: BaseField>(
+    b_chall: &crate::ec::couple::EcBasis<F>,
+    b_aux: &crate::ec::couple::EcBasis<F>,
+    e_chall: &crate::ec::montgomery::MontgomeryCurve<F>,
+    e_aux: &crate::ec::montgomery::MontgomeryCurve<F>,
     pow_dim2_deg_resp: usize,
-) -> Option<crate::ec::montgomery::MontgomeryCurve<Fp1Element>> {
+) -> Option<crate::ec::montgomery::MontgomeryCurve<F>> {
     use crate::ec::couple::{CoupleCurve, CoupleJacobianPoint, ThetaKernelCouplePoints};
     use crate::ec::jacobian::lift_basis;
     use crate::isogeny::theta_chain::theta_chain_compute_and_eval_verify;
@@ -793,39 +821,55 @@ pub fn compute_commitment_curve_verify(
 /// more rehash squeezed to `(TORSION_EVEN_POWER − SQIsign_response_length)` bits
 /// = 122 bits at lvl1, then reduced mod `2^SECURITY_BITS`. lvl1-pinned.
 #[cfg(feature = "alloc")]
-pub fn hash_to_challenge(
-    pk_curve_a: &Fp2<Fp1Element>,
-    e_com_a: &Fp2<Fp1Element>,
+pub fn hash_to_challenge<P: crate::level_constants::LevelConstants>(
+    pk_curve_a: &Fp2<P::Field>,
+    e_com_a: &Fp2<P::Field>,
     message: &[u8],
 ) -> Uint<8> {
     use crate::ec::montgomery::MontgomeryCurve;
     use crate::hash::{Shake256, hash_to_challenge_scalar};
-    use crate::params::lvl1::Level1;
+    let fp2_bytes = P::FP2_BYTES; // 64 lvl1 / 96 lvl3
+    let chall_bytes = P::SECURITY_BITS / 8; // 16 lvl1 / 24 lvl3
+    let scalar_bytes = 2 * P::SECURITY_BITS / 8; // 32 lvl1 / 48 lvl3
+    let kept_bits = P::F - P::RESPONSE_BITS; // 122 lvl1 / 184 lvl3
 
     // j-invariants of the public and commitment curves, encoded as fp2 bytes.
-    let mut j_pk = [0u8; 64];
-    let mut j_com = [0u8; 64];
+    let mut j_pk = [0u8; 96];
+    let mut j_com = [0u8; 96];
     MontgomeryCurve::new(*pk_curve_a)
         .j_invariant()
-        .to_bytes_le(&mut j_pk);
+        .to_bytes_le(&mut j_pk[..fp2_bytes]);
     MontgomeryCurve::new(*e_com_a)
         .j_invariant()
-        .to_bytes_le(&mut j_com);
+        .to_bytes_le(&mut j_com[..fp2_bytes]);
 
-    // C rounds 1 .. HASH_ITERATIONS−1 (2·SECURITY_BITS = 32 bytes at lvl1).
-    let mut scalar32 = [0u8; 32];
-    hash_to_challenge_scalar::<Level1>(&j_pk, &j_com, message, &mut scalar32);
+    // C rounds 1 .. HASH_ITERATIONS−1 (2·SECURITY_BITS bytes wide).
+    let mut scalar = [0u8; 48];
+    hash_to_challenge_scalar::<P>(
+        &j_pk[..fp2_bytes],
+        &j_com[..fp2_bytes],
+        message,
+        &mut scalar[..scalar_bytes],
+    );
 
-    // C final round: rehash, squeeze (TORSION_EVEN_POWER − response_length) bits.
+    // C final round: rehash, squeeze `kept_bits = TORSION_EVEN_POWER −
+    // response_length` low bits of a `chall_bytes`-wide little-endian value.
     let mut h = Shake256::new();
-    h.absorb(&scalar32);
-    let mut chall = [0u8; 16];
-    h.finalize_into(&mut chall);
-    // Mask to 122 bits (248 − 126): keep the low 2 bits of the top byte.
-    chall[15] &= 0x03;
-    // mod 2^SECURITY_BITS (128) is a no-op on these 16 bytes.
+    h.absorb(&scalar[..scalar_bytes]);
+    let mut chall = [0u8; 24];
+    h.finalize_into(&mut chall[..chall_bytes]);
+    // Mask to the low `kept_bits` bits (lvl1: 122 → low 2 bits of byte 15).
+    let full = kept_bits / 8;
+    let rem = kept_bits % 8;
+    if full < chall_bytes {
+        chall[full] &= (1u8 << rem).wrapping_sub(1);
+        for b in chall.iter_mut().take(chall_bytes).skip(full + 1) {
+            *b = 0;
+        }
+    }
+    // mod 2^SECURITY_BITS is a no-op (chall is exactly that wide).
     let mut buf = [0u8; 64];
-    buf[..16].copy_from_slice(&chall);
+    buf[..chall_bytes].copy_from_slice(&chall[..chall_bytes]);
     Uint::<8>::from_le_slice(&buf)
 }
 
@@ -834,28 +878,29 @@ pub fn hash_to_challenge(
 /// the one carried by the signature. lvl1-only. `sig_bytes` / `pk_bytes` are the
 /// 148-byte / 65-byte wire encodings.
 #[cfg(feature = "alloc")]
-pub fn protocols_verify(sig_bytes: &[u8], pk_bytes: &[u8], message: &[u8]) -> bool {
+pub fn protocols_verify<P: crate::level_constants::LevelConstants>(
+    sig_bytes: &[u8],
+    pk_bytes: &[u8],
+    message: &[u8],
+) -> bool {
     use crate::ec::montgomery::MontgomeryCurve;
-    use crate::params::Params;
-    use crate::params::lvl1::Level1;
-
-    let sig = match SignatureData::from_bytes_lvl1(sig_bytes) {
+    let sig = match SignatureData::<P::Field>::from_bytes::<P>(sig_bytes) {
         Ok(s) => s,
         Err(_) => return false,
     };
-    let pk = match PublicKeyData::from_bytes_lvl1(pk_bytes) {
+    let pk = match PublicKeyData::<P::Field>::from_bytes::<P>(pk_bytes) {
         Ok(p) => p,
         Err(_) => return false,
     };
 
     // 1. Canonical basis-change matrix.
-    if !check_canonical_basis_change_matrix(&sig) {
+    if !check_canonical_basis_change_matrix::<P>(&sig) {
         #[cfg(feature = "std")]
         eprintln!("VERIFY FAIL: 1 canonical_basis_change_matrix");
         return false;
     }
     // 2. Length of the dim-2 isogeny; reject too-long / length-1 responses.
-    let response = match i64::try_from(Level1::RESPONSE_BITS) {
+    let response = match i64::try_from(P::RESPONSE_BITS) {
         Ok(r) => r,
         Err(_) => return false,
     };
@@ -879,12 +924,13 @@ pub fn protocols_verify(sig_bytes: &[u8], pk_bytes: &[u8], message: &[u8]) -> bo
     let e_aux = MontgomeryCurve::new(sig.e_aux_a);
 
     // 5. Challenge curve.
-    let mut e_chall = compute_challenge_verify(&e_pk, &sig, pk.hint_pk);
+    let mut e_chall = compute_challenge_verify::<P>(&e_pk, &sig, pk.hint_pk);
     // 6. Canonical challenge + auxiliary bases (matrix applied to challenge).
-    let (mut b_chall, b_aux) = match challenge_and_aux_basis_verify(&e_chall, &e_aux, &sig, pow) {
-        Some(x) => x,
-        None => return false,
-    };
+    let (mut b_chall, b_aux) =
+        match challenge_and_aux_basis_verify::<P>(&e_chall, &e_aux, &sig, pow) {
+            Some(x) => x,
+            None => return false,
+        };
     // 7. Optional short 2^r response isogeny.
     if sig.two_resp_length > 0 {
         match two_response_isogeny_verify(&e_chall, &b_chall, &sig, pow) {
@@ -901,7 +947,69 @@ pub fn protocols_verify(sig_bytes: &[u8], pk_bytes: &[u8], message: &[u8]) -> bo
         None => return false,
     };
     // 9-10. Recompute the challenge and compare.
-    hash_to_challenge(&pk.curve_a, &e_com.a, message) == sig.chall_coeff
+    hash_to_challenge::<P>(&pk.curve_a, &e_com.a, message) == sig.chall_coeff
+}
+
+/// Per-level dispatch for full signature verification. Bridges the runtime
+/// `P::LEVEL` match in [`crate::verify`] to the compile-time `LevelConstants`
+/// bound that [`protocols_verify`] requires: Level 1 and Level 3 run the generic
+/// `protocols_verify`; Level 5 is not yet implemented. This is the verify-side
+/// analogue of [`crate::keypair::KeyLevel`].
+pub trait VerifyLevel: crate::params::Params {
+    /// Verify `sig` over `msg` against public key `pk` (both wire-encoded).
+    fn verify_bytes(sig: &[u8], pk: &[u8], msg: &[u8]) -> Result<()>;
+}
+
+#[cfg(feature = "alloc")]
+impl VerifyLevel for Level1 {
+    fn verify_bytes(sig: &[u8], pk: &[u8], msg: &[u8]) -> Result<()> {
+        if protocols_verify::<Level1>(sig, pk, msg) {
+            Ok(())
+        } else {
+            Err(Error::InvalidSignature)
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl VerifyLevel for crate::params::lvl3::Level3 {
+    fn verify_bytes(sig: &[u8], pk: &[u8], msg: &[u8]) -> Result<()> {
+        if protocols_verify::<crate::params::lvl3::Level3>(sig, pk, msg) {
+            Ok(())
+        } else {
+            Err(Error::InvalidSignature)
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl VerifyLevel for crate::params::lvl5::Level5 {
+    fn verify_bytes(_sig: &[u8], _pk: &[u8], _msg: &[u8]) -> Result<()> {
+        Err(Error::Unimplemented("verify: level 5 not implemented"))
+    }
+}
+
+// Without `alloc` the orchestration helpers are absent; every level reports
+// the missing capability rather than a verification verdict.
+#[cfg(not(feature = "alloc"))]
+impl VerifyLevel for Level1 {
+    fn verify_bytes(_sig: &[u8], _pk: &[u8], _msg: &[u8]) -> Result<()> {
+        Err(Error::Unimplemented("verify: requires the alloc feature"))
+    }
+}
+
+#[cfg(not(feature = "alloc"))]
+impl VerifyLevel for crate::params::lvl3::Level3 {
+    fn verify_bytes(_sig: &[u8], _pk: &[u8], _msg: &[u8]) -> Result<()> {
+        Err(Error::Unimplemented("verify: requires the alloc feature"))
+    }
+}
+
+#[cfg(not(feature = "alloc"))]
+impl VerifyLevel for crate::params::lvl5::Level5 {
+    fn verify_bytes(_sig: &[u8], _pk: &[u8], _msg: &[u8]) -> Result<()> {
+        Err(Error::Unimplemented("verify: requires the alloc feature"))
+    }
 }
 
 /// Sign — the short `2^r` response isogeny (`two_resp_length > 0`). Port of C
@@ -911,16 +1019,13 @@ pub fn protocols_verify(sig_bytes: &[u8], pk_bytes: &[u8], message: &[u8]) -> bo
 /// the `2^two_resp`-isogeny, and push the (original) challenge basis through it.
 /// Returns the updated `(E_chall_2, B_chall_2)`. lvl1.
 #[cfg(feature = "alloc")]
-pub fn compute_small_chain_isogeny_signature(
-    e_chall_2: &crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
-    b_chall_2: &crate::ec::couple::EcBasis<Fp1Element>,
+pub fn compute_small_chain_isogeny_signature<P: crate::level_constants::LevelConstants>(
+    e_chall_2: &crate::ec::montgomery::MontgomeryCurve<P::Field>,
+    b_chall_2: &crate::ec::couple::EcBasis<P::Field>,
     resp_o0: &[crypto_bigint::Int<16>; 4],
     pow_dim2: u32,
     two_resp_length: u32,
-) -> Option<(
-    crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
-    crate::ec::couple::EcBasis<Fp1Element>,
-)> {
+) -> Option<CurveBasis<P::Field>> {
     use crate::ec::biscalar::ec_biscalar_mul;
     use crate::ec::couple::EcBasis;
     use crate::ec::montgomery::MontgomeryCurve;
@@ -930,7 +1035,7 @@ pub fn compute_small_chain_isogeny_signature(
 
     let length = usize::try_from(two_resp_length).ok()?;
     // Kernel coordinates of the response ideal (norm 2^two_resp).
-    let vec2 = id2iso_ideal_to_kernel_dlogs_even::<16>(resp_o0, length);
+    let vec2 = id2iso_ideal_to_kernel_dlogs_even::<P, 16>(resp_o0, length);
     // Reduce the challenge basis to order 2^two_resp; form the kernel point.
     let b_red = ec_dbl_iter_basis(b_chall_2, pow_dim2 + HD, e_chall_2);
     let a24 = e_chall_2.a24();
@@ -946,7 +1051,7 @@ pub fn compute_small_chain_isogeny_signature(
     // 2^two_resp-isogeny; push the original challenge basis through it.
     let a24c = e_chall_2.to_a24();
     let (chain, _) = IsogenyChain2e::new(a24c, ker, two_resp_length, None);
-    let push = |p: &crate::ec::montgomery::MontgomeryPoint<Fp1Element>| {
+    let push = |p: &crate::ec::montgomery::MontgomeryPoint<P::Field>| {
         let mut q = *p;
         for step in &chain.steps {
             q = step.eval(&q);
@@ -972,24 +1077,21 @@ pub fn compute_small_chain_isogeny_signature(
 /// supplied canonical basis directly. Returns `(E_chall, B_chall_2_on_E_chall)`.
 /// lvl1-pinned.
 #[cfg(feature = "alloc")]
-pub fn compute_challenge_codomain_signature(
-    sk_curve_a: &Fp2<Fp1Element>,
-    sk_canonical_basis: &crate::ec::couple::EcBasis<Fp1Element>,
+pub fn compute_challenge_codomain_signature<P: crate::level_constants::LevelConstants>(
+    sk_curve_a: &Fp2<P::Field>,
+    sk_canonical_basis: &crate::ec::couple::EcBasis<P::Field>,
     chall_coeff: &Uint<8>,
     backtracking: u8,
-    e_chall_2_a: &Fp2<Fp1Element>,
-    b_chall_2: &crate::ec::couple::EcBasis<Fp1Element>,
-) -> Option<(
-    crate::ec::montgomery::MontgomeryCurve<Fp1Element>,
-    crate::ec::couple::EcBasis<Fp1Element>,
-)> {
+    e_chall_2_a: &Fp2<P::Field>,
+    b_chall_2: &crate::ec::couple::EcBasis<P::Field>,
+) -> Option<CurveBasis<P::Field>> {
     use crate::ec::couple::EcBasis;
     use crate::ec::montgomery::{MontgomeryCurve, MontgomeryPoint};
     use crate::isogeny::two::IsogenyChain2e;
-    const TORSION_EVEN_POWER: usize = 248;
+    let torsion_even_power = P::F;
 
     let curve = MontgomeryCurve::new(*sk_curve_a);
-    let length = TORSION_EVEN_POWER - usize::from(backtracking);
+    let length = torsion_even_power - usize::from(backtracking);
     // kernel = P + [chall_coeff]·Q, doubled `backtracking` times.
     let a24 = curve.a24();
     let kernel = MontgomeryPoint::ladder3pt(
@@ -1038,10 +1140,11 @@ mod tests {
             chall_coeff: c,
             ..small_sig([[Uint::<8>::ONE; 2]; 2], 0)
         };
-        let e_chall = compute_challenge_verify(&e0, &sig, 0);
-        let (e_chall2, b_mapped) =
-            compute_challenge_codomain_signature(&e0.a, &basis, &c, 0, &e_chall.a, &basis)
-                .expect("codomain + identity map");
+        let e_chall = compute_challenge_verify::<Level1>(&e0, &sig, 0);
+        let (e_chall2, b_mapped) = compute_challenge_codomain_signature::<Level1>(
+            &e0.a, &basis, &c, 0, &e_chall.a, &basis,
+        )
+        .expect("codomain + identity map");
         assert_eq!(e_chall2.a, e_chall.a, "E_chall is deterministic");
         // Identity isomorphism (E_chall → E_chall) preserves the basis x-coords.
         assert_eq!(b_mapped.p.affine_x(), basis.p.affine_x(), "P x preserved");
@@ -1118,7 +1221,7 @@ mod tests {
         assert_eq!(sig.hint_chall, 0x17);
     }
 
-    fn small_sig(mat: [[Uint<8>; 2]; 2], backtracking: u8) -> SignatureData {
+    fn small_sig(mat: [[Uint<8>; 2]; 2], backtracking: u8) -> SignatureData<Fp1Element> {
         SignatureData {
             e_aux_a: Fp2::<Fp1Element>::zero(),
             backtracking,
@@ -1134,20 +1237,28 @@ mod tests {
     fn check_canonical_matrix_bounds_entries() {
         let ones = [[Uint::<8>::from_u8(1); 2]; 2];
         // backtracking = 0 ⇒ bound = 2^128; small entries accepted.
-        assert!(check_canonical_basis_change_matrix(&small_sig(ones, 0)));
+        assert!(check_canonical_basis_change_matrix::<Level1>(&small_sig(
+            ones, 0
+        )));
         // An entry equal to the bound (2^128) is rejected (C: bound ≤ entry).
         let mut m = ones;
         m[1][1] = Uint::<8>::ONE.shl_vartime(128);
-        assert!(!check_canonical_basis_change_matrix(&small_sig(m, 0)));
+        assert!(!check_canonical_basis_change_matrix::<Level1>(&small_sig(
+            m, 0
+        )));
         // Just below the bound (2^128 − 1) is accepted.
         let mut m2 = ones;
         m2[0][1] = Uint::<8>::ONE
             .shl_vartime(128)
             .wrapping_sub(&Uint::<8>::ONE);
-        assert!(check_canonical_basis_change_matrix(&small_sig(m2, 0)));
+        assert!(check_canonical_basis_change_matrix::<Level1>(&small_sig(
+            m2, 0
+        )));
         // backtracking shrinks the bound: backtracking = 128 ⇒ bound = 2^0 = 1,
         // so any non-zero entry is rejected.
-        assert!(!check_canonical_basis_change_matrix(&small_sig(ones, 128)));
+        assert!(!check_canonical_basis_change_matrix::<Level1>(&small_sig(
+            ones, 128
+        )));
     }
 
     #[cfg(feature = "alloc")]
@@ -1162,7 +1273,7 @@ mod tests {
             ..sig
         };
         // hint_pk is ignored on E0 (the basis comes from the precomputed E0 set).
-        let e_chall = compute_challenge_verify(&epk, &sig, 0);
+        let e_chall = compute_challenge_verify::<Level1>(&epk, &sig, 0);
         // A 2^248-isogeny lands on a valid curve, genuinely off E0.
         assert!(ec_curve_verify_a(&e_chall.a), "E_chall is a valid curve");
         assert_ne!(
@@ -1188,7 +1299,7 @@ mod tests {
         let e0 = MontgomeryCurve::<Fp1Element>::e0();
         let pow = 240usize; // ⇒ chall/aux doublings = 248−240−2 = 6, f = 242
         let (b_chall, _b_aux) =
-            challenge_and_aux_basis_verify(&e0, &e0, &sig, pow).expect("bases recompute");
+            challenge_and_aux_basis_verify::<Level1>(&e0, &e0, &sig, pow).expect("bases recompute");
 
         // Independent expected reduced basis: E0 basis doubled 6 times.
         let a24 = e0.to_a24();
@@ -1311,8 +1422,8 @@ mod tests {
             crate::ec::biscalar::fp_small::<Fp1Element>(7),
             crate::ec::biscalar::fp_small::<Fp1Element>(2),
         );
-        let h1 = hash_to_challenge(&pk_a, &com_a, b"msg");
-        let h2 = hash_to_challenge(&pk_a, &com_a, b"msg");
+        let h1 = hash_to_challenge::<Level1>(&pk_a, &com_a, b"msg");
+        let h2 = hash_to_challenge::<Level1>(&pk_a, &com_a, b"msg");
         assert_eq!(h1, h2, "hash is deterministic");
         // Changing the commitment curve changes the challenge.
         let com_a2 = Fp2::<Fp1Element>::new(
@@ -1321,7 +1432,7 @@ mod tests {
         );
         assert_ne!(
             h1,
-            hash_to_challenge(&pk_a, &com_a2, b"msg"),
+            hash_to_challenge::<Level1>(&pk_a, &com_a2, b"msg"),
             "E_com matters"
         );
         // Output is reduced below 2^122 (top 6 bits of the 128-bit value clear).
@@ -1348,7 +1459,7 @@ mod tests {
         sig[66 + 3 * MAT_ENTRY_BYTES_LVL1] = 1; // mat[1][1] = 1
         sig[130] = 1; // chall_coeff = 1
         assert!(
-            !protocols_verify(&sig, &pk, b"hello"),
+            !protocols_verify::<Level1>(&sig, &pk, b"hello"),
             "non-matching signature rejected",
         );
     }
@@ -1483,7 +1594,7 @@ mod tests {
         let b_aux_2 = b_can_chall_f;
 
         let mut sig = small_sig([[Uint::<8>::ZERO; 2]; 2], 0);
-        assert!(compute_and_set_basis_change_matrix(
+        assert!(compute_and_set_basis_change_matrix::<Level1>(
             &mut sig, &b_aux_2, &b_chall_2, &e0, &e0, f
         ));
         // With M_aux = identity, sig.mat must recover M_known.

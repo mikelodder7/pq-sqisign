@@ -649,7 +649,7 @@ fn mat2x2_inv_mod_2f(m: &[[Uint<8>; 2]; 2], f: usize) -> Option<[[Uint<8>; 2]; 2
 /// `2^f`. Built at internal width 24 (the norm-`2^f` ideal's `det_4x4` reaches
 /// ~`2^(4f/... )` and overflows narrow widths), returned at `LeftIdeal<16>`.
 /// Returns `None` if the basis matrix is singular mod `2^f`. lvl1-pinned.
-pub(crate) fn id2iso_kernel_dlogs_to_ideal_even(
+pub(crate) fn id2iso_kernel_dlogs_to_ideal_even<P: LevelConstants>(
     vec2: &[Uint<8>; 2],
     f: usize,
 ) -> Option<crate::quaternion::ideal::LeftIdeal<16>> {
@@ -658,9 +658,7 @@ pub(crate) fn id2iso_kernel_dlogs_to_ideal_even(
     const WK: usize = 24;
 
     // ACTION_J = action of `j` = 2·GEN3 − I  (j = 2·(i+j)/2 − i).
-    let gen_i = mat_from_limbs(&ACTION_I);
-    let gen3 = mat_from_limbs(&ACTION_GEN3);
-    let gen4 = mat_from_limbs(&ACTION_GEN4);
+    let [gen_i, gen3, gen4] = action_matrices_2f::<P>()?;
     let mut action_j = [[Uint::<8>::ZERO; 2]; 2];
     for r in 0..2 {
         for c in 0..2 {
@@ -697,7 +695,7 @@ pub(crate) fn id2iso_kernel_dlogs_to_ideal_even(
     );
 
     let two_pow = Uint::<WK>::ONE.shl_vartime(u32::try_from(f).ok()?);
-    let p_wk = crate::params::lvl1::prime().resize::<WK>();
+    let p_wk = P::prime::<WK>();
     let (basis, denom, norm) = quat_lideal_create::<WK>(
         &gen_q,
         &crypto_bigint::Int::<WK>::from_i64(2),
@@ -733,7 +731,7 @@ pub(crate) fn id2iso_kernel_dlogs_to_ideal_even(
 /// `vec = sk.mat_BAcan_to_BA0_two · [1, chall_coeff]` over `E0`'s canonical
 /// basis, whose `id2iso_kernel_dlogs_to_ideal_even` is the (norm-`2^f`) challenge
 /// ideal. lvl1-pinned (`f = TORSION_EVEN_POWER = 248`).
-pub(crate) fn compute_challenge_ideal_signature(
+pub(crate) fn compute_challenge_ideal_signature<P: LevelConstants>(
     mat_bacan_to_ba0_two: &[[Uint<8>; 2]; 2],
     chall_coeff: &Uint<8>,
     f: usize,
@@ -744,7 +742,7 @@ pub(crate) fn compute_challenge_ideal_signature(
         &[Uint::<8>::ONE & mask_2f(f), *chall_coeff & mask_2f(f)],
         f,
     );
-    id2iso_kernel_dlogs_to_ideal_even(&vec, f)
+    id2iso_kernel_dlogs_to_ideal_even::<P>(&vec, f)
 }
 
 /// Recover the kernel coordinates `vec2` (in the canonical `E_0[2^f]` basis) of
@@ -754,7 +752,7 @@ pub(crate) fn compute_challenge_ideal_signature(
 /// `2^f`-torsion (`coeffs0·I + coeffs1·GEN2 + coeffs2·GEN3 + coeffs3·GEN4` where
 /// `coeffs = conj(gen)` in O_0-coords), then read a primitive kernel column mod
 /// `2^f`. Returns `[v0, v1]` with `ker = v0·B0[0] + v1·B0[1]`.
-pub(crate) fn id2iso_ideal_to_kernel_dlogs_even<const LIMBS: usize>(
+pub(crate) fn id2iso_ideal_to_kernel_dlogs_even<P: LevelConstants, const LIMBS: usize>(
     gen_q: &[crypto_bigint::Int<LIMBS>; 4],
     f: usize,
 ) -> [Uint<8>; 2] {
@@ -765,9 +763,9 @@ pub(crate) fn id2iso_ideal_to_kernel_dlogs_even<const LIMBS: usize>(
         int_to_mod_2f(&alpha[2], f),
         int_to_mod_2f(&alpha[3], f),
     ];
-    let gen2 = mat_from_limbs(&ACTION_I); // GEN2 == ACTION_I
-    let gen3 = mat_from_limbs(&ACTION_GEN3);
-    let gen4 = mat_from_limbs(&ACTION_GEN4);
+    // GEN2 == ACTION_I; `_` levels (no E0 endo data) fall back to all-zero
+    // matrices — unreachable in practice (only lvl1/lvl3 sign).
+    let [gen2, gen3, gen4] = action_matrices_2f::<P>().unwrap_or([[[Uint::<8>::ZERO; 2]; 2]; 3]);
     let mut mat = [[Uint::<8>::ZERO; 2]; 2];
     for i in 0..2 {
         for j in 0..2 {
@@ -800,6 +798,42 @@ fn mat_from_limbs(t: &[[[u64; 4]; 2]; 2]) -> [[Uint<8>; 2]; 2] {
             Uint::<8>::from_words([t[1][1][0], t[1][1][1], t[1][1][2], t[1][1][3], 0, 0, 0, 0]),
         ],
     ]
+}
+
+/// Build a `[[Uint<8>;2];2]` matrix from an `N`-limb table (`N ≤ 8`), padding
+/// the high words with zero. Generalizes [`mat_from_limbs`] over the field
+/// width (lvl1 action matrices are 4-limb, lvl3's are 6-limb).
+#[inline]
+fn mat_from_limbs_n<const N: usize>(t: &[[[u64; N]; 2]; 2]) -> [[Uint<8>; 2]; 2] {
+    let conv = |limbs: &[u64; N]| {
+        let mut w = [0u64; 8];
+        w[..N].copy_from_slice(limbs);
+        Uint::<8>::from_words(w)
+    };
+    [
+        [conv(&t[0][0]), conv(&t[0][1])],
+        [conv(&t[1][0]), conv(&t[1][1])],
+    ]
+}
+
+/// The per-level `E0` endomorphism action matrices `(I, GEN3, GEN4)` on the
+/// `2^F`-torsion, as `[[Uint<8>;2];2]` reduced representatives. Level 1 uses the
+/// 4-limb tables; level 3 the 6-limb `*_LVL3` tables. `None` for levels without
+/// precomputed E0 endomorphism data.
+fn action_matrices_2f<P: LevelConstants>() -> Option<[[[Uint<8>; 2]; 2]; 3]> {
+    match P::LEVEL {
+        1 => Some([
+            mat_from_limbs(&ACTION_I),
+            mat_from_limbs(&ACTION_GEN3),
+            mat_from_limbs(&ACTION_GEN4),
+        ]),
+        3 => Some([
+            mat_from_limbs_n(&ACTION_I_LVL3),
+            mat_from_limbs_n(&ACTION_GEN3_LVL3),
+            mat_from_limbs_n(&ACTION_GEN4_LVL3),
+        ]),
+        _ => None,
+    }
 }
 
 /// `(a + b) mod 2^f`.
@@ -1089,7 +1123,7 @@ mod tests {
         // Challenge-ideal construction for a kernel vec2 = [1, c].
         let f = 248usize;
         let vec2 = [Uint::<8>::ONE, Uint::<8>::from_u64(12345)];
-        let ideal = id2iso_kernel_dlogs_to_ideal_even(&vec2, f)
+        let ideal = id2iso_kernel_dlogs_to_ideal_even::<Level1>(&vec2, f)
             .expect("challenge ideal builds (norm = 2^f asserted internally)");
         // Validity by LEFT-CLOSURE (reduced_norm overflows det_4x4 at norm 2^248).
         let p16 = crate::params::lvl1::prime().resize::<16>();
@@ -1105,9 +1139,11 @@ mod tests {
             }
         }
         // A different challenge coefficient yields a different ideal.
-        let other =
-            id2iso_kernel_dlogs_to_ideal_even(&[Uint::<8>::ONE, Uint::<8>::from_u64(6789)], f)
-                .expect("second challenge ideal");
+        let other = id2iso_kernel_dlogs_to_ideal_even::<Level1>(
+            &[Uint::<8>::ONE, Uint::<8>::from_u64(6789)],
+            f,
+        )
+        .expect("second challenge ideal");
         assert_ne!(
             ideal.basis, other.basis,
             "distinct chall_coeff ⇒ distinct ideal"
@@ -1124,8 +1160,10 @@ mod tests {
             [Uint::<8>::ZERO, Uint::<8>::ONE],
         ];
         let c = Uint::<8>::from_u64(424242);
-        let via_sig = compute_challenge_ideal_signature(&identity, &c, f).expect("sig challenge");
-        let direct = id2iso_kernel_dlogs_to_ideal_even(&[Uint::<8>::ONE, c], f).expect("direct");
+        let via_sig =
+            compute_challenge_ideal_signature::<Level1>(&identity, &c, f).expect("sig challenge");
+        let direct =
+            id2iso_kernel_dlogs_to_ideal_even::<Level1>(&[Uint::<8>::ONE, c], f).expect("direct");
         assert_eq!(
             via_sig.basis, direct.basis,
             "identity matrix ⇒ direct construction"
@@ -1135,7 +1173,8 @@ mod tests {
             [Uint::<8>::from_u8(3), Uint::<8>::from_u8(1)],
             [Uint::<8>::from_u8(2), Uint::<8>::from_u8(5)],
         ];
-        let via_m = compute_challenge_ideal_signature(&m, &c, f).expect("matrix challenge");
+        let via_m =
+            compute_challenge_ideal_signature::<Level1>(&m, &c, f).expect("matrix challenge");
         assert_ne!(
             via_m.basis, direct.basis,
             "non-identity matrix ⇒ different ideal"

@@ -20,6 +20,8 @@ pub use lvl1::Level1;
 pub use lvl3::Level3;
 pub use lvl5::Level5;
 
+use crate::gf::fp::BaseField;
+
 /// Common parameter-set surface implemented by [`Level1`], [`Level3`], [`Level5`].
 ///
 /// A `Params` implementor names the prime, the field-element byte size, and the
@@ -28,6 +30,12 @@ pub use lvl5::Level5;
 /// modules are generic over `Params` so they don't have to be rewritten per
 /// level.
 pub trait Params: 'static + Copy + core::fmt::Debug {
+    /// The base field `F_p` element type for this level (`Fp1Element`,
+    /// `Fp3Element`, `Fp5Element`). Carried on `Params` so the key types
+    /// (`SecretKeyData<F>`, etc.) and the curve/isogeny layer can be written
+    /// once over `P::Field`.
+    type Field: BaseField;
+
     /// NIST security level (1, 3, or 5).
     const LEVEL: u8;
     /// Bit-length of the base prime `p` (251, 383, or 505).

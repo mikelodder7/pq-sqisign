@@ -20,7 +20,7 @@ use core::marker::PhantomData;
 /// [`to_bytes`](Self::to_bytes) returns
 /// [`Error::SkSerializationNotSupported`] for those keys.
 pub struct SigningKey<P: Params> {
-    data: crate::verification::SecretKeyData,
+    data: crate::verification::SecretKeyData<P::Field>,
     /// Present only when loaded from bytes; enables [`to_bytes`](Self::to_bytes).
     encoded: Option<Vec<u8>>,
     _params: PhantomData<P>,
@@ -37,7 +37,7 @@ impl<P: Params> core::fmt::Debug for SigningKey<P> {
 
 impl<P: Params> SigningKey<P> {
     /// Construct from a live [`SecretKeyData`] (generated key, no byte encoding).
-    pub(crate) fn from_secret_data(data: crate::verification::SecretKeyData) -> Self {
+    pub(crate) fn from_secret_data(data: crate::verification::SecretKeyData<P::Field>) -> Self {
         Self {
             data,
             encoded: None,
@@ -49,19 +49,17 @@ impl<P: Params> SigningKey<P> {
     ///
     /// The decoded key supports both signing and byte round-trip via
     /// [`to_bytes`](Self::to_bytes).
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        if P::LEVEL != 1 {
-            return Err(Error::Unimplemented(
-                "signing key: only security level 1 supported",
-            ));
-        }
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self>
+    where
+        P: crate::keypair::KeyLevel,
+    {
         if bytes.len() < P::SK_BYTES {
             return Err(Error::BufferTooSmall {
                 required: P::SK_BYTES,
                 provided: bytes.len(),
             });
         }
-        let data = crate::verification::SecretKeyData::from_bytes_lvl1(&bytes[..P::SK_BYTES])?;
+        let data = <P as crate::keypair::KeyLevel>::sk_from_bytes(&bytes[..P::SK_BYTES])?;
         Ok(Self {
             data,
             encoded: Some(bytes[..P::SK_BYTES].to_vec()),
@@ -81,25 +79,32 @@ impl<P: Params> SigningKey<P> {
 
     /// Sign `msg` with this key, using `rng` for commitment randomization.
     #[cfg(feature = "sign")]
-    pub fn sign<R: rand_core::CryptoRng>(
-        &self,
-        msg: &[u8],
-        rng: &mut R,
-    ) -> Result<SqiSignature<P>> {
-        match P::LEVEL {
-            1 => {
-                let sig_bytes = crate::signing::protocols_sign(&self.data, msg, rng)
-                    .ok_or(Error::SigningFailed)?;
-                Ok(SqiSignature::from_bytes_unchecked(&sig_bytes))
+    pub fn sign<R: rand_core::CryptoRng>(&self, msg: &[u8], rng: &mut R) -> Result<SqiSignature<P>>
+    where
+        P: crate::keypair::KeyLevel,
+    {
+        let sig_bytes = match <P as crate::keypair::KeyLevel>::protocols_sign(&self.data, msg, rng)
+        {
+            Some(b) => b,
+            None if P::LEVEL == 1 => return Err(Error::SigningFailed),
+            None => {
+                return Err(Error::Unimplemented(
+                    "sign: only security level 1 supported",
+                ));
             }
-            _ => Err(Error::Unimplemented(
-                "sign: only security level 1 supported",
-            )),
-        }
+        };
+        Ok(SqiSignature::from_bytes_unchecked(&sig_bytes))
     }
 }
 
-impl_bytes_conversions!(no_bytes_field: SigningKey<P>);
+// `SigningKey::from_bytes` requires `P: KeyLevel` (per-level secret-key decode),
+// so its `TryFrom<&[u8]>` is written out rather than via the shared macro.
+impl<P: crate::keypair::KeyLevel> TryFrom<&[u8]> for SigningKey<P> {
+    type Error = Error;
+    fn try_from(bytes: &[u8]) -> Result<Self> {
+        Self::from_bytes(bytes)
+    }
+}
 
 #[cfg(all(test, feature = "kat"))]
 mod tests {

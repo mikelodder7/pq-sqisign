@@ -34,7 +34,9 @@ use crate::isogeny::fixed_degree::{
 };
 use crate::isogeny::theta_chain::theta_chain_compute_and_eval_randomized;
 use crate::level_constants::{EvenBasis, LevelConstants};
-use crate::params::lvl1::{Fp1Element, Level1};
+#[cfg(test)]
+use crate::params::lvl1::Fp1Element;
+use crate::params::lvl1::Level1;
 use crate::quaternion::ideal::LeftIdeal;
 use crypto_bigint::{Int, Uint};
 use rand_core::CryptoRng;
@@ -50,15 +52,15 @@ const QL: usize = 12;
 
 /// A Clapotis codomain curve paired with its transported even-torsion basis.
 pub(crate) type CurveAndBasis<P> = (
-    MontgomeryCurve<<P as LevelConstants>::Field>,
-    EcBasis<<P as LevelConstants>::Field>,
+    MontgomeryCurve<<P as crate::params::Params>::Field>,
+    EcBasis<<P as crate::params::Params>::Field>,
 );
 
 /// A Clapotis codomain curve and basis together with the retained spine ideal.
 #[cfg(feature = "kgen")]
 pub(crate) type CurveBasisIdeal<P> = (
-    MontgomeryCurve<<P as LevelConstants>::Field>,
-    EcBasis<<P as LevelConstants>::Field>,
+    MontgomeryCurve<<P as crate::params::Params>::Field>,
+    EcBasis<<P as crate::params::Params>::Field>,
     LeftIdeal<L>,
 );
 
@@ -728,19 +730,16 @@ fn commit_impl<
 #[cfg(feature = "alloc")]
 // Needs the commitment and auxiliary curves/bases plus response degree data, 2-adic exponents, and RNG.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn compute_dim2_isogeny_challenge<R: CryptoRng>(
-    e_com: &MontgomeryCurve<Fp1Element>,
-    b_com: &EcBasis<Fp1Element>,
-    e_aux: &MontgomeryCurve<Fp1Element>,
-    b_aux: &EcBasis<Fp1Element>,
+pub(crate) fn compute_dim2_isogeny_challenge<F: crate::gf::fp::BaseField, R: CryptoRng>(
+    e_com: &MontgomeryCurve<F>,
+    b_com: &EcBasis<F>,
+    e_aux: &MontgomeryCurve<F>,
+    b_aux: &EcBasis<F>,
     degree_resp_inv: &[u8],
     pow_dim2: u32,
     exp_diadic: u32,
     rng: &mut R,
-) -> Option<(
-    CoupleCurve<Fp1Element>,
-    [CoupleMontgomeryPoint<Fp1Element>; 3],
-)> {
+) -> Option<(CoupleCurve<F>, [CoupleMontgomeryPoint<F>; 3])> {
     use crate::ec::couple::{CoupleJacobianPoint, ThetaKernelCouplePoints};
     use crate::ec::jacobian::lift_basis;
     use crate::isogeny::theta_chain::theta_chain_compute_and_eval_randomized;
@@ -776,7 +775,7 @@ pub(crate) fn compute_dim2_isogeny_challenge<R: CryptoRng>(
     }
 
     // Push the commitment basis (on E1) with O on the E2 factor.
-    let inf = MontgomeryPoint::<Fp1Element>::infinity();
+    let inf = MontgomeryPoint::<F>::infinity();
     let eval = [
         CoupleMontgomeryPoint::new(b_com.p, inf),
         CoupleMontgomeryPoint::new(b_com.q, inf),
@@ -793,12 +792,12 @@ pub(crate) fn compute_dim2_isogeny_challenge<R: CryptoRng>(
 /// public-key hint, and the pushed E0 basis `B_A0`.
 #[cfg(feature = "kgen")]
 pub(crate) type KeygenOutput<P> = (
-    MontgomeryCurve<<P as LevelConstants>::Field>,
+    MontgomeryCurve<<P as crate::params::Params>::Field>,
     LeftIdeal<L>,
     [[Uint<8>; 2]; 2],
-    EcBasis<<P as LevelConstants>::Field>,
+    EcBasis<<P as crate::params::Params>::Field>,
     u8,
-    EcBasis<<P as LevelConstants>::Field>,
+    EcBasis<<P as crate::params::Params>::Field>,
 );
 
 #[cfg(feature = "kgen")]
@@ -855,27 +854,73 @@ pub(crate) fn keygen_lvl1<R: CryptoRng>(
 /// `O_0`-ideal of norm `random_aux_norm` (general path, `is_prime = false`, with
 /// `QUAT_prime_cofactor = 2^251 + 65`), intersect it with `lideal_com_resp`, and
 /// map the result through the Clapotis spine to `(E_aux, B_aux)`. HEAVY. lvl1.
+/// Per-level dispatch wrapper for the auxiliary isogeny step. lvl1 keeps the
+/// SL=48 sampler width; lvl3 widens to SL=96 (its `cofactor·norm` ≈ 2^575
+/// target needs the headroom). `QL` is the quaternion precision (lvl1=12,
+/// lvl3=18). The prime cofactor is `nextprime(2^P_BITS)` per level (lvl1
+/// 2^251+65, lvl3 2^383+369): a prime of similar size to `p`, coprime to the
+/// norm — exactly the C reference's `prime_cofactor` requirement.
 #[cfg(feature = "sign")]
-pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
+pub(crate) fn evaluate_random_aux_isogeny<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     random_aux_norm: &Uint<L>,
     lideal_com_resp: &LeftIdeal<L>,
     witnesses: &[Uint<QL>],
     sample_bound: i64,
     max_trials: usize,
     rng: &mut R,
-) -> Option<(MontgomeryCurve<Fp1Element>, EcBasis<Fp1Element>)> {
+) -> Option<CurveAndBasis<P>> {
+    match P::LEVEL {
+        1 => evaluate_random_aux_isogeny_impl::<P, QL, 48, R>(
+            random_aux_norm,
+            lideal_com_resp,
+            witnesses,
+            sample_bound,
+            max_trials,
+            rng,
+        ),
+        3 => evaluate_random_aux_isogeny_impl::<P, QL, 96, R>(
+            random_aux_norm,
+            lideal_com_resp,
+            witnesses,
+            sample_bound,
+            max_trials,
+            rng,
+        ),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "sign")]
+fn evaluate_random_aux_isogeny_impl<
+    P: FixedDegreeLevel,
+    const QL: usize,
+    const SL: usize,
+    R: CryptoRng,
+>(
+    random_aux_norm: &Uint<L>,
+    lideal_com_resp: &LeftIdeal<L>,
+    witnesses: &[Uint<QL>],
+    sample_bound: i64,
+    max_trials: usize,
+    rng: &mut R,
+) -> Option<CurveAndBasis<P>> {
     use crate::quaternion::ideal_mul::lideal_intersect_lattice;
     use crate::quaternion::represent_integer::sampling_random_ideal_o0_given_norm_wide_ret;
-    const SL: usize = 48;
 
-    let p_sl = crate::params::lvl1::prime().resize::<SL>();
-    let p16 = crate::params::lvl1::prime().resize::<L>();
+    let p_sl = P::prime::<SL>();
+    let p16 = P::prime::<L>();
     let wit_sl: [Uint<SL>; 12] =
         [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
-    // QUAT_prime_cofactor = 2^251 + 65 (lvl1).
+    // QUAT_prime_cofactor = nextprime(2^P_BITS): lvl1 2^251+65, lvl3 2^383+369.
+    let cofactor_offset: u64 = match P::LEVEL {
+        1 => 65,
+        3 => 369,
+        _ => return None,
+    };
+    let p_bits = u32::try_from(P::P_BITS).ok()?;
     let cofactor = Uint::<SL>::ONE
-        .shl_vartime(251)
-        .wrapping_add(&Uint::<SL>::from_u64(65));
+        .shl_vartime(p_bits)
+        .wrapping_add(&Uint::<SL>::from_u64(cofactor_offset));
     let norm_sl = random_aux_norm.resize::<SL>();
 
     // 1. Random O_0 ideal of norm random_aux_norm (composite ⇒ is_prime=false,
@@ -902,7 +947,7 @@ pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
     // (the (0,0) decomposition the commit uses; keygen=false), falling back to
     // the general alternate-orders evaluator. The general combine_indexed
     // (0,0) path's randomized (2,2)-split fails on these aux ideals.
-    ideal_to_isogeny_clapotis_idx0::<Level1, 12, _>(
+    ideal_to_isogeny_clapotis_idx0::<P, QL, _>(
         &aux_resp_com,
         &p16,
         witnesses,
@@ -912,7 +957,7 @@ pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
         rng,
     )
     .or_else(|| {
-        ideal_to_isogeny_clapotis::<Level1, 12, _>(
+        ideal_to_isogeny_clapotis::<P, QL, _>(
             &aux_resp_com,
             &p16,
             witnesses,

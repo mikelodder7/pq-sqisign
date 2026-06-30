@@ -384,7 +384,7 @@ fn sign_at_lvl5<P: Params, R: rand_core::CryptoRng>(
 /// response isogeny to the challenge curve, and checks that the resulting
 /// codomain matches `pk`. It accepts the C reference KAT signatures.
 #[cfg(feature = "vrfy")]
-pub fn verify<P: Params>(msg: &[u8], sig: &[u8], pk: &[u8]) -> Result<()> {
+pub fn verify<P: verification::VerifyLevel>(msg: &[u8], sig: &[u8], pk: &[u8]) -> Result<()> {
     // S87 buffer-size validation: sig and pk must be at least the
     // spec-defined encoding sizes. Reject undersized inputs eagerly
     // with `BufferTooSmall` before any cryptographic parsing.
@@ -402,27 +402,8 @@ pub fn verify<P: Params>(msg: &[u8], sig: &[u8], pk: &[u8]) -> Result<()> {
             provided: pk_len,
         });
     }
-    match P::LEVEL {
-        1 => {
-            #[cfg(feature = "alloc")]
-            {
-                // Full lvl1 verification (verification::protocols_verify).
-                if verification::protocols_verify(sig, pk, msg) {
-                    Ok(())
-                } else {
-                    Err(Error::InvalidSignature)
-                }
-            }
-            #[cfg(not(feature = "alloc"))]
-            {
-                Err(Error::Unimplemented(
-                    "verify: lvl1 requires the alloc feature",
-                ))
-            }
-        }
-        3 | 5 => isogeny::clapotis::evaluate_response_isogeny::<P>(sig, msg, pk),
-        _ => Err(Error::Unimplemented("verify: unsupported security level")),
-    }
+    // Per-level dispatch (lvl1/lvl3 → generic protocols_verify; lvl5 unimpl).
+    P::verify_bytes(sig, pk, msg)
 }
 
 #[cfg(all(test, feature = "kgen", feature = "kat"))]
@@ -619,19 +600,19 @@ mod tests {
 
     #[cfg(feature = "vrfy")]
     #[test]
-    fn verify_at_lvl3_reaches_clapotis_stub() {
+    fn verify_at_lvl3_rejects_garbage_via_real_path() {
+        // Level-3 verify now runs the generalized `protocols_verify` (field-
+        // generic), not the old Clapotis stub. An all-zero signature is not a
+        // valid signature and must be rejected without panicking.
         let msg = b"test message";
         let sig = [0u8; Level3::SIG_BYTES];
         let pk = [0u8; Level3::PK_BYTES];
 
         let result = verify::<Level3>(msg, &sig, &pk);
-        let err = result.expect_err("verify at L3 must fail at the Clapotis stub");
-        let Error::Unimplemented(msg) = err else {
-            unreachable!("expected Unimplemented, got {err:?}");
-        };
-        assert!(
-            msg.contains("Clapotis") || msg.contains("dominant remaining scope"),
-            "verify at L3 must reach the Clapotis stub; got: {msg}",
+        assert_eq!(
+            result,
+            Err(Error::InvalidSignature),
+            "verify at L3 runs the real path and rejects a garbage signature",
         );
     }
 
@@ -808,19 +789,21 @@ mod tests {
 
     #[cfg(feature = "vrfy")]
     #[test]
-    fn verify_at_lvl5_reaches_clapotis_stub() {
+    fn verify_at_lvl5_is_unimplemented() {
+        // Level 5 has no `LevelConstants`/spine yet; verify reports it as
+        // unimplemented (via the `VerifyLevel` dispatch).
         let msg = b"test message";
         let sig = [0u8; Level5::SIG_BYTES];
         let pk = [0u8; Level5::PK_BYTES];
 
         let result = verify::<Level5>(msg, &sig, &pk);
-        let err = result.expect_err("verify at L5 must fail at the Clapotis stub");
+        let err = result.expect_err("verify at L5 must report unimplemented");
         let Error::Unimplemented(msg) = err else {
             unreachable!("expected Unimplemented, got {err:?}");
         };
         assert!(
-            msg.contains("Clapotis") || msg.contains("dominant remaining scope"),
-            "verify at L5 must reach the Clapotis stub; got: {msg}",
+            msg.contains("level 5"),
+            "verify at L5 must report level-5 unimplemented; got: {msg}",
         );
     }
 }
