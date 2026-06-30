@@ -77,10 +77,11 @@ impl<P: Params> KeyPair<P> {
 
     #[cfg(feature = "kgen")]
     fn generate_lvl3<R: rand_core::CryptoRng>(rng: &mut R) -> Result<Self> {
-        let witnesses: [crypto_bigint::Uint<12>; 5] =
+        // Level-3 quaternion precision is QL=18 (3·bits(p)+2 = 1151 ⇒ 18 limbs).
+        let witnesses: [crypto_bigint::Uint<18>; 5] =
             [2u64, 3, 5, 7, 11].map(crypto_bigint::Uint::from_u64);
 
-        let _ = keygen::<Level3, R>(&witnesses, 64, 1 << 14, rng)
+        let _ = keygen::<Level3, 18, R>(&witnesses, 64, 1 << 14, rng)
             .ok_or(Error::Internal("keygen_lvl3 exhausted retry budget"))?;
 
         // The lvl3 spine dispatch is live here, but keypair/public-key
@@ -123,5 +124,24 @@ impl<P: Params> KeyPair<P> {
     /// Decompose the keypair into its constituent keys.
     pub fn into_parts(self) -> (SigningKey<P>, VerifyingKey<P>) {
         (self.signing_key, self.verifying_key)
+    }
+}
+
+#[cfg(all(test, feature = "kat"))]
+mod lvl3_probe {
+    use super::KeyPair;
+    use crate::params::lvl3::Level3;
+    use crate::rng::NistPqcRng;
+
+    /// Probe: run the lvl3 keygen spine end-to-end (with all widths now
+    /// per-level) and print the outcome. `generate_lvl3` returns
+    /// `Unimplemented(PK serialization)` iff the spine COMPLETED, or
+    /// `Internal(exhausted)` if the spine failed.
+    #[test]
+    #[ignore = "heavy probe: lvl3 keygen spine"]
+    fn lvl3_keygen_spine_probe() {
+        let mut rng = NistPqcRng::new(&[0x42u8; 48]);
+        let result = KeyPair::<Level3>::generate(&mut rng);
+        eprintln!("[lvl3-probe] generate::<Level3> => {result:?}");
     }
 }

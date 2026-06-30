@@ -62,7 +62,8 @@ pub fn protocols_sign<R: CryptoRng>(
 
     for _attempt in 0..8 {
         // 1. Commitment.
-        let Some((e_com, b_com, lideal_commit)) = commit::<Level1, _>(&wit_ql, 64, 1 << 14, rng)
+        let Some((e_com, b_com, lideal_commit)) =
+            commit::<Level1, 12, _>(&wit_ql, 64, 1 << 14, rng)
         else {
             continue;
         };

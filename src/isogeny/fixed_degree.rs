@@ -28,9 +28,10 @@ use crate::quaternion::algebra::Quaternion;
 use crypto_bigint::{Int, Uint};
 use rand_core::CryptoRng;
 
-/// Quaternion-side precision for `RepresentInteger` at level 1
-/// (`64·LIMBS ≥ 3·bits(p)+2 = 755` ⇒ `LIMBS ≥ 12`).
-// TODO(lvl3): widen QL for ~2^768 norms / ~3·bits(p)+2 at level 3.
+/// Quaternion-side precision for `RepresentInteger`. Now threaded per-level as
+/// a `const QL` generic on the fixed-degree functions (lvl1=12, lvl3=18); this
+/// module const remains only as the default width for the unit tests below.
+#[cfg(test)]
 const QL: usize = 12;
 
 pub(crate) trait FixedDegreeLevel: LevelConstants {
@@ -228,7 +229,7 @@ impl FixedDegreeLevel for Level3 {
 /// `Some((length, E34))` on success, or `None` if `RepresentInteger`
 /// exhausts its budget, an inversion/lift fails, or the chain does not
 /// produce an isogeny.
-pub(crate) fn fixed_degree_isogeny_and_eval<P: FixedDegreeLevel, R: CryptoRng>(
+pub(crate) fn fixed_degree_isogeny_and_eval<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     u: &Uint<QL>,
     eval_points: &[CoupleMontgomeryPoint<P::Field>],
     out_points: &mut [CoupleMontgomeryPoint<P::Field>],
@@ -313,7 +314,11 @@ pub(crate) fn fixed_degree_isogeny_and_eval<P: FixedDegreeLevel, R: CryptoRng>(
 ///
 /// The internal theta chain is already the deterministic
 /// [`theta_chain_compute_and_eval`] — the same one C keygen uses.
-pub(crate) fn fixed_degree_isogeny_and_eval_keygen<P: FixedDegreeLevel, R: CryptoRng>(
+pub(crate) fn fixed_degree_isogeny_and_eval_keygen<
+    P: FixedDegreeLevel,
+    const QL: usize,
+    R: CryptoRng,
+>(
     u: &Uint<QL>,
     eval_points: &[CoupleMontgomeryPoint<P::Field>],
     out_points: &mut [CoupleMontgomeryPoint<P::Field>],
@@ -447,7 +452,11 @@ pub(crate) fn fixed_degree_isogeny_and_eval_keygen<P: FixedDegreeLevel, R: Crypt
 /// (identity-validated on all 6 curves).
 // Needs the alternate-curve index, target scalar, eval/output point slices, primality witnesses, search bounds, and RNG.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn fixed_degree_isogeny_and_eval_indexed<P: FixedDegreeLevel, R: CryptoRng>(
+pub(crate) fn fixed_degree_isogeny_and_eval_indexed<
+    P: FixedDegreeLevel,
+    const QL: usize,
+    R: CryptoRng,
+>(
     index_alternate_curve: usize,
     u: &Uint<QL>,
     eval_points: &[CoupleMontgomeryPoint<P::Field>],
@@ -458,7 +467,7 @@ pub(crate) fn fixed_degree_isogeny_and_eval_indexed<P: FixedDegreeLevel, R: Cryp
     rng: &mut R,
 ) -> Option<(u32, CoupleCurve<P::Field>)> {
     if index_alternate_curve == 0 {
-        return fixed_degree_isogeny_and_eval::<P, R>(
+        return fixed_degree_isogeny_and_eval::<P, QL, R>(
             u,
             eval_points,
             out_points,
@@ -634,7 +643,7 @@ mod tests {
         let big = 1u64 << 40;
         let mut got = None;
         for u in [big | 1, big | 3, big | 5, big | 7, big | 9, big | 11] {
-            if let Some((length, e34)) = fixed_degree_isogeny_and_eval::<Level1, _>(
+            if let Some((length, e34)) = fixed_degree_isogeny_and_eval::<Level1, 12, _>(
                 &Uint::<QL>::from_u64(u),
                 &[],
                 &mut [],
@@ -663,7 +672,7 @@ mod tests {
         let mut got = None;
         for odd in [1u64, 3, 5, 7, 9, 11] {
             let u = base.wrapping_add(&Uint::<QL>::from_u64(odd));
-            if let Some((length, e34)) = fixed_degree_isogeny_and_eval::<Level1, _>(
+            if let Some((length, e34)) = fixed_degree_isogeny_and_eval::<Level1, 12, _>(
                 &u,
                 &[],
                 &mut [],
@@ -713,7 +722,7 @@ mod tests {
         ];
         let mut out = [CoupleMontgomeryPoint::infinity(); 3];
 
-        let got = fixed_degree_isogeny_and_eval_indexed::<Level1, _>(
+        let got = fixed_degree_isogeny_and_eval_indexed::<Level1, 12, _>(
             1,
             &u12,
             &eval,

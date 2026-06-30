@@ -76,7 +76,7 @@ fn abs_uint(x: &Int<L>) -> Uint<L> {
 /// Returns `None` if `find_uv` finds no Bézout decomposition, a
 /// fixed-degree isogeny / lift / endomorphism scaling fails, or the
 /// `(2,2)`-chain does not split.
-pub(crate) fn ideal_to_isogeny_clapotis_idx0<P: FixedDegreeLevel, R: CryptoRng>(
+pub(crate) fn ideal_to_isogeny_clapotis_idx0<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     lideal: &LeftIdeal<L>,
     p: &Uint<L>,
     witnesses: &[Uint<QL>],
@@ -88,7 +88,7 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<P: FixedDegreeLevel, R: CryptoRng>(
     let f = u32::try_from(P::F).expect("F fits u32");
     // 1. find_uv at the production target 2^F.
     let target = *Uint::<L>::ONE.shl_vartime(f).as_int();
-    let r = find_uv::<L>(&target, lideal, p, &[], 2).ok()?;
+    let r = find_uv::<L>(&target, lideal, p, &[], P::FINDUV_BOX_SIZE).ok()?;
     debug_assert!(r.index_alternate_order_1 == 0 && r.index_alternate_order_2 == 0);
     // N(I) from the lattice determinant — convention-independent (the
     // connecting ideal may be built by samplers that store cached_norm = N
@@ -146,7 +146,7 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<P: FixedDegreeLevel, R: CryptoRng>(
     let eval_u = push_basis(bp, bq, bpmq);
     let mut out_u = [CoupleMontgomeryPoint::infinity(); 3];
     let (_lu, fu) = if keygen {
-        fixed_degree_isogeny_and_eval_keygen::<P, _>(
+        fixed_degree_isogeny_and_eval_keygen::<P, QL, _>(
             &u_s.resize::<QL>(),
             &eval_u,
             &mut out_u,
@@ -155,7 +155,7 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<P: FixedDegreeLevel, R: CryptoRng>(
             rng,
         )?
     } else {
-        fixed_degree_isogeny_and_eval::<P, _>(
+        fixed_degree_isogeny_and_eval::<P, QL, _>(
             &u_s.resize::<QL>(),
             &eval_u,
             &mut out_u,
@@ -170,7 +170,7 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<P: FixedDegreeLevel, R: CryptoRng>(
     let eval_v = push_basis(bp, bq, bpmq);
     let mut out_v = [CoupleMontgomeryPoint::infinity(); 3];
     let (_lv, fv) = if keygen {
-        fixed_degree_isogeny_and_eval_keygen::<P, _>(
+        fixed_degree_isogeny_and_eval_keygen::<P, QL, _>(
             &v_s.resize::<QL>(),
             &eval_v,
             &mut out_v,
@@ -179,7 +179,7 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<P: FixedDegreeLevel, R: CryptoRng>(
             rng,
         )?
     } else {
-        fixed_degree_isogeny_and_eval::<P, _>(
+        fixed_degree_isogeny_and_eval::<P, QL, _>(
             &v_s.resize::<QL>(),
             &eval_v,
             &mut out_v,
@@ -382,7 +382,7 @@ fn connecting_norm_indexed<P: LevelConstants>(idx: usize) -> Uint<L> {
 /// and β1 endomorphism APPLICATIONS stay index-0 (the elements are in the
 /// standard frame post-β); the alternate curve enters only via the starting-φ
 /// and the Weil reference.
-fn clapotis_combine_indexed<P: FixedDegreeLevel, R: CryptoRng>(
+fn clapotis_combine_indexed<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     r: &crate::isogeny::clapotis::FindUvResult<L>,
     lideal: &LeftIdeal<L>,
     p: &Uint<L>,
@@ -423,7 +423,7 @@ fn clapotis_combine_indexed<P: FixedDegreeLevel, R: CryptoRng>(
     let (bp1, bq1, bpmq1) = starting_basis_indexed::<P>(index1);
     let eval_u = push(bp1, bq1, bpmq1);
     let mut out_u = [CoupleMontgomeryPoint::infinity(); 3];
-    let (_lu, fu) = fixed_degree_isogeny_and_eval_indexed::<P, _>(
+    let (_lu, fu) = fixed_degree_isogeny_and_eval_indexed::<P, QL, _>(
         index1,
         &u_s.resize::<QL>(),
         &eval_u,
@@ -438,7 +438,7 @@ fn clapotis_combine_indexed<P: FixedDegreeLevel, R: CryptoRng>(
     let (bp2, bq2, bpmq2) = starting_basis_indexed::<P>(index2);
     let eval_v = push(bp2, bq2, bpmq2);
     let mut out_v = [CoupleMontgomeryPoint::infinity(); 3];
-    let (_lv, fv) = fixed_degree_isogeny_and_eval_indexed::<P, _>(
+    let (_lv, fv) = fixed_degree_isogeny_and_eval_indexed::<P, QL, _>(
         index2,
         &v_s.resize::<QL>(),
         &eval_v,
@@ -532,7 +532,7 @@ fn clapotis_combine_indexed<P: FixedDegreeLevel, R: CryptoRng>(
 /// SQIsign-shaped input (`find_uv_alternate_orders` rescales by the smallest
 /// basis element ⇒ `cached_norm` must be a perfect square `N²`); the real
 /// keygen secret ideal is so shaped.
-pub(crate) fn ideal_to_isogeny_clapotis<P: FixedDegreeLevel, R: CryptoRng>(
+pub(crate) fn ideal_to_isogeny_clapotis<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     lideal: &LeftIdeal<L>,
     p: &Uint<L>,
     witnesses: &[Uint<QL>],
@@ -580,7 +580,7 @@ pub(crate) fn ideal_to_isogeny_clapotis<P: FixedDegreeLevel, R: CryptoRng>(
             Err(_) => return None,
         },
     };
-    clapotis_combine_indexed::<P, _>(&r, lideal, p, witnesses, sample_bound, max_trials, rng)
+    clapotis_combine_indexed::<P, QL, _>(&r, lideal, p, witnesses, sample_bound, max_trials, rng)
 }
 
 /// SQIsign signing commitment — C `commit` (`sign.c`). Sample a random `O_0`
@@ -598,7 +598,7 @@ pub(crate) fn ideal_to_isogeny_clapotis<P: FixedDegreeLevel, R: CryptoRng>(
 ///
 /// `kgen`-gated: used by both keygen and signing commitment steps.
 #[cfg(feature = "kgen")]
-pub(crate) fn commit<P: FixedDegreeLevel, R: CryptoRng>(
+pub(crate) fn commit<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     witnesses: &[Uint<QL>],
     sample_bound: i64,
     max_trials: usize,
@@ -607,15 +607,22 @@ pub(crate) fn commit<P: FixedDegreeLevel, R: CryptoRng>(
     // Per-level sampler/working widths: lvl1 keeps 64/64 (byte-identical path);
     // lvl3's 2^768 norms + det blowups need 96/96. RNG draw is value-based, not
     // width-based, so widening lvl3 here does not perturb lvl1 byte-exactness.
+    // `QL` (quaternion precision) is threaded in per-level (lvl1=12, lvl3=18).
     match P::LEVEL {
-        1 => commit_impl::<P, 64, 64, R>(witnesses, sample_bound, max_trials, rng),
-        3 => commit_impl::<P, 96, 96, R>(witnesses, sample_bound, max_trials, rng),
+        1 => commit_impl::<P, QL, 64, 64, R>(witnesses, sample_bound, max_trials, rng),
+        3 => commit_impl::<P, QL, 96, 96, R>(witnesses, sample_bound, max_trials, rng),
         _ => None,
     }
 }
 
 #[cfg(feature = "kgen")]
-fn commit_impl<P: FixedDegreeLevel, const SL: usize, const WL: usize, R: CryptoRng>(
+fn commit_impl<
+    P: FixedDegreeLevel,
+    const QL: usize,
+    const SL: usize,
+    const WL: usize,
+    R: CryptoRng,
+>(
     witnesses: &[Uint<QL>],
     sample_bound: i64,
     max_trials: usize,
@@ -661,7 +668,6 @@ fn commit_impl<P: FixedDegreeLevel, const SL: usize, const WL: usize, R: CryptoR
         rng,
     )
     .ok()?;
-
     // 2. Convert O_0-coords row-major → standard column-major doubled basis
     //    (denom → 2·denom) — the form `lideal_reduce_basis` consumes — then
     //    reduce to a prime-norm equivalent (same right order ⇒ same codomain).
@@ -676,7 +682,6 @@ fn commit_impl<P: FixedDegreeLevel, const SL: usize, const WL: usize, R: CryptoR
         &wit_wl,
         rng,
     )?;
-
     // 3. The reduced ideal has small prime norm q (≲ bitsize(p)) ⇒ narrow its
     //    standard-col basis to the spine width L, bridge, and run Clapotis.
     let mut jb16 = [[Int::<L>::from_i64(0); 4]; 4];
@@ -690,7 +695,7 @@ fn commit_impl<P: FixedDegreeLevel, const SL: usize, const WL: usize, R: CryptoR
     let spine_ideal = c_ideal_to_left_ideal::<L>(&jb16, &jd16, &q16);
     // Try the index-0 spine first (C tries index 0 before the alternate
     // orders); fall back to the general alt-orders spine if idx0 doesn't apply.
-    let (e_com, basis) = ideal_to_isogeny_clapotis_idx0::<P, _>(
+    let (e_com, basis) = ideal_to_isogeny_clapotis_idx0::<P, QL, _>(
         &spine_ideal,
         &p16,
         witnesses,
@@ -700,7 +705,7 @@ fn commit_impl<P: FixedDegreeLevel, const SL: usize, const WL: usize, R: CryptoR
         rng,
     )
     .or_else(|| {
-        ideal_to_isogeny_clapotis::<P, _>(
+        ideal_to_isogeny_clapotis::<P, QL, _>(
             &spine_ideal,
             &p16,
             witnesses,
@@ -815,7 +820,7 @@ pub(crate) type KeygenLvl1Output = KeygenOutput<Level1>;
 /// applies it directly to `[1, chall_coeff]` (canonical-basis kernel coords) to
 /// get the kernel coords in the secret-pushed E0 frame.
 #[cfg(feature = "kgen")]
-pub(crate) fn keygen<P: FixedDegreeLevel, R: CryptoRng>(
+pub(crate) fn keygen<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     witnesses: &[Uint<QL>],
     sample_bound: i64,
     max_trials: usize,
@@ -824,7 +829,7 @@ pub(crate) fn keygen<P: FixedDegreeLevel, R: CryptoRng>(
     let torsion_even_power = P::F;
 
     // E_A + the pushed E0 basis (B_A0) + the (prime-norm-reduced) secret ideal.
-    let (e_a, b_a0, secret_ideal) = commit::<P, _>(witnesses, sample_bound, max_trials, rng)?;
+    let (e_a, b_a0, secret_ideal) = commit::<P, QL, _>(witnesses, sample_bound, max_trials, rng)?;
     // Canonical basis of E_A[2^f] + its hint.
     let (b_acan, hint_pk) = P::ec_curve_to_basis_2f_to_hint(&e_a, torsion_even_power)?;
     // Basis-change matrix = B_Acan expressed in B_A0 coords (C keygen.c:54
@@ -842,7 +847,7 @@ pub(crate) fn keygen_lvl1<R: CryptoRng>(
     max_trials: usize,
     rng: &mut R,
 ) -> Option<KeygenLvl1Output> {
-    keygen::<Level1, R>(witnesses, sample_bound, max_trials, rng)
+    keygen::<Level1, 12, R>(witnesses, sample_bound, max_trials, rng)
 }
 
 /// Sign — the auxiliary isogeny step. Port of C
@@ -897,7 +902,7 @@ pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
     // (the (0,0) decomposition the commit uses; keygen=false), falling back to
     // the general alternate-orders evaluator. The general combine_indexed
     // (0,0) path's randomized (2,2)-split fails on these aux ideals.
-    ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+    ideal_to_isogeny_clapotis_idx0::<Level1, 12, _>(
         &aux_resp_com,
         &p16,
         witnesses,
@@ -907,7 +912,7 @@ pub(crate) fn evaluate_random_aux_isogeny_lvl1<R: CryptoRng>(
         rng,
     )
     .or_else(|| {
-        ideal_to_isogeny_clapotis::<Level1, _>(
+        ideal_to_isogeny_clapotis::<Level1, 12, _>(
             &aux_resp_com,
             &p16,
             witnesses,
@@ -1123,7 +1128,7 @@ mod tests {
         let fuv0 = find_uv::<L>(&target, &spine_ideal, &p16, &[], 2);
         std::eprintln!("STEP4b find_uv(idx0) = {:?}", fuv0.as_ref().map(|_| "Ok"));
         let wit_ql: [Uint<QL>; 5] = [2u64, 3, 5, 7, 11].map(Uint::from_u64);
-        let idx0 = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+        let idx0 = ideal_to_isogeny_clapotis_idx0::<Level1, 12, _>(
             &spine_ideal,
             &p16,
             &wit_ql,
@@ -1301,7 +1306,7 @@ mod tests {
         let w = witnesses();
         let mut rng = NistPqcRng::new(&[0x42u8; 48]);
         let (e_com, basis, ideal) =
-            commit::<Level1, _>(&w, 64, 1 << 14, &mut rng).expect("commit succeeds");
+            commit::<Level1, 12, _>(&w, 64, 1 << 14, &mut rng).expect("commit succeeds");
 
         // Weil-degree oracle on the pushed canonical basis. The isogeny degree
         // is N(ideal) = the reduced norm (= sqrt of cached_norm, which stores
@@ -1421,7 +1426,7 @@ mod tests {
                 ideal_bl.cached_norm.resize::<L>(),
             );
 
-            let (codomain, basis) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+            let (codomain, basis) = ideal_to_isogeny_clapotis_idx0::<Level1, 12, _>(
                 &lideal,
                 &p,
                 &w,
@@ -1539,7 +1544,7 @@ mod tests {
             );
 
             // Run the Clapotis isogeny → public-key curve E_A.
-            let (e_a, basis) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+            let (e_a, basis) = ideal_to_isogeny_clapotis_idx0::<Level1, 12, _>(
                 &lideal,
                 &p16,
                 &w,
@@ -1720,7 +1725,7 @@ mod tests {
         // the C oracle — prime suspect `basis_e0_lvl1()` vs C
         // `CURVES_WITH_ENDOMORPHISMS[0].basis_even`. SQIsign keygen applies NO
         // post-hoc normalization, so the fix is a construction match.
-        let (e_a, _basis) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+        let (e_a, _basis) = ideal_to_isogeny_clapotis_idx0::<Level1, 12, _>(
             &lideal,
             &p16,
             &w,
@@ -1801,7 +1806,7 @@ mod tests {
         );
         let p16 = crate::params::lvl1::prime().resize::<L>();
         let w = witnesses();
-        let (e_a, _basis) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+        let (e_a, _basis) = ideal_to_isogeny_clapotis_idx0::<Level1, 12, _>(
             &lideal,
             &p16,
             &w,
@@ -1911,7 +1916,7 @@ mod tests {
         );
         let p16 = crate::params::lvl1::prime().resize::<L>();
         let w = witnesses();
-        let (e_a, _basis) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+        let (e_a, _basis) = ideal_to_isogeny_clapotis_idx0::<Level1, 12, _>(
             &lideal,
             &p16,
             &w,
@@ -1997,7 +2002,7 @@ mod tests {
         // Two independent chain RNGs (distinct seeds), same ideal.
         let mut rng_a = NistPqcRng::new(&[0x11u8; 48]);
         let mut rng_b = NistPqcRng::new(&[0x22u8; 48]);
-        let (ea, _) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+        let (ea, _) = ideal_to_isogeny_clapotis_idx0::<Level1, 12, _>(
             &lideal,
             &p16,
             &w,
@@ -2007,7 +2012,7 @@ mod tests {
             &mut rng_a,
         )
         .expect("spine A");
-        let (eb, _) = ideal_to_isogeny_clapotis_idx0::<Level1, _>(
+        let (eb, _) = ideal_to_isogeny_clapotis_idx0::<Level1, 12, _>(
             &lideal,
             &p16,
             &w,
