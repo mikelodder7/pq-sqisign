@@ -84,7 +84,10 @@ fn protocols_sign_impl<
     let sk_curve = MontgomeryCurve::new(sk.curve_a);
     let canonical_basis = ec_curve_to_basis_2f_from_hint::<P>(&sk_curve, tep, sk.hint_pk);
 
-    for _attempt in 0..8 {
+    // Budget raised from 8 to 16: the interim two_resp>0 rejection (~30% of
+    // attempts) lowers the per-attempt success rate, so more tries are needed to
+    // keep the overall signing-failure probability negligible.
+    for _attempt in 0..16 {
         // 1. Commitment.
         let Some((e_com, b_com, lideal_commit)) = commit::<P, QL, _>(&wit_ql, 64, 1 << 14, rng)
         else {
@@ -174,6 +177,22 @@ fn protocols_sign_impl<
         if pow == 0 || pow == 1 {
             #[cfg(feature = "std")]
             eprintln!("[sign L{}] attempt {_attempt}: pow={pow} (skip)", P::LEVEL);
+            continue;
+        }
+        // INTERIM MITIGATION (two_resp>0 bug): the short 2^r response-isogeny
+        // branch produces signatures that fail verification at every level (the
+        // sign/verify kernel-and-ordering contract for that branch diverges from
+        // the SQIsign C reference and is not yet reconciled). Reject those
+        // attempts and resample a fresh commitment so every emitted signature
+        // takes the verified-correct common path. This is sound rejection
+        // sampling — accepted signatures remain uniformly valid — at the cost of
+        // ~30% more sign attempts. Remove once the `two_resp>0` path is fixed.
+        if two_resp > 0 {
+            #[cfg(feature = "std")]
+            eprintln!(
+                "[sign L{}] attempt {_attempt}: two_resp={two_resp} (skip — interim)",
+                P::LEVEL
+            );
             continue;
         }
         // 7. Auxiliary isogeny.

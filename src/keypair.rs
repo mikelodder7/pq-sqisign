@@ -219,6 +219,28 @@ mod lvl3_probe {
         eprintln!("[lvl3-probe] generate::<Level3> => {result:?}");
     }
 
+    /// Regression for the `two_resp>0` interim mitigation: signing a fixed lvl1
+    /// key over many messages must yield signatures that ALL verify. Before the
+    /// mitigation, ~1 in 3 messages (those hitting the `two_resp>0` branch)
+    /// produced non-verifying signatures.
+    #[test]
+    #[ignore = "heavy: lvl1 sign→verify across many messages"]
+    fn lvl1_sign_verify_many_messages() {
+        use crate::params::Level1;
+        let mut rng = NistPqcRng::new(&[0x77u8; 48]);
+        let kp = KeyPair::<Level1>::generate(&mut rng).expect("lvl1 keygen");
+        for i in 0u8..16 {
+            let msg = [i; 4];
+            let sig = kp
+                .signing_key()
+                .sign(&msg, &mut rng)
+                .unwrap_or_else(|e| panic!("lvl1 sign failed for msg {i}: {e:?}"));
+            kp.verifying_key()
+                .verify(&msg, &sig)
+                .unwrap_or_else(|e| panic!("lvl1 verify failed for msg {i}: {e:?}"));
+        }
+    }
+
     /// Full lvl3 end-to-end: keygen → sign → verify, the level-3 analogue of
     /// `signing::tests::sign_verify_roundtrip`. Exercises the field-generic
     /// `protocols_sign` / `protocols_verify` via the typed API. HEAVY.
