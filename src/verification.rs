@@ -1055,7 +1055,11 @@ pub fn compute_small_chain_isogeny_signature<P: crate::level_constants::LevelCon
         widen_int_lattice::<16, WIDE>(&resp_o0[3]),
     ];
     // γ = 2·resp in standard coords (denom 2) ⇒ ideal O_0·resp + 2^length·O_0.
-    let gamma = o0_basis_to_standard_doubled::<WIDE>(&resp_wide);
+    // CONJUGATE to match C: `compute_random_aux_norm_and_helpers` does
+    // `quat_alg_conj(resp_quat, resp_quat)` in place BEFORE the ideal that feeds
+    // `compute_small_chain` — so the response is conjugated (dual isogeny).
+    // Passing the non-conjugated response builds the wrong 2^r-neighbor kernel.
+    let gamma = o0_basis_to_standard_doubled::<WIDE>(&resp_wide).conjugate();
     let two_pow = Uint::<WIDE>::ONE.shl_vartime(u32::try_from(length).ok()?);
     let (ideal_basis, ideal_denom, ideal_norm) = quat_lideal_create::<WIDE>(
         &gamma,

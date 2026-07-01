@@ -219,17 +219,19 @@ mod lvl3_probe {
         eprintln!("[lvl3-probe] generate::<Level3> => {result:?}");
     }
 
-    /// Regression for the `two_resp>0` interim mitigation: signing a fixed lvl1
-    /// key over many messages must yield signatures that ALL verify. Before the
-    /// mitigation, ~1 in 3 messages (those hitting the `two_resp>0` branch)
-    /// produced non-verifying signatures.
+    /// Regression for the `two_resp>0` short-response branch: signing a fixed
+    /// lvl1 key over many messages must yield signatures that ALL verify. This
+    /// branch (~1 in 3 messages) needed two fixes — conjugating the response
+    /// before the small-chain ideal, and feeding the *primitive* response to the
+    /// aux helper so `two_resp` isn't over-counted by `2·backtracking`. 40
+    /// messages reliably exercise both `two_resp>0` and `backtracking>0`.
     #[test]
     #[ignore = "heavy: lvl1 sign→verify across many messages"]
     fn lvl1_sign_verify_many_messages() {
         use crate::params::Level1;
         let mut rng = NistPqcRng::new(&[0x77u8; 48]);
         let kp = KeyPair::<Level1>::generate(&mut rng).expect("lvl1 keygen");
-        for i in 0u8..16 {
+        for i in 0u8..40 {
             let msg = [i; 4];
             let sig = kp
                 .signing_key()

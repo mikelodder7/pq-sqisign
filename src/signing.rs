@@ -138,22 +138,25 @@ fn protocols_sign_impl<
             *r16 = narrow_int_lattice::<W, 16>(rw);
         }
         let lattice_content = lc_w.resize::<16>();
-        // 5. Backtracking. C ref (sign.c:107-117): backtracking = v2(content of
-        //    make_primitive(resp)); lattice_content /= 2^backtracking. The aux
-        //    (sign.c:144) then uses the FULL resp_quat with the REDUCED
-        //    lattice_content (`remain`). Using `prim` + the un-reduced
-        //    lattice_content makes lattice_content ∤ N_red(prim) (it divides
-        //    N_red(resp) but not N_red(prim) once the content is stripped).
+        // 5. Backtracking. C ref (sign.c:107-118): `quat_alg_make_primitive`
+        //    makes `resp_quat` PRIMITIVE in place (content stripped),
+        //    backtracking = v2(content), lattice_content /= 2^backtracking.
+        //    Everything downstream (aux + small chain) then uses the PRIMITIVE
+        //    response with the REDUCED lattice_content (`remain`).
         let (backtracking, remain, prim) =
             compute_backtracking_signature::<16>(&resp, &lattice_content);
-        // 6. Auxiliary norm + helpers (full resp + reduced lattice_content).
+        // 6. Auxiliary norm + helpers. C uses the PRIMITIVE resp_quat here (it was
+        //    primitivised in step 5); using the full `resp` inflates the response
+        //    degree by content² ⇒ two_resp over-counted by 2·backtracking, which
+        //    made every backtracking>0 signature apply a wrong-length response
+        //    isogeny (landed off E_chall). `prim` matches C.
         let Some(commit_norm) = lideal_commit.reduced_norm_vartime() else {
             #[cfg(feature = "std")]
             eprintln!("[sign L{}] attempt {_attempt}: commit_norm None", P::LEVEL);
             continue;
         };
         let helpers = match compute_random_aux_norm_and_helpers::<16>(
-            &resp,
+            &prim,
             &remain,
             &commit_norm,
             &p16,
@@ -179,27 +182,13 @@ fn protocols_sign_impl<
             eprintln!("[sign L{}] attempt {_attempt}: pow={pow} (skip)", P::LEVEL);
             continue;
         }
-        // INTERIM MITIGATION (two_resp>0 bug, still active): the short 2^r
-        // response branch is partially fixed — `compute_small_chain_isogeny_signature`
-        // now builds the response ideal from the primitive response and recovers a
-        // canonical generator via `quat_lideal_generator_o0` (matching the C
-        // reference, verified: the kernel coords are now primitive). What remains
-        // is the sign↔verify kernel reconciliation for MIXED kernels: sign forms a
-        // general `vec2[0]·P + vec2[1]·Q` kernel while verify selects a single
-        // basis point by matrix parity, so the basis-change matrix
-        // (`compute_and_set_basis_change_matrix`) must rotate the kernel onto a
-        // basis vector. Until that lands, reject `two_resp>0` attempts so every
-        // emitted signature takes the verified-correct common path (sound
-        // rejection sampling). Remove this skip once the matrix reconciliation is
-        // complete.
-        if two_resp > 0 {
-            #[cfg(feature = "std")]
-            eprintln!(
-                "[sign L{}] attempt {_attempt}: two_resp={two_resp} (skip — interim)",
-                P::LEVEL
-            );
-            continue;
-        }
+        // NOTE (two_resp>0 now correct): the short 2^r response branch required
+        // two fixes vs an earlier draft — (1) CONJUGATE the response before the
+        // small-chain ideal (C `quat_alg_conj`, see `compute_small_chain`), and
+        // (2) feed the PRIMITIVE response (not the full `resp`) to the aux helper
+        // so `two_resp` isn't over-counted by 2·backtracking. With both, every
+        // two_resp>0 signature verifies; the interim rejection-sampling skip is
+        // removed.
         // 7. Auxiliary isogeny.
         let com_resp16 = helpers.lideal_com_resp;
         let Some((e_aux, b_aux)) = evaluate_random_aux_isogeny::<P, QL, _>(

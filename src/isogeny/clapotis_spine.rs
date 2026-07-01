@@ -562,22 +562,24 @@ pub(crate) fn ideal_to_isogeny_clapotis<P: FixedDegreeLevel, const QL: usize, R:
             id.cached_norm.resize::<L>(),
         )
     };
-    // TODO(lvl3): array length is lvl1's NUM_ALTERNATE_EXTREMAL_ORDERS (6); lvl3
-    // is 7. `P::NUM_ALTERNATE_EXTREMAL_ORDERS` is the right count but can't be a
-    // const-generic array length on stable without `generic_const_exprs`, so the
-    // length is pinned to 6 here. Correct for lvl1 (the byte-exact gate).
-    let alts: [LeftIdeal<L>; 6] =
-        core::array::from_fn(|idx| widen(&P::alternate_connecting_ideal(idx)));
+    // The alternate connecting orders, per level: lvl1 has 6, lvl3 has 7
+    // (`P::NUM_ALTERNATE_EXTREMAL_ORDERS`). A `Vec` carries the per-level count
+    // (a const-generic array length isn't available on stable without
+    // `generic_const_exprs`).
+    let alts: Vec<LeftIdeal<L>> = (0..P::NUM_ALTERNATE_EXTREMAL_ORDERS)
+        .map(|idx| widen(&P::alternate_connecting_ideal(idx)))
+        .collect();
 
     // Try the proven j=0-only decomposition first (empty alts → the
     // find_uv path that enumerates the LLL-reduced input directly, with no
     // principal-only δ-rescale). Only if it finds no Bezout do we expand to
-    // the 6 alternate connecting orders. This matches the C ref's structure
+    // the alternate connecting orders. This matches the C ref's structure
     // (j=0 is the first (j1,j2) pair tried) and avoids the alternate-orders
-    // rescale on a non-principal aux ideal.
-    let r = match find_uv::<L>(&target, lideal, p, &[], 2) {
+    // rescale on a non-principal aux ideal. The find_uv box size is per-level
+    // (`P::FINDUV_BOX_SIZE`: lvl1 2, lvl3 3).
+    let r = match find_uv::<L>(&target, lideal, p, &[], P::FINDUV_BOX_SIZE) {
         Ok(r) => r,
-        Err(_) => match find_uv::<L>(&target, lideal, p, &alts, 2) {
+        Err(_) => match find_uv::<L>(&target, lideal, p, &alts, P::FINDUV_BOX_SIZE) {
             Ok(r) => r,
             Err(_) => return None,
         },
@@ -1798,6 +1800,267 @@ mod tests {
             pk, kat_pk0_first64,
             "keygen E_A encoding (A·C⁻¹) must match official lvl1 KAT pk[0..64]",
         );
+    }
+
+    /// Level-3 analogue of [`keygen_end_to_end_matches_kat_pk0`]: the byte-exact
+    /// keygen front (`keygen_byte_exact_secret_ideal`, level-generic) + the lvl3
+    /// Clapotis spine from the official lvl3 KAT record-0 seed. WN is wider than
+    /// lvl1's 96 because lvl3's `SEC_DEGREE ≈ 2^768` / prime `≈ 2^383` need the
+    /// headroom in the prime-norm-reduce determinants.
+    ///
+    /// Validates two things that PASS: (1) the front reproduces C's EXACT lvl3
+    /// secret-ideal norm `q` (DRBG-aligned with C's keygen), and (2) the spine —
+    /// after fixing the general path to try all `P::NUM_ALTERNATE_EXTREMAL_ORDERS`
+    /// (7 at lvl3, was hard-pinned to lvl1's 6) at `P::FINDUV_BOX_SIZE` (3 at lvl3,
+    /// was hard-pinned to 2) — produces `E_A` with the SAME j-invariant as the
+    /// official KAT public-key curve (the correct curve up to isomorphism).
+    ///
+    /// Full byte-exact pk[0..96] is NOT yet asserted: for this lvl3 ideal the
+    /// index-0 decomposition doesn't apply, so the alternate-order path lands on
+    /// an isomorphic but differently-modelled `E_A`; matching C's canonical
+    /// Montgomery model is the remaining step (`bytes_match` is printed).
+    ///
+    /// `diag_lvl3_model_orbit_vs_kat` proves the gap is PURE MODEL SELECTION: the
+    /// KAT `A` is exactly the `-A'` element of our `E_A`'s ≤6-value Montgomery
+    /// S₃-orbit (all members share our j). The remaining step is to land C's
+    /// canonical orbit element deterministically — reachable, not a curve bug.
+    #[test]
+    fn keygen_end_to_end_matches_kat_lvl3_pk0() {
+        use crate::params::lvl3::Level3;
+        use crate::quaternion::ideal::LeftIdeal;
+        use crate::quaternion::lattice::narrow_int_lattice;
+        use crate::quaternion::lll::keygen_byte_exact_secret_ideal;
+        const WN: usize = 160;
+
+        // lvl3 KAT record 0 seed — identical to lvl1 record 0 (NIST reuses the
+        // DRBG seed sequence across parameter sets).
+        let seed: [u8; 48] = [
+            0x06, 0x15, 0x50, 0x23, 0x4D, 0x15, 0x8C, 0x5E, 0xC9, 0x55, 0x95, 0xFE, 0x04, 0xEF,
+            0x7A, 0x25, 0x76, 0x7F, 0x2E, 0x24, 0xCC, 0x2B, 0xC4, 0x79, 0xD0, 0x9D, 0x86, 0xDC,
+            0x9A, 0xBC, 0xFD, 0xE7, 0x05, 0x6A, 0x8C, 0x26, 0x6F, 0x9E, 0xF9, 0x7E, 0xD0, 0x85,
+            0x41, 0xDB, 0xD2, 0xE1, 0xFF, 0xA1,
+        ];
+        let mut rng = NistPqcRng::new(&seed);
+
+        let p_wn = crate::params::lvl3::prime().resize::<WN>();
+        let sec = crate::params::lvl3::sec_degree().resize::<WN>();
+        let wit_wn: [Uint<WN>; 12] =
+            [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::<WN>::from_u64);
+
+        let (j, q) =
+            keygen_byte_exact_secret_ideal::<WN, _>(&sec, &p_wn, 8192, 64, &wit_wn, &mut rng)
+                .expect("byte-exact lvl3 keygen front must produce a prime-norm ideal");
+        // The byte-exact front reproduces C's EXACT lvl3 secret-ideal prime norm
+        // q (decoded from the KAT sk), confirming DRBG alignment with C's keygen.
+        let c_q_le: [u8; 26] = [
+            0x75, 0x5a, 0xf9, 0xf3, 0x56, 0xee, 0xdc, 0x7f, 0x5a, 0xaf, 0x65, 0x8b, 0x34, 0x46,
+            0x92, 0xe7, 0x40, 0xbb, 0x50, 0x20, 0x77, 0x95, 0x9c, 0x2f, 0x80, 0x14,
+        ];
+        assert_eq!(
+            q.to_le_bytes()[..26],
+            c_q_le,
+            "byte-exact front must produce C's exact lvl3 secret-ideal norm q",
+        );
+
+        let mut b16 = [[Int::<L>::from_i64(0); 4]; 4];
+        for (r, row) in b16.iter_mut().enumerate() {
+            for (c, entry) in row.iter_mut().enumerate() {
+                *entry = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
+            }
+        }
+        let lideal = LeftIdeal::<L>::with_denom_and_norm(
+            b16,
+            j.denom.resize::<L>(),
+            j.cached_norm.resize::<L>(),
+        );
+        let p16 = crate::params::lvl3::prime().resize::<L>();
+        let w18: [Uint<18>; 5] = [2u64, 3, 5, 7, 11].map(Uint::<18>::from_u64);
+
+        // idx0 first, general alt-orders spine as fallback (mirrors the lvl3
+        // functional keygen, which does the same).
+        let (e_a, _basis) = ideal_to_isogeny_clapotis_idx0::<Level3, 18, _>(
+            &lideal,
+            &p16,
+            &w18,
+            64,
+            1 << 14,
+            true,
+            &mut rng,
+        )
+        .or_else(|| {
+            ideal_to_isogeny_clapotis::<Level3, 18, _>(&lideal, &p16, &w18, 64, 1 << 14, &mut rng)
+        })
+        .expect("spine produces E_A for the lvl3 KAT[0] secret ideal");
+
+        let mut pk = [0u8; 96];
+        e_a.a.to_bytes_le(&mut pk);
+
+        // The front + (lvl3-fixed) spine produce E_A with the SAME j-invariant as
+        // the official KAT public-key curve — i.e. the correct curve up to
+        // isomorphism. Full byte-exactness additionally requires matching C's
+        // canonical Montgomery MODEL (the A-coefficient): for this lvl3 ideal the
+        // index-0 decomposition does not apply, so the alternate-order spine path
+        // lands on an isomorphic but differently-modelled E_A. Normalising to C's
+        // canonical model is the remaining step (the lvl1 byte-exact gate uses the
+        // index-0 path, which already yields C's model). Tracked by `bytes_match`.
+        use crate::ec::montgomery::MontgomeryCurve;
+        use crate::gf::fp2::Fp2;
+        use subtle::ConstantTimeEq;
+        let kat_a = Fp2::<crate::params::lvl3::Fp3Element>::from_bytes_le(&KAT_PK0_FIRST96[..96])
+            .into_option()
+            .expect("decode KAT A");
+        let j_ours = MontgomeryCurve::new(e_a.a).j_invariant();
+        let j_kat = MontgomeryCurve::new(kat_a).j_invariant();
+        assert!(
+            bool::from(j_ours.ct_eq(&j_kat)),
+            "lvl3 keygen E_A must be the official KAT curve up to isomorphism (j-invariant match)",
+        );
+        let bytes_match = pk == KAT_PK0_FIRST96;
+        std::eprintln!("[kg-lvl3] j_match=true bytes_match={bytes_match}");
+
+        const KAT_PK0_FIRST96: [u8; 96] = [
+            0xc3, 0x23, 0x77, 0xd6, 0xf6, 0xd7, 0x07, 0x29, 0x88, 0x4a, 0x7f, 0x68, 0x77, 0xef,
+            0x47, 0x91, 0xe3, 0x5d, 0x21, 0xf7, 0x51, 0xa3, 0xe9, 0x6d, 0xe2, 0x3f, 0x9a, 0x7a,
+            0x3c, 0x01, 0xbc, 0xd8, 0xa5, 0xf1, 0x46, 0xdc, 0x19, 0xe4, 0xe2, 0xac, 0x63, 0x00,
+            0x74, 0x57, 0xf9, 0x7d, 0x8a, 0x40, 0xee, 0x84, 0xae, 0xe7, 0x56, 0x4c, 0xa9, 0xa7,
+            0xfb, 0xe6, 0x20, 0x0f, 0xd3, 0xe5, 0xe5, 0x59, 0x01, 0xbf, 0xc6, 0x0e, 0xb2, 0x5c,
+            0x50, 0xd3, 0x9f, 0x5c, 0x91, 0xc9, 0x65, 0x10, 0x55, 0x6b, 0xaa, 0x22, 0x02, 0x8d,
+            0xf7, 0x63, 0x60, 0x84, 0x17, 0x21, 0xa6, 0x01, 0xd6, 0x5e, 0x8d, 0x0f,
+        ];
+    }
+
+    /// DIAGNOSTIC (orbit check): enumerate the ≤6-value Montgomery model orbit of
+    /// our j-exact lvl3 `E_A` and test whether the official KAT `A` is one of
+    /// them. The three 2-torsion x-coords of `y² = x³+Ax²+x` are `{0, r1, r2}`
+    /// with `r1·r2 = 1` (roots of `x²+Ax+1`). Moving a 2-torsion point to the
+    /// origin and renormalising to Montgomery form yields the S₃-orbit of A:
+    /// `{±A, ±(2r1−r2)/√(r1²−1), ±(2r2−r1)/√(r2²−1)}`. If KAT `A` ∈ orbit, the
+    /// pk gap is pure model SELECTION (and we learn the target permutation); if
+    /// not, it is a deeper serialization/normalization difference.
+    #[ignore = "diagnostic: is the KAT lvl3 A one of the ≤6 Montgomery models of our E_A?"]
+    #[test]
+    fn diag_lvl3_model_orbit_vs_kat() {
+        use crate::ec::montgomery::MontgomeryCurve;
+        use crate::gf::fp2::Fp2;
+        use crate::params::lvl3::{Fp3Element, Level3};
+        use crate::quaternion::ideal::LeftIdeal;
+        use crate::quaternion::lattice::narrow_int_lattice;
+        use crate::quaternion::lll::keygen_byte_exact_secret_ideal;
+        use subtle::ConstantTimeEq;
+        const WN: usize = 160;
+
+        let seed: [u8; 48] = [
+            0x06, 0x15, 0x50, 0x23, 0x4D, 0x15, 0x8C, 0x5E, 0xC9, 0x55, 0x95, 0xFE, 0x04, 0xEF,
+            0x7A, 0x25, 0x76, 0x7F, 0x2E, 0x24, 0xCC, 0x2B, 0xC4, 0x79, 0xD0, 0x9D, 0x86, 0xDC,
+            0x9A, 0xBC, 0xFD, 0xE7, 0x05, 0x6A, 0x8C, 0x26, 0x6F, 0x9E, 0xF9, 0x7E, 0xD0, 0x85,
+            0x41, 0xDB, 0xD2, 0xE1, 0xFF, 0xA1,
+        ];
+        let mut rng = NistPqcRng::new(&seed);
+        let p_wn = crate::params::lvl3::prime().resize::<WN>();
+        let sec = crate::params::lvl3::sec_degree().resize::<WN>();
+        let wit_wn: [Uint<WN>; 12] =
+            [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::<WN>::from_u64);
+        let (j, _q) =
+            keygen_byte_exact_secret_ideal::<WN, _>(&sec, &p_wn, 8192, 64, &wit_wn, &mut rng)
+                .expect("byte-exact lvl3 keygen front");
+        let mut b16 = [[Int::<L>::from_i64(0); 4]; 4];
+        for (r, row) in b16.iter_mut().enumerate() {
+            for (c, entry) in row.iter_mut().enumerate() {
+                *entry = narrow_int_lattice::<WN, L>(&j.basis[r][c]);
+            }
+        }
+        let lideal = LeftIdeal::<L>::with_denom_and_norm(
+            b16,
+            j.denom.resize::<L>(),
+            j.cached_norm.resize::<L>(),
+        );
+        let p16 = crate::params::lvl3::prime().resize::<L>();
+        let w18: [Uint<18>; 5] = [2u64, 3, 5, 7, 11].map(Uint::<18>::from_u64);
+        let (e_a, _basis) = ideal_to_isogeny_clapotis_idx0::<Level3, 18, _>(
+            &lideal,
+            &p16,
+            &w18,
+            64,
+            1 << 14,
+            true,
+            &mut rng,
+        )
+        .or_else(|| {
+            ideal_to_isogeny_clapotis::<Level3, 18, _>(&lideal, &p16, &w18, 64, 1 << 14, &mut rng)
+        })
+        .expect("spine produces E_A");
+
+        let a = e_a.a;
+        let kat_a = Fp2::<Fp3Element>::from_bytes_le(&KAT_PK0_FIRST96_ORBIT[..96])
+            .into_option()
+            .expect("decode KAT A");
+
+        let one = Fp2::<Fp3Element>::one();
+        let two = one.double();
+        let four = two.double();
+        let inv2 = two.invert().into_option().expect("1/2");
+        // r1,r2 = roots of x²+Ax+1 = (−A ± √(A²−4))/2.
+        let disc = a.square().sub(&four);
+        let s = disc
+            .sqrt()
+            .into_option()
+            .expect("A²−4 must be square in Fp2 (rational 2-torsion)");
+        let r1 = a.negate().add(&s).mul(&inv2);
+        let r2 = a.negate().sub(&s).mul(&inv2);
+        // A' for the model that sends `r` to the origin: (2r − other)/√(r²−1).
+        let aprime = |r: &Fp2<Fp3Element>, other: &Fp2<Fp3Element>| -> Option<Fp2<Fp3Element>> {
+            let c = r.square().sub(&one).sqrt().into_option()?;
+            Some(r.double().sub(other).mul(&c.invert().into_option()?))
+        };
+        let ap1 = aprime(&r1, &r2);
+        let ap2 = aprime(&r2, &r1);
+
+        let mut orbit: Vec<(&str, Fp2<Fp3Element>)> = vec![("+A", a), ("-A", a.negate())];
+        if let Some(x) = ap1 {
+            orbit.push(("+A'", x));
+            orbit.push(("-A'", x.negate()));
+        }
+        if let Some(x) = ap2 {
+            orbit.push(("+A''", x));
+            orbit.push(("-A''", x.negate()));
+        }
+
+        let our_j = MontgomeryCurve::new(a).j_invariant();
+        let mut hit = None;
+        for (name, cand) in &orbit {
+            let cj = MontgomeryCurve::new(*cand).j_invariant();
+            let j_ok = bool::from(cj.ct_eq(&our_j));
+            let a_ok = bool::from(cand.ct_eq(&kat_a));
+            std::eprintln!("[orbit] {name}: j_match={j_ok} kat_match={a_ok}");
+            if a_ok {
+                hit = Some(*name);
+            }
+        }
+        match hit {
+            Some(name) => std::eprintln!(
+                "[orbit] RESULT: KAT A IS in our Montgomery orbit as `{name}` — pk gap is pure model SELECTION"
+            ),
+            None => std::eprintln!(
+                "[orbit] RESULT: KAT A is NOT in our ≤6 orbit — deeper serialization/normalization difference"
+            ),
+        }
+        // Self-validation: every orbit element must share our curve's j.
+        for (name, cand) in &orbit {
+            assert!(
+                bool::from(MontgomeryCurve::new(*cand).j_invariant().ct_eq(&our_j)),
+                "orbit element {name} must preserve j (formula sanity)",
+            );
+        }
+
+        const KAT_PK0_FIRST96_ORBIT: [u8; 96] = [
+            0xc3, 0x23, 0x77, 0xd6, 0xf6, 0xd7, 0x07, 0x29, 0x88, 0x4a, 0x7f, 0x68, 0x77, 0xef,
+            0x47, 0x91, 0xe3, 0x5d, 0x21, 0xf7, 0x51, 0xa3, 0xe9, 0x6d, 0xe2, 0x3f, 0x9a, 0x7a,
+            0x3c, 0x01, 0xbc, 0xd8, 0xa5, 0xf1, 0x46, 0xdc, 0x19, 0xe4, 0xe2, 0xac, 0x63, 0x00,
+            0x74, 0x57, 0xf9, 0x7d, 0x8a, 0x40, 0xee, 0x84, 0xae, 0xe7, 0x56, 0x4c, 0xa9, 0xa7,
+            0xfb, 0xe6, 0x20, 0x0f, 0xd3, 0xe5, 0xe5, 0x59, 0x01, 0xbf, 0xc6, 0x0e, 0xb2, 0x5c,
+            0x50, 0xd3, 0x9f, 0x5c, 0x91, 0xc9, 0x65, 0x10, 0x55, 0x6b, 0xaa, 0x22, 0x02, 0x8d,
+            0xf7, 0x63, 0x60, 0x84, 0x17, 0x21, 0xa6, 0x01, 0xd6, 0x5e, 0x8d, 0x0f,
+        ];
     }
 
     /// DIAGNOSTIC: prove the pk mismatch is a Montgomery-MODEL difference, not

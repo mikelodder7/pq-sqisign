@@ -146,6 +146,28 @@ fn kat_lvl1_verify_only() {
     }
 }
 
+/// Verify every C-generated Level-3 KAT signature with our verifier (byte-exact
+/// verify validation). All 100 Level-3 vectors must accept — this exercises the
+/// generalized `protocols_verify::<Level3>` against real C signatures, including
+/// their `two_resp>0` cases.
+#[test]
+#[ignore = "heavy: verifies all 100 C-generated lvl3 KAT signatures"]
+fn kat_lvl3_verify_only() {
+    let records = parse_kat(KAT_LVL3);
+    let mut failures = 0usize;
+    for r in &records {
+        let sig = &r.sm[..Level3::SIG_BYTES];
+        if pq_sqisign::verify::<Level3>(&r.msg, sig, &r.pk).is_err() {
+            eprintln!("[kat-lvl3] verify FAILED at count={}", r.count);
+            failures += 1;
+        }
+    }
+    assert_eq!(
+        failures, 0,
+        "{failures}/100 lvl3 KAT signatures failed to verify"
+    );
+}
+
 /// Byte-exact KAT signing: our signer must reproduce each C-generated `sm`.
 /// Still a stub — SQIsign signing is randomized, so matching the KAT bytes
 /// requires seeding our DRBG from the record's NIST `seed` (not yet wired).
