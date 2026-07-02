@@ -26,6 +26,7 @@ impl Params for Level3 {
     type Field = Fp3Element;
     const LEVEL: u8 = 3;
     const P_BITS: usize = 383;
+    const QUAT_REPRES_BOUND_INPUT: u32 = 21;
     const C: u64 = 65;
     const F: usize = 376;
     const FP_BYTES: usize = 48;

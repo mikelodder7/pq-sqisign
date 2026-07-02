@@ -331,14 +331,16 @@ pub(crate) fn fixed_degree_isogeny_and_eval_keygen<
 
     const HD: u32 = 2;
     let torsion_even_power = u32::try_from(P::F).expect("F fits u32");
-    // bitsize(p) + QUAT_repres_bound_input at lvl1 (C-oracle-confirmed: φ_u
-    // u_bitsize 121 → length 150; φ_v 123 → 148).
-    // TODO(lvl3): replace 271 with level-specific bitsize(p) + QUAT_repres_bound_input.
-    const P_BITS_PLUS_BOUND: u32 = 271;
+    // length = bitsize(p) + QUAT_repres_bound_input − u_bits (C-faithful: the
+    // RepresentInteger sampler's length budget). Per-level: lvl1 251+20=271,
+    // lvl3 383+21=404, lvl5 505+21=526. (C-oracle-confirmed at lvl1: φ_u
+    // u_bitsize 121 → length 150; φ_v 123 → 148.)
+    let p_bits_plus_bound =
+        u32::try_from(P::P_BITS).expect("P_BITS fits u32") + P::QUAT_REPRES_BOUND_INPUT;
 
     debug_assert!(u.as_words()[0] & 1 == 1, "u must be odd");
     let u_bits = u.bits_vartime();
-    let length = P_BITS_PLUS_BOUND - u_bits;
+    let length = p_bits_plus_bound - u_bits;
     let f_basis = (length + HD) as usize;
 
     let two_len = Uint::<QL>::ONE.shl_vartime(length);

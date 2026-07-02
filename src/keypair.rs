@@ -287,4 +287,25 @@ mod lvl3_probe {
             );
         }
     }
+
+    /// lvl3 analogue of `lvl1_sign_verify_many_messages`: signing a fixed lvl3
+    /// key over several messages must yield signatures that ALL verify — this
+    /// reliably exercises the `two_resp>0` short-response branch at level 3 (the
+    /// conjugation + primitive-response fixes are field-generic). HEAVY.
+    #[test]
+    #[ignore = "heavy: lvl3 sign→verify across several messages (two_resp>0)"]
+    fn lvl3_sign_verify_many_messages() {
+        let mut rng = NistPqcRng::new(&[0x99u8; 48]);
+        let kp = KeyPair::<Level3>::generate(&mut rng).expect("lvl3 keygen");
+        for i in 0u8..10 {
+            let msg = [i; 4];
+            let sig = kp
+                .signing_key()
+                .sign(&msg, &mut rng)
+                .unwrap_or_else(|e| panic!("lvl3 sign failed for msg {i}: {e:?}"));
+            kp.verifying_key()
+                .verify(&msg, &sig)
+                .unwrap_or_else(|e| panic!("lvl3 verify failed for msg {i}: {e:?}"));
+        }
+    }
 }

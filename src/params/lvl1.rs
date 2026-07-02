@@ -28,6 +28,7 @@ impl Params for Level1 {
     type Field = Fp1Element;
     const LEVEL: u8 = 1;
     const P_BITS: usize = 251;
+    const QUAT_REPRES_BOUND_INPUT: u32 = 20;
     const C: u64 = 5;
     const F: usize = 248;
     const FP_BYTES: usize = 32;

@@ -26,6 +26,7 @@ impl Params for Level5 {
     type Field = Fp5Element;
     const LEVEL: u8 = 5;
     const P_BITS: usize = 505;
+    const QUAT_REPRES_BOUND_INPUT: u32 = 21;
     const C: u64 = 27;
     const F: usize = 500;
     const FP_BYTES: usize = 64;

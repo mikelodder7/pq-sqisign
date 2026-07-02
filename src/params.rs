@@ -40,6 +40,10 @@ pub trait Params: 'static + Copy + core::fmt::Debug {
     const LEVEL: u8;
     /// Bit-length of the base prime `p` (251, 383, or 505).
     const P_BITS: usize;
+    /// C reference `QUAT_repres_bound_input` — the extra bit-budget the
+    /// `RepresentInteger` sampler adds to `bitsize(p)` when picking the
+    /// fixed-degree isogeny length. lvl1 = 20, lvl3/lvl5 = 21.
+    const QUAT_REPRES_BOUND_INPUT: u32;
     /// Cofactor `c` in `p = c · 2^f − 1`.
     const C: u64;
     /// Exponent `f` in `p = c · 2^f − 1`.
