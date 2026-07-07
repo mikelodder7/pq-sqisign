@@ -703,17 +703,18 @@ pub(crate) fn commit<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     max_trials: usize,
     rng: &mut R,
 ) -> Option<CurveBasisIdeal<P>> {
-    // Per-level sampler/working widths: lvl1 keeps 64/64 (byte-identical path).
-    // lvl3 uses SL=96 for the sampler but WL=160 for the working width: the
-    // prime-norm-equivalent construction's HNF modulus `det_4x4(I·conj(α))`
-    // reaches ~2^4600 (the p-scaled quaternion product ~2^1158, to the 4th),
-    // which OVERFLOWS a 96-limb (6144-bit) `Int` for ~1/3 of sampled commitment
-    // ideals — yielding a malformed ~2^768-denominator ideal. WL=160 (10240
-    // bits) has the headroom, matching C's arbitrary-precision `ibz` (which
-    // never overflows). RNG draw is value-based, not width-based, so widening
-    // lvl3 does not perturb lvl1 byte-exactness. `QL` per level (lvl1=12, lvl3=18).
+    // Per-level widths: SL = byte-exact sampler width (lvl1=64, lvl3=96); WL =
+    // working width for the prime-norm reduction + `find_uv_cref`. WL must give
+    // headroom for the prime-norm-equivalent construction's HNF modulus
+    // `det_4x4(I·conj(α))` (the p-scaled quaternion product to the 4th power),
+    // which OVERFLOWS the narrow width for a fraction of sampled commitment
+    // ideals — yielding a malformed high-denominator ideal that `find_uv_cref`
+    // rejects. C never hits this (arbitrary-precision `ibz`). lvl3 needs WL=160
+    // (its det ~2^4600); lvl1's smaller prime needs WL=128. RNG draw is
+    // value-based, not width-based, so widening WL does not perturb the sampler
+    // draw order. `QL` per level (lvl1=12, lvl3=18).
     match P::LEVEL {
-        1 => commit_impl::<P, QL, 64, 64, R>(witnesses, sample_bound, max_trials, rng),
+        1 => commit_impl::<P, QL, 64, 128, R>(witnesses, sample_bound, max_trials, rng),
         3 => commit_impl::<P, QL, 96, 160, R>(witnesses, sample_bound, max_trials, rng),
         _ => None,
     }
@@ -804,13 +805,17 @@ fn commit_impl<
     // `find_uv_cref` is deterministic (LLL + enumeration, no RNG) so this does
     // not perturb the byte-exact draw order. Fall back to the alternate-order
     // spine if no index-0 solution exists (robustness for arbitrary ideals).
-    // lvl1 keeps its PROVEN O_0 index-0 path untouched (byte-exact already).
-    // lvl3+ use the C-faithful `find_uv_cref` index-0 solution (the O_0 find_uv
-    // missed it → alternate-order fallback → −A model). `find_uv_cref` is
-    // deterministic, so it does not perturb the byte-exact draw order.
-    let r16 = if P::LEVEL == 1 {
-        None
-    } else {
+    // ALL levels use the C-faithful `find_uv_cref` index-0 solution as the
+    // PRIMARY path: it avoids both the O_0 `find_uv`'s integer-GSO overflow
+    // (which panics in debug / mis-reduces in release for signing-scale
+    // commitment ideals — the lvl1 sign failure) and the alternate-order
+    // combine's −A model (the lvl3 keygen bug). `find_uv_cref` is deterministic
+    // (no RNG), so it does not perturb the byte-exact draw order. The O_0 idx0
+    // + alternate combine remain as fallbacks only if `find_uv_cref` rejects a
+    // (rare, malformed) ideal — at the per-level working width WL they succeed
+    // for essentially all sampled ideals, so the caller's rejection-sampling
+    // handles the tail.
+    let r16 = {
         let f_cref = u32::try_from(P::F).ok()?;
         let target_cref = *Uint::<WL>::ONE.shl_vartime(f_cref).as_int();
         let denom_cref = j_denom.abs_sign().0;
@@ -828,7 +833,12 @@ fn commit_impl<
             let nr = |x: &Int<WL>| narrow_int_lattice::<WL, L>(x);
             let nq = |rq: &RationalQuaternion<WL>| {
                 RationalQuaternion::<L>::new(
-                    Quaternion::<L>::new(nr(&rq.num.a), nr(&rq.num.b), nr(&rq.num.c), nr(&rq.num.d)),
+                    Quaternion::<L>::new(
+                        nr(&rq.num.a),
+                        nr(&rq.num.b),
+                        nr(&rq.num.c),
+                        nr(&rq.num.d),
+                    ),
                     rq.denom.resize::<L>(),
                 )
             };
@@ -844,29 +854,30 @@ fn commit_impl<
             }
         })
     };
-    let combine_cref = r16.and_then(|r| {
-        ideal_to_isogeny_clapotis_idx0_with_r::<P, QL, _>(
-            r,
-            &spine_ideal,
-            &p16,
-            witnesses,
-            sample_bound,
-            max_trials,
-            false,
-            rng,
-        )
-    });
-    let (e_com, basis) = if P::LEVEL == 1 {
-        // lvl1 keeps its proven O_0 index-0 path (+ alternate fallback), untouched.
-        ideal_to_isogeny_clapotis_idx0::<P, QL, _>(
-            &spine_ideal,
-            &p16,
-            witnesses,
-            sample_bound,
-            max_trials,
-            false,
-            rng,
-        )
+    let (e_com, basis) = r16
+        .and_then(|r| {
+            ideal_to_isogeny_clapotis_idx0_with_r::<P, QL, _>(
+                r,
+                &spine_ideal,
+                &p16,
+                witnesses,
+                sample_bound,
+                max_trials,
+                false,
+                rng,
+            )
+        })
+        .or_else(|| {
+            ideal_to_isogeny_clapotis_idx0::<P, QL, _>(
+                &spine_ideal,
+                &p16,
+                witnesses,
+                sample_bound,
+                max_trials,
+                false,
+                rng,
+            )
+        })
         .or_else(|| {
             ideal_to_isogeny_clapotis::<P, QL, _>(
                 &spine_ideal,
@@ -876,17 +887,7 @@ fn commit_impl<
                 max_trials,
                 rng,
             )
-        })?
-    } else {
-        // lvl3+: use ONLY the C-faithful index-0 combine. If `find_uv_cref`
-        // rejected the ideal (some sampled `quat_lideal_prime_norm_reduced_equivalent`
-        // outputs carry a malformed ~2^768 denominator whose class-Gram is
-        // non-integral — a reduction bug), return None so the rejection-sampled
-        // caller (keygen retry / signing loop) resamples a fresh ideal. The O_0
-        // fallback's integer-GSO LLL overflows at this scale, and the
-        // alternate-order combine yields the −A model, so neither is used here.
-        combine_cref?
-    };
+        })?;
     Some((e_com, basis, spine_ideal))
 }
 
@@ -999,7 +1000,28 @@ pub(crate) fn keygen<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     let torsion_even_power = P::F;
 
     // E_A + the pushed E0 basis (B_A0) + the (prime-norm-reduced) secret ideal.
-    let (e_a, b_a0, secret_ideal) = commit::<P, QL, _>(witnesses, sample_bound, max_trials, rng)?;
+    // Byte-faithful to C `protocols_keygen`: the secret ideal is sampled at
+    // SEC_DEGREE via `sample_secret_gen` (C `quat_sampling_random_ideal_O0_given_norm`
+    // is_prime path), then mapped through the C-faithful index-0 clapotis. Unlike
+    // the signing `commit()` (which uses the commitment sampler), this reproduces
+    // C's keygen exactly, so a KAT-seeded `KeyPair::generate` yields the KAT pk.
+    let (e_a, b_a0, secret_ideal) = match P::LEVEL {
+        1 => keygen_secret_and_spine::<P, QL, 128, _>(
+            crate::params::lvl1::sec_degree().resize::<128>(),
+            witnesses,
+            sample_bound,
+            max_trials,
+            rng,
+        )?,
+        3 => keygen_secret_and_spine::<P, QL, 160, _>(
+            crate::params::lvl3::sec_degree().resize::<160>(),
+            witnesses,
+            sample_bound,
+            max_trials,
+            rng,
+        )?,
+        _ => return None,
+    };
     // Canonical basis of E_A[2^f] + its hint.
     let (b_acan, hint_pk) = P::ec_curve_to_basis_2f_to_hint(&e_a, torsion_even_power)?;
     // Basis-change matrix = B_Acan expressed in B_A0 coords (C keygen.c:54
@@ -1008,6 +1030,89 @@ pub(crate) fn keygen<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     let f = u32::try_from(torsion_even_power).ok()?;
     let mat = P::change_of_basis_matrix(&b_acan, &b_a0, &e_a, f)?;
     Some((e_a, secret_ideal, mat, b_acan, hint_pk, b_a0))
+}
+
+/// Byte-exact keygen secret-ideal + index-0 clapotis at front width `WN`:
+/// `sample_secret_gen` → `quat_lideal_prime_norm_reduced_equivalent` (via
+/// [`keygen_byte_exact_secret_ideal_std`](crate::quaternion::lll::keygen_byte_exact_secret_ideal_std))
+/// → C-faithful [`find_uv_cref`](crate::isogeny::clapotis::find_uv_cref) →
+/// [`ideal_to_isogeny_clapotis_idx0_with_r`]. Returns `(E_A, B_A0, secret_ideal)`.
+#[cfg(feature = "kgen")]
+#[allow(clippy::too_many_arguments)]
+fn keygen_secret_and_spine<P: FixedDegreeLevel, const QL: usize, const WN: usize, R: CryptoRng>(
+    sec_wn: Uint<WN>,
+    witnesses: &[Uint<QL>],
+    sample_bound: i64,
+    max_trials: usize,
+    rng: &mut R,
+) -> Option<CurveBasisIdeal<P>> {
+    use crate::isogeny::clapotis::find_uv_cref;
+    use crate::quaternion::algebra::{Quaternion, RationalQuaternion};
+    use crate::quaternion::lattice::narrow_int_lattice;
+    use crate::quaternion::lll::keygen_byte_exact_secret_ideal_std;
+
+    let p_wn = P::prime::<WN>();
+    let wit_wn: [Uint<WN>; 12] =
+        [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
+    // Sample the byte-exact secret ideal (SEC_DEGREE, is_prime), keeping the
+    // standard-coord form for `find_uv_cref`.
+    let si = keygen_byte_exact_secret_ideal_std::<WN, R>(&sec_wn, &p_wn, 8192, 64, &wit_wn, rng)?;
+
+    // C-faithful index-0 find_uv on the standard-coord reduced ideal.
+    let f = u32::try_from(P::F).ok()?;
+    let target = *Uint::<WN>::ONE.shl_vartime(f).as_int();
+    let denom = si.std_denom.abs_sign().0;
+    let rf = find_uv_cref::<WN>(
+        &target,
+        &si.std_basis,
+        &denom,
+        &si.norm,
+        &p_wn,
+        P::FINDUV_BOX_SIZE,
+    )?
+    .into_find_uv_result()?;
+    let nr = |x: &Int<WN>| narrow_int_lattice::<WN, L>(x);
+    let nq = |rq: &RationalQuaternion<WN>| {
+        RationalQuaternion::<L>::new(
+            Quaternion::<L>::new(nr(&rq.num.a), nr(&rq.num.b), nr(&rq.num.c), nr(&rq.num.d)),
+            rq.denom.resize::<L>(),
+        )
+    };
+    let r16 = crate::isogeny::clapotis::FindUvResult::<L> {
+        u: nr(&rf.u),
+        v: nr(&rf.v),
+        beta1: nq(&rf.beta1),
+        beta2: nq(&rf.beta2),
+        d1: nr(&rf.d1),
+        d2: nr(&rf.d2),
+        index_alternate_order_1: 0,
+        index_alternate_order_2: 0,
+    };
+
+    // Narrow the O_0 spine ideal to L (secret key + spine n_id context).
+    let mut jb16 = [[Int::<L>::from_i64(0); 4]; 4];
+    for (r, row) in jb16.iter_mut().enumerate() {
+        for (c, cell) in row.iter_mut().enumerate() {
+            *cell = narrow_int_lattice::<WN, L>(&si.spine_ideal.basis[r][c]);
+        }
+    }
+    let lideal = LeftIdeal::<L>::with_denom_and_norm(
+        jb16,
+        si.spine_ideal.denom.resize::<L>(),
+        si.spine_ideal.cached_norm.resize::<L>(),
+    );
+    let p16 = P::prime::<L>();
+    let (e_a, b_a0) = ideal_to_isogeny_clapotis_idx0_with_r::<P, QL, _>(
+        r16,
+        &lideal,
+        &p16,
+        witnesses,
+        sample_bound,
+        max_trials,
+        true,
+        rng,
+    )?;
+    Some((e_a, b_a0, lideal))
 }
 
 #[cfg(feature = "kgen")]
@@ -1222,7 +1327,14 @@ mod tests {
         for seed_byte in 0u8..12 {
             let mut rng = NistPqcRng::new(&[seed_byte; 48]);
             let Ok(raw) = sampling_random_ideal_o0_given_norm_wide_ret::<SL, WL, _>(
-                &com_sl, &p_sl, true, None, 64, 1 << 14, &wit_sl, &mut rng,
+                &com_sl,
+                &p_sl,
+                true,
+                None,
+                64,
+                1 << 14,
+                &wit_sl,
+                &mut rng,
             ) else {
                 std::eprintln!("seed {seed_byte}: sampler failed");
                 continue;
@@ -1233,7 +1345,13 @@ mod tests {
             let com_wl = com_degree().resize::<WL>();
             // Try BOTH norms: raw.cached_norm vs COM_DEGREE (N).
             let via_cached = quat_lideal_prime_norm_reduced_equivalent::<WL, _>(
-                &std_col, &denom_wl, &raw.cached_norm, &p_wl, 64, &wit_wl, &mut rng.clone(),
+                &std_col,
+                &denom_wl,
+                &raw.cached_norm,
+                &p_wl,
+                64,
+                &wit_wl,
+                &mut rng.clone(),
             );
             let via_n = quat_lideal_prime_norm_reduced_equivalent::<WL, _>(
                 &std_col, &denom_wl, &com_wl, &p_wl, 64, &wit_wl, &mut rng,
@@ -1243,8 +1361,10 @@ mod tests {
                     let jd_u = jd.abs_sign().0;
                     (
                         jd_u.bits_vartime(),
-                        crate::isogeny::clapotis::find_uv_cref::<WL>(&target, jb, &jd_u, q, &p_wl, 3)
-                            .is_some(),
+                        crate::isogeny::clapotis::find_uv_cref::<WL>(
+                            &target, jb, &jd_u, q, &p_wl, 3,
+                        )
+                        .is_some(),
                     )
                 })
             };

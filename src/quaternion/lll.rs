@@ -706,9 +706,10 @@ pub fn keygen_prime_norm_left_ideal_std<const N: usize, R: rand_core::CryptoRng 
 /// draw order. The public key is `E_A = spine(spine_ideal)`'s normalized
 /// Montgomery `A/C` plus a hint byte.
 ///
-/// `kat`-gated (consumes the byte-exact interval RNG throughout).
-#[cfg(feature = "kat")]
-pub fn keygen_byte_exact_secret_ideal<const N: usize, R: rand_core::CryptoRng>(
+/// Test-only helper (the byte-exactness probes). Production keygen uses the
+/// struct-returning [`keygen_byte_exact_secret_ideal_std`] via `keygen()`.
+#[cfg(all(test, feature = "kat"))]
+pub(crate) fn keygen_byte_exact_secret_ideal<const N: usize, R: rand_core::CryptoRng>(
     sec_degree: &Uint<N>,
     p: &Uint<N>,
     sampler_max_trials: usize,
@@ -748,8 +749,8 @@ pub fn keygen_byte_exact_secret_ideal<const N: usize, R: rand_core::CryptoRng>(
 /// STANDARD-coord secret ideal (see [`KeygenStdIdeal`]) — the input the
 /// C-faithful clapotis port ([`find_uv_cref`](crate::isogeny::clapotis::find_uv_cref))
 /// consumes. Same byte-exact γ-sampling + reduction; only the return shape differs.
-#[cfg(feature = "kat")]
-pub fn keygen_byte_exact_secret_ideal_std<const N: usize, R: rand_core::CryptoRng>(
+#[cfg(feature = "kgen")]
+pub(crate) fn keygen_byte_exact_secret_ideal_std<const N: usize, R: rand_core::CryptoRng>(
     sec_degree: &Uint<N>,
     p: &Uint<N>,
     sampler_max_trials: usize,

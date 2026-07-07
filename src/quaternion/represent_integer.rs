@@ -1028,7 +1028,7 @@ pub fn sampling_random_ideal_o0_given_norm_wide_ret<
 /// for prime norm) or `max_trials` is exhausted. Returns the four standard
 /// coords in `[0, norm)` (Stage-B rerandomization + ideal construction land
 /// next session).
-#[cfg(feature = "kat")]
+#[cfg(feature = "kgen")]
 pub fn sample_fast_path_gen<const LIMBS: usize, R: CryptoRng>(
     norm: &Uint<LIMBS>,
     p: &Uint<LIMBS>,
@@ -1097,7 +1097,7 @@ pub fn sample_fast_path_gen<const LIMBS: usize, R: CryptoRng>(
 /// consumes this generator lands next session — this function isolates the
 /// complete RNG-consuming portion of the sampler (3 Stage-A + 4 Stage-B
 /// draws per successful attempt).
-#[cfg(feature = "kat")]
+#[cfg(feature = "kgen")]
 pub fn sample_secret_gen<const LIMBS: usize, R: CryptoRng>(
     norm: &Uint<LIMBS>,
     p: &Uint<LIMBS>,
