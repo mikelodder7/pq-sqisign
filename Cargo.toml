@@ -33,10 +33,10 @@ signature = ["dep:signature", "vrfy", "alloc"]
 
 [dependencies]
 aes = { version = "0.9", default-features = false, optional = true }
-# Pinned to =0.7.3: crypto-bigint 0.7.4 breaks byte-exact keygen (keygen_end_to_end_matches_kat_pk0).
-# A 0.7.3→0.7.4 patch change altered Montgomery/canonical-form behavior the byte-exact KAT depends on.
-# Revisit (and re-test the KAT) before relaxing this pin. See ISA 20260618-sqisign-sign-asm.
-crypto-bigint = { version = "=0.7.3", default-features = false, features = ["rand_core", "zeroize", "subtle"] }
+# 0.7.5: byte-exact keygen (lvl3_generate_matches_kat_pk) re-validated on this
+# version. (0.7.3 was yanked; 0.7.4 broke the old keygen path — the current
+# C-faithful find_uv_cref path is robust and matches the KAT on 0.7.5.)
+crypto-bigint = { version = "0.7.5", default-features = false, features = ["rand_core", "zeroize", "subtle"] }
 crypto-primes = { version = "0.7", default-features = false }
 shake = { version = "0.1", default-features = false }
 rand_core = { version = "0.10", default-features = false }
@@ -48,15 +48,20 @@ serdect = { version = "0.4", optional = true, default-features = false }
 getrandom = { version = "0.4", optional = true, default-features = false }
 signature = { version = "3.0.0", default-features = false, optional = true }
 
+# `getrandom` is enabled only by the `js` feature to select the wasm entropy
+# backend (`getrandom/wasm_js`); it has no direct `use`, so cargo-udeps
+# false-positives it.
+[package.metadata.cargo-udeps.ignore]
+normal = ["getrandom"]
+
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 hex = "0.4"
-rand = "0.10"
 rand_chacha = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-toml = "0.8"
+toml = "1"
 ciborium = "0.2"
 postcard = { version = "1", features = ["alloc"] }
 

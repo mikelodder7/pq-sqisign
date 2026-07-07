@@ -137,9 +137,7 @@ jobs:
           toolchain: nightly
       - uses: cargo-bins/cargo-binstall@main
       - run: cargo binstall --no-confirm cargo-outdated
-      # crypto-bigint is intentionally pinned to =0.7.3 (0.7.4+ breaks byte-exact
-      # keygen — see Cargo.toml); ignore it in the outdated check.
-      - run: cargo outdated --root-deps-only --ignore rand8,rand,sha2,crypto-bigint --exit-code=1
+      - run: cargo outdated --root-deps-only --ignore rand8,rand,sha2 --exit-code=1
 
   pants:
     runs-on: ubuntu-latest
