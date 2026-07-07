@@ -792,27 +792,88 @@ fn commit_impl<
     let jd16 = narrow_int_lattice::<WL, L>(&j_denom);
     let q16 = q.resize::<L>();
     let spine_ideal = c_ideal_to_left_ideal::<L>(&jb16, &jd16, &q16);
-    // Try the index-0 spine first (C tries index 0 before the alternate
-    // orders); fall back to the general alt-orders spine if idx0 doesn't apply.
-    let (e_com, basis) = ideal_to_isogeny_clapotis_idx0::<P, QL, _>(
-        &spine_ideal,
-        &p16,
-        witnesses,
-        sample_bound,
-        max_trials,
-        false,
-        rng,
-    )
-    .or_else(|| {
-        ideal_to_isogeny_clapotis::<P, QL, _>(
-            &spine_ideal,
-            &p16,
-            witnesses,
-            sample_bound,
-            max_trials,
-            rng,
+    // C-faithful index-0 clapotis: `find_uv_cref` on the STANDARD-coord reduced
+    // ideal finds C's exact index-0 solution (which the O_0 `find_uv` missed for
+    // lvl3, forcing the alternate-order combine that yields the −A model). Feed
+    // it to the dedicated idx0 combine to reproduce C's Montgomery MODEL exactly.
+    // `find_uv_cref` is deterministic (LLL + enumeration, no RNG) so this does
+    // not perturb the byte-exact draw order. Fall back to the alternate-order
+    // spine if no index-0 solution exists (robustness for arbitrary ideals).
+    // lvl1 keeps its PROVEN O_0 index-0 path untouched (byte-exact already).
+    // lvl3+ use the C-faithful `find_uv_cref` index-0 solution (the O_0 find_uv
+    // missed it → alternate-order fallback → −A model). `find_uv_cref` is
+    // deterministic, so it does not perturb the byte-exact draw order.
+    let r16 = if P::LEVEL == 1 {
+        None
+    } else {
+        let f_cref = u32::try_from(P::F).ok()?;
+        let target_cref = *Uint::<WL>::ONE.shl_vartime(f_cref).as_int();
+        let denom_cref = j_denom.abs_sign().0;
+        crate::isogeny::clapotis::find_uv_cref::<WL>(
+            &target_cref,
+            &j_basis,
+            &denom_cref,
+            &q,
+            &p_wl,
+            P::FINDUV_BOX_SIZE,
         )
-    })?;
+        .and_then(|res| res.into_find_uv_result())
+        .map(|rf| {
+            use crate::quaternion::algebra::{Quaternion, RationalQuaternion};
+            let nr = |x: &Int<WL>| narrow_int_lattice::<WL, L>(x);
+            let nq = |rq: &RationalQuaternion<WL>| {
+                RationalQuaternion::<L>::new(
+                    Quaternion::<L>::new(nr(&rq.num.a), nr(&rq.num.b), nr(&rq.num.c), nr(&rq.num.d)),
+                    rq.denom.resize::<L>(),
+                )
+            };
+            crate::isogeny::clapotis::FindUvResult::<L> {
+                u: nr(&rf.u),
+                v: nr(&rf.v),
+                beta1: nq(&rf.beta1),
+                beta2: nq(&rf.beta2),
+                d1: nr(&rf.d1),
+                d2: nr(&rf.d2),
+                index_alternate_order_1: 0,
+                index_alternate_order_2: 0,
+            }
+        })
+    };
+    let (e_com, basis) = r16
+        .and_then(|r| {
+            ideal_to_isogeny_clapotis_idx0_with_r::<P, QL, _>(
+                r,
+                &spine_ideal,
+                &p16,
+                witnesses,
+                sample_bound,
+                max_trials,
+                false,
+                rng,
+            )
+        })
+        .or_else(|| {
+            // lvl1's primary path; lvl3+ fallback if no index-0 solution.
+            ideal_to_isogeny_clapotis_idx0::<P, QL, _>(
+                &spine_ideal,
+                &p16,
+                witnesses,
+                sample_bound,
+                max_trials,
+                false,
+                rng,
+            )
+        })
+        .or_else(|| {
+            ideal_to_isogeny_clapotis::<P, QL, _>(
+                &spine_ideal,
+                &p16,
+                witnesses,
+                sample_bound,
+                max_trials,
+                rng,
+            )
+        })?;
     Some((e_com, basis, spine_ideal))
 }
 
