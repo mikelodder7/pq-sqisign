@@ -703,13 +703,18 @@ pub(crate) fn commit<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     max_trials: usize,
     rng: &mut R,
 ) -> Option<CurveBasisIdeal<P>> {
-    // Per-level sampler/working widths: lvl1 keeps 64/64 (byte-identical path);
-    // lvl3's 2^768 norms + det blowups need 96/96. RNG draw is value-based, not
-    // width-based, so widening lvl3 here does not perturb lvl1 byte-exactness.
-    // `QL` (quaternion precision) is threaded in per-level (lvl1=12, lvl3=18).
+    // Per-level sampler/working widths: lvl1 keeps 64/64 (byte-identical path).
+    // lvl3 uses SL=96 for the sampler but WL=160 for the working width: the
+    // prime-norm-equivalent construction's HNF modulus `det_4x4(I·conj(α))`
+    // reaches ~2^4600 (the p-scaled quaternion product ~2^1158, to the 4th),
+    // which OVERFLOWS a 96-limb (6144-bit) `Int` for ~1/3 of sampled commitment
+    // ideals — yielding a malformed ~2^768-denominator ideal. WL=160 (10240
+    // bits) has the headroom, matching C's arbitrary-precision `ibz` (which
+    // never overflows). RNG draw is value-based, not width-based, so widening
+    // lvl3 does not perturb lvl1 byte-exactness. `QL` per level (lvl1=12, lvl3=18).
     match P::LEVEL {
         1 => commit_impl::<P, QL, 64, 64, R>(witnesses, sample_bound, max_trials, rng),
-        3 => commit_impl::<P, QL, 96, 96, R>(witnesses, sample_bound, max_trials, rng),
+        3 => commit_impl::<P, QL, 96, 160, R>(witnesses, sample_bound, max_trials, rng),
         _ => None,
     }
 }
@@ -839,31 +844,29 @@ fn commit_impl<
             }
         })
     };
-    let (e_com, basis) = r16
-        .and_then(|r| {
-            ideal_to_isogeny_clapotis_idx0_with_r::<P, QL, _>(
-                r,
-                &spine_ideal,
-                &p16,
-                witnesses,
-                sample_bound,
-                max_trials,
-                false,
-                rng,
-            )
-        })
-        .or_else(|| {
-            // lvl1's primary path; lvl3+ fallback if no index-0 solution.
-            ideal_to_isogeny_clapotis_idx0::<P, QL, _>(
-                &spine_ideal,
-                &p16,
-                witnesses,
-                sample_bound,
-                max_trials,
-                false,
-                rng,
-            )
-        })
+    let combine_cref = r16.and_then(|r| {
+        ideal_to_isogeny_clapotis_idx0_with_r::<P, QL, _>(
+            r,
+            &spine_ideal,
+            &p16,
+            witnesses,
+            sample_bound,
+            max_trials,
+            false,
+            rng,
+        )
+    });
+    let (e_com, basis) = if P::LEVEL == 1 {
+        // lvl1 keeps its proven O_0 index-0 path (+ alternate fallback), untouched.
+        ideal_to_isogeny_clapotis_idx0::<P, QL, _>(
+            &spine_ideal,
+            &p16,
+            witnesses,
+            sample_bound,
+            max_trials,
+            false,
+            rng,
+        )
         .or_else(|| {
             ideal_to_isogeny_clapotis::<P, QL, _>(
                 &spine_ideal,
@@ -873,7 +876,17 @@ fn commit_impl<
                 max_trials,
                 rng,
             )
-        })?;
+        })?
+    } else {
+        // lvl3+: use ONLY the C-faithful index-0 combine. If `find_uv_cref`
+        // rejected the ideal (some sampled `quat_lideal_prime_norm_reduced_equivalent`
+        // outputs carry a malformed ~2^768 denominator whose class-Gram is
+        // non-integral — a reduction bug), return None so the rejection-sampled
+        // caller (keygen retry / signing loop) resamples a fresh ideal. The O_0
+        // fallback's integer-GSO LLL overflows at this scale, and the
+        // alternate-order combine yields the −A model, so neither is used here.
+        combine_cref?
+    };
     Some((e_com, basis, spine_ideal))
 }
 
@@ -1186,6 +1199,60 @@ mod tests {
         if let Some((cod, _pts)) = res {
             assert!(ec_curve_verify_a(&cod.e1.a), "E1 valid");
             assert!(ec_curve_verify_a(&cod.e2.a), "E2 valid");
+        }
+    }
+
+    #[ignore = "diagnostic: lvl3 commit ideal find_uv_cref robustness (fast, no isogeny)"]
+    #[test]
+    fn diag_commit_finduv_lvl3() {
+        use crate::params::lvl3::{com_degree, prime};
+        use crate::quaternion::lll::quat_lideal_prime_norm_reduced_equivalent;
+        use crate::quaternion::o0_mul::ideal_basis_o0_to_standard_col;
+        use crate::quaternion::represent_integer::sampling_random_ideal_o0_given_norm_wide_ret;
+        const SL: usize = 96;
+        const WL: usize = 96;
+        let com_sl = com_degree().resize::<SL>();
+        let p_sl = prime().resize::<SL>();
+        let p_wl = prime().resize::<WL>();
+        let wit_sl: [Uint<SL>; 12] =
+            [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
+        let wit_wl: [Uint<WL>; 12] =
+            [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
+        let target = *Uint::<WL>::ONE.shl_vartime(376).as_int();
+        for seed_byte in 0u8..12 {
+            let mut rng = NistPqcRng::new(&[seed_byte; 48]);
+            let Ok(raw) = sampling_random_ideal_o0_given_norm_wide_ret::<SL, WL, _>(
+                &com_sl, &p_sl, true, None, 64, 1 << 14, &wit_sl, &mut rng,
+            ) else {
+                std::eprintln!("seed {seed_byte}: sampler failed");
+                continue;
+            };
+            let cn_bits = raw.cached_norm.bits_vartime();
+            let std_col = ideal_basis_o0_to_standard_col::<WL>(&raw.basis);
+            let denom_wl = Int::<WL>::from_i64(2).wrapping_mul(raw.denom.as_int());
+            let com_wl = com_degree().resize::<WL>();
+            // Try BOTH norms: raw.cached_norm vs COM_DEGREE (N).
+            let via_cached = quat_lideal_prime_norm_reduced_equivalent::<WL, _>(
+                &std_col, &denom_wl, &raw.cached_norm, &p_wl, 64, &wit_wl, &mut rng.clone(),
+            );
+            let via_n = quat_lideal_prime_norm_reduced_equivalent::<WL, _>(
+                &std_col, &denom_wl, &com_wl, &p_wl, 64, &wit_wl, &mut rng,
+            );
+            let cref_of = |red: &Option<([[Int<WL>; 4]; 4], Int<WL>, Uint<WL>)>| {
+                red.as_ref().map(|(jb, jd, q)| {
+                    let jd_u = jd.abs_sign().0;
+                    (
+                        jd_u.bits_vartime(),
+                        crate::isogeny::clapotis::find_uv_cref::<WL>(&target, jb, &jd_u, q, &p_wl, 3)
+                            .is_some(),
+                    )
+                })
+            };
+            std::eprintln!(
+                "seed {seed_byte}: cn_bits={cn_bits} cached=>{:?} N=>{:?}",
+                cref_of(&via_cached),
+                cref_of(&via_n),
+            );
         }
     }
 
