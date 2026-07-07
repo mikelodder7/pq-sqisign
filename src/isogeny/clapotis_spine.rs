@@ -716,8 +716,8 @@ pub(crate) fn commit<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     // value-based, not width-based, so widening WL does not perturb the sampler
     // draw order. `QL` per level (lvl1=12, lvl3=18).
     match P::LEVEL {
-        1 => commit_impl::<P, QL, 64, 128, R>(witnesses, sample_bound, max_trials, rng),
-        3 => commit_impl::<P, QL, 96, 160, R>(witnesses, sample_bound, max_trials, rng),
+        1 => commit_impl::<P, QL, 64, 80, R>(witnesses, sample_bound, max_trials, rng),
+        3 => commit_impl::<P, QL, 96, 112, R>(witnesses, sample_bound, max_trials, rng),
         _ => None,
     }
 }
@@ -748,7 +748,16 @@ fn commit_impl<
     // WL=64 (4096 bits) has the headroom (verified by left-closure of the
     // reduced ideal — `reduced_norm_vartime` itself false-negatives at this
     // scale because its own det_4x4 overflows, so it is NOT a validity oracle).
-    // SL/WL are now per-level const-generic params (lvl1: 64/64, lvl3: 96/96).
+    //
+    // SL/WL are per-level const-generic params. WL is width-minimized (it is the
+    // dominant sign cost — commit + find_uv_cref are ~65% of a lvl3 sign, all
+    // wide-Uint Karatsuba mul, cost super-linear in limb count). Too-narrow WL
+    // does NOT corrupt output: an intermittent det_4x4 overflow yields a
+    // non-left-closed ideal that the retry loop rejects and re-samples, so the
+    // failure mode is a throughput cliff, not a wrong signature. Empirically
+    // (16-seed sign+verify stress, `keypair::…::width_stress_*`): lvl3 collapses
+    // at WL=96 (retry storm), is clean and near-optimal at WL=104+; lvl1 is
+    // clean down to WL=72. Chosen with margin: lvl1 SL=64/WL=80, lvl3 SL=96/WL=112.
     let com_sl = match P::LEVEL {
         1 => crate::params::lvl1::com_degree().resize::<SL>(),
         3 => crate::params::lvl3::com_degree().resize::<SL>(),

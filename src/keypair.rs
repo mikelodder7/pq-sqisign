@@ -221,6 +221,144 @@ mod lvl3_probe {
         eprintln!("[lvl3-probe] generate::<Level3> => {result:?}");
     }
 
+    /// Perf baseline: median wall-clock for keygen / sign / verify at lvl1 and
+    /// lvl3. Run in RELEASE: `cargo test --release --features kat,vrfy
+    /// perf_baseline -- --ignored --nocapture`.
+    #[cfg(feature = "vrfy")]
+    #[test]
+    #[ignore = "perf baseline (run --release)"]
+    fn perf_baseline() {
+        use super::{KeyLevel, KeyPair};
+        use crate::params::Level1;
+        use crate::verification::VerifyLevel;
+        use rand_chacha::ChaCha20Rng;
+        use rand_chacha::rand_core::SeedableRng;
+        use std::time::{Duration, Instant};
+
+        fn med(mut v: Vec<Duration>) -> Duration {
+            v.sort();
+            v[v.len() / 2]
+        }
+
+        fn bench<P: KeyLevel + VerifyLevel>(tag: &str) {
+            const MSG: &[u8] = b"perf baseline message";
+            let seed = [0x37u8; 32];
+            let mut kg = Vec::new();
+            let mut kp = None;
+            for _ in 0..2 {
+                let mut rng = ChaCha20Rng::from_seed(seed);
+                let t = Instant::now();
+                let k = KeyPair::<P>::generate(&mut rng).expect("keygen");
+                kg.push(t.elapsed());
+                kp = Some(k);
+            }
+            let (sk, vk) = kp.unwrap().into_parts();
+            let mut sg = Vec::new();
+            let mut sig = None;
+            for _ in 0..3 {
+                let mut rng = ChaCha20Rng::from_seed(seed);
+                let t = Instant::now();
+                let s = sk.sign(MSG, &mut rng).expect("sign");
+                sg.push(t.elapsed());
+                sig = Some(s);
+            }
+            let sig = sig.unwrap();
+            let mut vf = Vec::new();
+            for _ in 0..5 {
+                let t = Instant::now();
+                vk.verify(MSG, &sig).expect("verify");
+                vf.push(t.elapsed());
+            }
+            eprintln!(
+                "[perf {tag}] keygen={:?} sign={:?} verify={:?}",
+                med(kg),
+                med(sg),
+                med(vf)
+            );
+        }
+        bench::<Level1>("lvl1");
+        bench::<Level3>("lvl3");
+    }
+
+    /// Width-minimization correctness oracle: keygen once, then sign+verify
+    /// with many DISTINCT sign-RNG seeds. Each seed drives a different commit
+    /// re-randomization (β), so the run exercises the full spread of commit-
+    /// ideal entry magnitudes — the intermittent `det_4x4` HNF overflow that a
+    /// too-narrow WL causes shows up as a sign failure or a verify failure on
+    /// some seed. All seeds must pass. Run in RELEASE:
+    /// `cargo test --release --features kat,vrfy width_stress_lvl3 -- --ignored --nocapture`.
+    #[cfg(feature = "vrfy")]
+    fn width_stress<P: super::KeyLevel + crate::verification::VerifyLevel>(tag: &str) {
+        use super::KeyPair;
+        use rand_chacha::ChaCha20Rng;
+        use rand_chacha::rand_core::SeedableRng;
+
+        const MSG: &[u8] = b"width stress message";
+        const N: u64 = 16;
+        let mut kg = ChaCha20Rng::seed_from_u64(0xA11CE);
+        let kp = KeyPair::<P>::generate(&mut kg).expect("keygen");
+        let (sk, vk) = kp.into_parts();
+        let mut ok = 0u64;
+        for s in 0..N {
+            let mut r = ChaCha20Rng::seed_from_u64(0x5EED_0000 + s);
+            match sk.sign(MSG, &mut r) {
+                Ok(sig) => {
+                    vk.verify(MSG, &sig).expect("verify seed");
+                    ok += 1;
+                }
+                Err(e) => eprintln!("[width_stress {tag}] sign failed on seed {s}: {e:?}"),
+            }
+        }
+        eprintln!("[width_stress {tag}] {ok}/{N} sign+verify OK");
+        assert_eq!(ok, N, "all seeds must sign+verify");
+    }
+
+    #[cfg(feature = "vrfy")]
+    #[test]
+    #[ignore = "width-minimization stress (run --release)"]
+    fn width_stress_lvl3() {
+        width_stress::<Level3>("lvl3");
+    }
+
+    #[cfg(feature = "vrfy")]
+    #[test]
+    #[ignore = "width-minimization stress (run --release)"]
+    fn width_stress_lvl1() {
+        use crate::params::Level1;
+        width_stress::<Level1>("lvl1");
+    }
+
+    /// Profiling target: sign lvl3 in a tight loop for ~30s so an external
+    /// sampler (`sample <pid>`) can rank hot functions. Run in RELEASE:
+    /// `cargo test --release --features kat,vrfy prof_lvl3_sign_loop -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "profiling loop (attach sampler)"]
+    fn prof_lvl3_sign_loop() {
+        use super::KeyPair;
+        use crate::params::Level3;
+        use rand_chacha::ChaCha20Rng;
+        use rand_chacha::rand_core::SeedableRng;
+        use std::time::{Duration, Instant};
+
+        const MSG: &[u8] = b"perf baseline message";
+        let seed = [0x37u8; 32];
+        let mut rng = ChaCha20Rng::from_seed(seed);
+        let kp = KeyPair::<Level3>::generate(&mut rng).expect("keygen");
+        let sk = kp.signing_key();
+        eprintln!(
+            "[prof] keygen done, signing loop starting (pid={})",
+            std::process::id()
+        );
+        let start = Instant::now();
+        let mut n = 0u64;
+        while start.elapsed() < Duration::from_secs(30) {
+            let mut r = ChaCha20Rng::from_seed(seed);
+            let _ = sk.sign(MSG, &mut r).expect("sign");
+            n += 1;
+        }
+        eprintln!("[prof] {n} signs in {:?}", start.elapsed());
+    }
+
     /// Does the PUBLIC API `KeyPair::<Level3>::generate` reproduce the byte-exact
     /// KAT public key when seeded with the KAT record-0 DRBG seed? Decides the
     /// keygen reconciliation: if yes, the commit-based public path is already

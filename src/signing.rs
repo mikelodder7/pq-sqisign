@@ -41,10 +41,13 @@ pub fn protocols_sign<P: crate::isogeny::fixed_degree::FixedDegreeLevel, R: Cryp
     match P::LEVEL {
         // lvl1: QL=12, W=80 (5120 bits — smallest tested width with margin).
         1 => protocols_sign_impl::<P, 12, 80, R>(sk, msg, rng),
-        // lvl3: QL=18, W=160 (10240 bits) — the 2^768-scale response lattice's
-        // intersection adjugate is proportionally wider; generous headroom,
-        // narrowed later if the roundtrip leaves margin.
-        3 => protocols_sign_impl::<P, 18, 160, R>(sk, msg, rng),
+        // lvl3: QL=18, W=128 (8192 bits) for the 2^768-scale response lattice.
+        // Unlike the commit WL (soft retry-cliff), W has a HARD cliff: too narrow
+        // and the response-quaternion adjugate overflows into a WRONG element that
+        // verify rejects (no retry saves it). 16-seed sign+verify stress: W=96
+        // fails outright, W=112 is clean; W=128 keeps a 2-block margin over the
+        // cliff. Was W=160; narrowing to 128 cut ~15% off lvl3 sign.
+        3 => protocols_sign_impl::<P, 18, 128, R>(sk, msg, rng),
         _ => None,
     }
 }
