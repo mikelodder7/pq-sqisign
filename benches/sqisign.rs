@@ -17,9 +17,9 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use pq_sqisign::{
-    keypair::KeyPair,
-    params::Params,
-    params::{Level1, Level3, Level5},
+    keypair::{KeyLevel, KeyPair},
+    params::{Level1, Level3},
+    verification::VerifyLevel,
 };
 use rand_chacha::{ChaCha20Rng, rand_core::SeedableRng};
 use std::time::Duration;
@@ -30,7 +30,7 @@ const SEED: [u8; 32] = [0x42u8; 32];
 /// Benchmark keygen, sign, and verify for a single security level `P`.
 ///
 /// `level` is the short suffix used in the criterion group name, e.g. `"lvl3"`.
-fn bench_level<P: Params>(c: &mut Criterion, level: &str) {
+fn bench_level<P: KeyLevel + VerifyLevel>(c: &mut Criterion, level: &str) {
     // Pre-generate a keypair + signature once for the sign/verify benches.
     //
     // Levels 3 and 5 are defined as parameter sets but their keygen/sign paths
@@ -84,7 +84,6 @@ fn bench_level<P: Params>(c: &mut Criterion, level: &str) {
 fn bench_all(c: &mut Criterion) {
     bench_level::<Level1>(c, "lvl1");
     bench_level::<Level3>(c, "lvl3");
-    bench_level::<Level5>(c, "lvl5");
 }
 
 criterion_group!(benches, bench_all);

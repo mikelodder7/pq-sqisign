@@ -7,6 +7,8 @@ use crate::params::{Params, lvl1::Level1, lvl3::Level3};
 use crate::signing_key::SigningKey;
 use crate::verifying_key::VerifyingKey;
 use crate::{Error, Result};
+#[cfg(feature = "kgen")]
+use alloc::vec::Vec;
 
 /// A SQIsign keypair (signing key + verifying key), parameterized by security level.
 ///

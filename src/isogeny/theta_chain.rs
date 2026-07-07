@@ -605,7 +605,7 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
         }
         // Take the RNG out first (releases the &mut self borrow) so the
         // subsequent `self.variety()` immutable borrow is allowed.
-        let (split_result, was_rand) = match self.split_rng.take() {
+        let (split_result, _was_rand) = match self.split_rng.take() {
             Some(mut rng) => (
                 splitting_compute_randomized(self.variety(), zero_index, &mut rng),
                 true,
@@ -619,7 +619,7 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
             }
         };
         #[cfg(feature = "kat")]
-        if was_rand && std::env::var_os("PQSQ_DUMP_THETA").is_some() {
+        if _was_rand && std::env::var_os("PQSQ_DUMP_THETA").is_some() {
             let mut b = [0u8; 96];
             for (nm, c) in [
                 ("bnull.x", &last.b_null.x),
@@ -645,7 +645,7 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
             Err(_) => return false,
         };
         #[cfg(feature = "kat")]
-        if was_rand && std::env::var_os("PQSQ_DUMP_THETA").is_some() {
+        if _was_rand && std::env::var_os("PQSQ_DUMP_THETA").is_some() {
             let mut b = [0u8; 96];
             for (nm, a) in [("e34.e1.a", &e34.e1.a), ("e34.e2.a", &e34.e2.a)] {
                 a.to_bytes_le(&mut b);

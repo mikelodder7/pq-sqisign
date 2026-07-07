@@ -402,7 +402,8 @@ fn weil_jac<F: BaseField>(
 /// matches C's Tate-based result): with `ζ = e(b2.P, b2.Q)`, for each target
 /// `R`, `e(R, b2.Q) = ζ^a` and `e(R, b2.P) = ζ^(−b)`. Returns `None` if a basis
 /// point fails to lift. Field-generic over the security level via
-/// [`LevelConstants`]; the pairing math is identical at every level.
+/// [`LevelConstants`](crate::level_constants::LevelConstants); the pairing math
+/// is identical at every level.
 #[cfg(feature = "alloc")]
 pub fn change_of_basis_matrix<P: crate::level_constants::LevelConstants>(
     b1: &crate::ec::couple::EcBasis<P::Field>,

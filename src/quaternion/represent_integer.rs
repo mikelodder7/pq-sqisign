@@ -1022,7 +1022,7 @@ pub fn sampling_random_ideal_o0_given_norm_wide_ret<
 /// in that order), then `a = sqrt_mod(−N(gen) mod norm, norm)` (no draw).
 /// `norm` must be prime; for `norm ≡ 3 (mod 4)` (e.g. SEC_DEGREE = 2^512+75)
 /// our [`tonelli_shanks_uint`] returns the same root `disc^((norm+1)/4)`
-/// the C `ibz_sqrt_mod_p` does, so coord[0] is byte-identical.
+/// the C `ibz_sqrt_mod_p` does, so `coord[0]` is byte-identical.
 ///
 /// `p` is the algebra prime. Loops until the sqrt exists (≈ half the time
 /// for prime norm) or `max_trials` is exhausted. Returns the four standard

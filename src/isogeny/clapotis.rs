@@ -1466,7 +1466,7 @@ pub fn find_uv_cref<const N: usize>(
 impl<const N: usize> FindUvCrefResult<N> {
     /// Adapt this standard-coord result into the [`FindUvResult`] shape the
     /// clapotis combine consumes: the two lifted quaternions become
-    /// [`RationalQuaternion`](crate::quaternion::algebra::RationalQuaternion)s
+    /// [`RationalQuaternion`]s
     /// `beta_k / denom` (standard coords — the correct frame for the algebra
     /// multiplication in `theta_endomorphism`, unlike the O_0-coord
     /// [`find_uv`]). `index_alternate_order_{1,2}` are `0` (keygen idx0 path).

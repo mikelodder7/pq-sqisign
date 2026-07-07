@@ -31,7 +31,7 @@ use rand_core::CryptoRng;
 /// Quaternion-side precision for `RepresentInteger`. Now threaded per-level as
 /// a `const QL` generic on the fixed-degree functions (lvl1=12, lvl3=18); this
 /// module const remains only as the default width for the unit tests below.
-#[cfg(test)]
+#[cfg(all(test, feature = "kat"))]
 const QL: usize = 12;
 
 pub(crate) trait FixedDegreeLevel: LevelConstants {

@@ -34,10 +34,12 @@ use crate::isogeny::fixed_degree::{
 };
 use crate::isogeny::theta_chain::theta_chain_compute_and_eval_randomized;
 use crate::level_constants::{EvenBasis, LevelConstants};
-#[cfg(test)]
+#[cfg(all(test, feature = "kat"))]
 use crate::params::lvl1::Fp1Element;
 use crate::params::lvl1::Level1;
 use crate::quaternion::ideal::LeftIdeal;
+#[cfg(feature = "kgen")]
+use alloc::vec::Vec;
 use crypto_bigint::{Int, Uint};
 use rand_core::CryptoRng;
 use subtle::ConstantTimeEq;

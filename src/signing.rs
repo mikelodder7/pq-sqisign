@@ -9,6 +9,8 @@ use crate::quaternion::ideal::LeftIdeal;
 #[cfg(feature = "sign")]
 use crate::verification::SecretKeyData;
 #[cfg(feature = "sign")]
+use alloc::vec::Vec;
+#[cfg(feature = "sign")]
 use rand_core::CryptoRng;
 
 /// Widen a `LeftIdeal<16>` to `LeftIdeal<W>` (W ≥ 16) for wide lattice ops.
