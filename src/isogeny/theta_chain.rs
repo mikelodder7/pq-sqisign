@@ -585,11 +585,32 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
             return false;
         }
         let zero_index = if extra_torsion { Some(8) } else { None };
+        #[cfg(feature = "kat")]
+        if self.split_rng.is_some() && std::env::var_os("PQSQ_DUMP_THETA").is_some() {
+            let n = self.variety().theta_null;
+            let mut b = [0u8; 96];
+            for (nm, c) in [
+                ("presplit.x", &n.x),
+                ("presplit.y", &n.y),
+                ("presplit.z", &n.z),
+                ("presplit.w", &n.w),
+            ] {
+                c.to_bytes_le(&mut b);
+                std::eprint!("RUST_THETA {nm} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
         // Take the RNG out first (releases the &mut self borrow) so the
         // subsequent `self.variety()` immutable borrow is allowed.
-        let split_result = match self.split_rng.take() {
-            Some(mut rng) => splitting_compute_randomized(self.variety(), zero_index, &mut rng),
-            None => splitting_compute(self.variety(), zero_index, false),
+        let (split_result, was_rand) = match self.split_rng.take() {
+            Some(mut rng) => (
+                splitting_compute_randomized(self.variety(), zero_index, &mut rng),
+                true,
+            ),
+            None => (splitting_compute(self.variety(), zero_index, false), false),
         };
         let last = match split_result {
             Ok(last) => last,
@@ -597,6 +618,23 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
                 return false;
             }
         };
+        #[cfg(feature = "kat")]
+        if was_rand && std::env::var_os("PQSQ_DUMP_THETA").is_some() {
+            let mut b = [0u8; 96];
+            for (nm, c) in [
+                ("bnull.x", &last.b_null.x),
+                ("bnull.y", &last.b_null.y),
+                ("bnull.z", &last.b_null.z),
+                ("bnull.w", &last.b_null.w),
+            ] {
+                c.to_bytes_le(&mut b);
+                std::eprint!("RUST_THETA {nm} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
         // The product extraction + point conversion read only the codomain
         // theta-null; the doubling constants are irrelevant here (and a split
         // product null has a zero coordinate, so `from_theta_null` would
@@ -606,6 +644,18 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
             Ok(e34) => e34,
             Err(_) => return false,
         };
+        #[cfg(feature = "kat")]
+        if was_rand && std::env::var_os("PQSQ_DUMP_THETA").is_some() {
+            let mut b = [0u8; 96];
+            for (nm, a) in [("e34.e1.a", &e34.e1.a), ("e34.e2.a", &e34.e2.a)] {
+                a.to_bytes_le(&mut b);
+                std::eprint!("RUST_THETA {nm} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
         for j in 0..self.num_p {
             self.pts[j] = apply_isomorphism(&last.m, &self.pts[j]);
             match theta_point_to_montgomery_point(&self.pts[j], &product) {

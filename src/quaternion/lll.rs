@@ -430,7 +430,35 @@ pub fn quat_lideal_prime_norm_reduced_equivalent<
     use crate::quaternion::o0_mul::uint_as_nonneg_int;
 
     let denom_u = denom.abs();
+    #[cfg(feature = "kat")]
+    let dump_int = |tag: &str, v: &Int<N>| {
+        let by = Uint::<N>::from_words(v.to_words()).to_le_bytes();
+        std::eprint!("RUST_SI {tag} ");
+        for x in &by[..48] {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+    };
+    #[cfg(feature = "kat")]
+    if std::env::var_os("PQSQ_DUMP_THETA").is_some() {
+        for r in 0..4 {
+            for c in 0..4 {
+                dump_int(&std::format!("in.{r}{c}"), &basis[r][c]);
+            }
+        }
+        dump_int("in.den", denom);
+        dump_int("in.norm", norm.as_int());
+    }
     let (reduced, gram) = lideal_reduce_basis::<N>(basis, &denom_u, norm, p)?;
+    #[cfg(feature = "kat")]
+    if std::env::var_os("PQSQ_DUMP_THETA").is_some() {
+        for r in 0..4 {
+            for c in 0..4 {
+                dump_int(&std::format!("red.{r}{c}"), &reduced[r][c]);
+            }
+        }
+        let _ = &gram;
+    }
     // KEYGEN BYTE-EXACT (C-oracle bisect): for the KAT[0] secret ideal,
     // our `reduced` shares the real- and j-coordinate entries with C's `red`
     // (e.g. red[0][0]=0x1d8003b4f6a19d62…, red[2][0]=0x1347be71…) but DIFFERS in
@@ -482,7 +510,87 @@ pub fn quat_lideal_prime_norm_reduced_equivalent<
     ];
     let hnf = hnf_mod_core::<N>(&gens, &modulus);
     let (j_basis, j_denom) = quat_lattice_reduce_denom::<N>(&hnf, &prod_denom);
+    #[cfg(feature = "kat")]
+    if std::env::var_os("PQSQ_DUMP_THETA").is_some() {
+        for r in 0..4 {
+            for c in 0..4 {
+                dump_int(&std::format!("J.{r}{c}"), &j_basis[r][c]);
+            }
+        }
+        dump_int("J.den", &j_denom);
+    }
     Some((j_basis, j_denom, q))
+}
+
+/// Swap two cells `(a)` and `(b)` of a 4×4 `Int` matrix (`Int` is `Copy`).
+#[inline]
+fn swap_cells<const N: usize>(g: &mut [[Int<N>; 4]; 4], a: (usize, usize), b: (usize, usize)) {
+    let t = g[a.0][a.1];
+    g[a.0][a.1] = g[b.0][b.1];
+    g[b.0][b.1] = t;
+}
+
+/// Port of the C reference `post_LLL_basis_treatment` (`dim2id2iso.c:196`) for
+/// `is_special_order == true` — the keygen left `O_0`-ideal case, invoked by C
+/// right after `quat_lideal_reduce_basis` (`dim2id2iso.c:525`).
+///
+/// Operates in place on the standard-coord, column-major reduced `basis`
+/// (`reduced[i][j]` = row `i`, column `j`; columns are the ideal basis vectors)
+/// and its reduce-output `gram` (rescaled class Gram, diagonal halved, strict
+/// upper triangle zeroed — exactly what [`lideal_reduce_basis`] returns). First
+/// reorders the basis columns when two Gram diagonal entries tie, then fixes
+/// column signs so `reduced[0][0] == reduced[1][1]` and `reduced[0][2] ==
+/// reduced[1][3]`. This is the column reorder + sign convention that made the
+/// Rust `find_uv` output diverge from C for lvl3 (the `−A` model bug).
+pub fn post_lll_basis_treatment<const N: usize>(
+    gram: &mut [[Int<N>; 4]; 4],
+    reduced: &mut [[Int<N>; 4]; 4],
+) {
+    // Reordering: at most one column swap, chosen by which Gram diagonals tie.
+    if gram[0][0] == gram[2][2] {
+        for row in reduced.iter_mut() {
+            row.swap(1, 2);
+        }
+        swap_cells(gram, (0, 2), (0, 1));
+        swap_cells(gram, (2, 0), (1, 0));
+        swap_cells(gram, (3, 2), (3, 1));
+        swap_cells(gram, (2, 3), (1, 3));
+        swap_cells(gram, (2, 2), (1, 1));
+    } else if gram[0][0] == gram[3][3] {
+        for row in reduced.iter_mut() {
+            row.swap(1, 3);
+        }
+        swap_cells(gram, (0, 3), (0, 1));
+        swap_cells(gram, (3, 0), (1, 0));
+        swap_cells(gram, (2, 3), (2, 1));
+        swap_cells(gram, (3, 2), (1, 2));
+        swap_cells(gram, (3, 3), (1, 1));
+    } else if gram[1][1] == gram[3][3] {
+        for row in reduced.iter_mut() {
+            row.swap(1, 2);
+        }
+        swap_cells(gram, (0, 2), (0, 1));
+        swap_cells(gram, (2, 0), (1, 0));
+        swap_cells(gram, (3, 2), (3, 1));
+        swap_cells(gram, (2, 3), (1, 3));
+        swap_cells(gram, (2, 2), (1, 1));
+    }
+
+    // Sign adjustment: negate column 1 / column 3 to match C's convention.
+    if reduced[0][0] != reduced[1][1] {
+        for i in 0..4 {
+            reduced[i][1] = reduced[i][1].wrapping_neg();
+            gram[i][1] = gram[i][1].wrapping_neg();
+            gram[1][i] = gram[1][i].wrapping_neg();
+        }
+    }
+    if reduced[0][2] != reduced[1][3] {
+        for i in 0..4 {
+            reduced[i][3] = reduced[i][3].wrapping_neg();
+            gram[i][3] = gram[i][3].wrapping_neg();
+            gram[3][i] = gram[3][i].wrapping_neg();
+        }
+    }
 }
 
 /// Byte-exact keygen FRONT (quaternion side, up to the spine boundary): from
@@ -514,6 +622,49 @@ pub fn keygen_prime_norm_left_ideal<const N: usize, R: rand_core::CryptoRng + ?S
     primality_witnesses: &[Uint<N>],
     rng: &mut R,
 ) -> Option<(crate::quaternion::LeftIdeal<N>, Uint<N>)> {
+    let r = keygen_prime_norm_left_ideal_std::<N, R>(
+        gen_a,
+        gen_denom,
+        secret_norm,
+        p,
+        equiv_bound_coeff,
+        primality_witnesses,
+        rng,
+    )?;
+    Some((r.spine_ideal, r.norm))
+}
+
+/// The prime-norm-reduced secret ideal in BOTH representations: `spine_ideal`
+/// (O_0 coords, denom 1 — the existing bridge output the spine consumes) and
+/// the pre-bridge STANDARD-coord form (`std_basis` column-major = C's `C_JOK`,
+/// `std_denom` = C's denom 2), plus the prime norm `q`. The standard-coord form
+/// is what the C-faithful [`find_uv_cref`](crate::isogeny::clapotis::find_uv_cref)
+/// consumes; it was verified byte-exact vs C's `C_JOK` (16/16 + denom 2).
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone)]
+pub struct KeygenStdIdeal<const N: usize> {
+    /// O_0-coordinate spine ideal (denom 1) — the existing spine input.
+    pub spine_ideal: crate::quaternion::LeftIdeal<N>,
+    /// Standard-coordinate basis (column-major, = C's `C_JOK`).
+    pub std_basis: [[Int<N>; 4]; 4],
+    /// Standard-coordinate denominator (= C's denom, 2).
+    pub std_denom: Int<N>,
+    /// Prime norm `q` of the reduced ideal.
+    pub norm: Uint<N>,
+}
+
+/// Like [`keygen_prime_norm_left_ideal`] but also returns the pre-bridge
+/// STANDARD-coord ideal (for the C-faithful clapotis port). See [`KeygenStdIdeal`].
+#[cfg(feature = "alloc")]
+pub fn keygen_prime_norm_left_ideal_std<const N: usize, R: rand_core::CryptoRng + ?Sized>(
+    gen_a: &crate::quaternion::Quaternion<N>,
+    gen_denom: &Int<N>,
+    secret_norm: &Uint<N>,
+    p: &Uint<N>,
+    equiv_bound_coeff: u32,
+    primality_witnesses: &[Uint<N>],
+    rng: &mut R,
+) -> Option<KeygenStdIdeal<N>> {
     use crate::quaternion::o0_mul::{c_ideal_to_left_ideal, quat_lideal_create};
     let (basis, denom, norm) = quat_lideal_create::<N>(gen_a, gen_denom, secret_norm, p);
     let (j_basis, j_denom, q) = quat_lideal_prime_norm_reduced_equivalent::<N, R>(
@@ -526,7 +677,12 @@ pub fn keygen_prime_norm_left_ideal<const N: usize, R: rand_core::CryptoRng + ?S
         rng,
     )?;
     let spine_ideal = c_ideal_to_left_ideal::<N>(&j_basis, &j_denom, &q);
-    Some((spine_ideal, q))
+    Some(KeygenStdIdeal {
+        spine_ideal,
+        std_basis: j_basis,
+        std_denom: j_denom,
+        norm: q,
+    })
 }
 
 /// The COMPLETE byte-exact keygen FRONT — the C `protocols_keygen` loop body
@@ -562,7 +718,48 @@ pub fn keygen_byte_exact_secret_ideal<const N: usize, R: rand_core::CryptoRng>(
 ) -> Option<(crate::quaternion::LeftIdeal<N>, Uint<N>)> {
     use crate::quaternion::represent_integer::sample_secret_gen;
     let secret_gen = sample_secret_gen::<N, R>(sec_degree, p, sampler_max_trials, rng)?;
+    if std::env::var_os("PQSQ_DUMP_THETA").is_some() {
+        for (nm, v) in [
+            ("g.0", &secret_gen.a),
+            ("g.1", &secret_gen.b),
+            ("g.2", &secret_gen.c),
+            ("g.3", &secret_gen.d),
+        ] {
+            let by = Uint::<N>::from_words(v.to_words()).to_le_bytes();
+            std::eprint!("RUST_GAM {nm} ");
+            for x in &by[..48] {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+    }
     keygen_prime_norm_left_ideal::<N, R>(
+        &secret_gen,
+        &Int::<N>::from_i64(1),
+        sec_degree,
+        p,
+        equiv_bound_coeff,
+        primality_witnesses,
+        rng,
+    )
+}
+
+/// Like [`keygen_byte_exact_secret_ideal`] but also returns the pre-bridge
+/// STANDARD-coord secret ideal (see [`KeygenStdIdeal`]) — the input the
+/// C-faithful clapotis port ([`find_uv_cref`](crate::isogeny::clapotis::find_uv_cref))
+/// consumes. Same byte-exact γ-sampling + reduction; only the return shape differs.
+#[cfg(feature = "kat")]
+pub fn keygen_byte_exact_secret_ideal_std<const N: usize, R: rand_core::CryptoRng>(
+    sec_degree: &Uint<N>,
+    p: &Uint<N>,
+    sampler_max_trials: usize,
+    equiv_bound_coeff: u32,
+    primality_witnesses: &[Uint<N>],
+    rng: &mut R,
+) -> Option<KeygenStdIdeal<N>> {
+    use crate::quaternion::represent_integer::sample_secret_gen;
+    let secret_gen = sample_secret_gen::<N, R>(sec_degree, p, sampler_max_trials, rng)?;
+    keygen_prime_norm_left_ideal_std::<N, R>(
         &secret_gen,
         &Int::<N>::from_i64(1),
         sec_degree,

@@ -244,6 +244,30 @@ pub fn xgcd_with_u_not_0<const LIMBS: usize>(
         }
         u = one_i;
     }
+    // C `ibz_xgcd_with_u_not_0` (hnf/hnf_internal.c:90-111): canonicalize so
+    // that x·u > 0 and (u,v) is minimal, by shifting (u,v) ← (u+y/g, v−x/g)
+    // (sign-flipped when x·y < 0) until x·u > 0. This step is REQUIRED for
+    // byte-exact HNF: the pivot row `w[i] = u·a[k] mod m` in `hnf_mod_core`
+    // depends on the exact `u`, so a different Bézout representative yields a
+    // different reduced basis. (It coincided at lvl1 without this loop but
+    // diverged at lvl3 — the prior "(u,v) does not affect the output" note
+    // was wrong.)
+    if *x != zero_i {
+        let g_int = *g.as_int();
+        // neg = (x·y < 0): x, y have opposite (nonzero) signs.
+        let neg = *y != zero_i && (bool::from(x.is_negative()) != bool::from(y.is_negative()));
+        let mut y_over_g = int_div_floor(y, &g_int); // y/g (exact: g | y)
+        let mut x_over_g = int_div_floor(x, &g_int); // x/g (exact: g | x)
+        if neg {
+            y_over_g = y_over_g.wrapping_neg();
+            x_over_g = x_over_g.wrapping_neg();
+        }
+        // while x·u ≤ 0 (x ≠ 0 ⇒ true iff u == 0 or sign(u) ≠ sign(x)).
+        while u == zero_i || bool::from(x.is_negative()) != bool::from(u.is_negative()) {
+            u = u.wrapping_add(&y_over_g);
+            v = v.wrapping_sub(&x_over_g);
+        }
+    }
     (g, u, v)
 }
 

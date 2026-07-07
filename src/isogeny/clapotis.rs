@@ -1364,6 +1364,135 @@ pub(crate) fn lattice_reduced_norm<const L: usize, const W: usize>(
 ///   admit a solution at `m = 3`. Caller may retry with a larger
 ///   box size (adaptive retry is future work).
 ///
+/// Result of the standard-coordinate (C-faithful) [`find_uv_cref`].
+///
+/// `(u, v)` solve `u·d1 + v·d2 = target`; `beta1/beta2` are the lifted short
+/// quaternions in STANDARD coordinates (`beta_k = reduced · vec_k`), sharing
+/// denominator `denom`. Byte-identical to the C reference `find_uv` outputs for
+/// the keygen idx0 path.
+#[cfg(feature = "alloc")]
+#[derive(Debug, Clone)]
+pub struct FindUvCrefResult<const N: usize> {
+    /// Bézout coefficient `u > 0`.
+    pub u: Int<N>,
+    /// Bézout coefficient `v > 0`.
+    pub v: Int<N>,
+    /// Short norm `d1 = N_red(beta1)/N(I)`.
+    pub d1: Int<N>,
+    /// Short norm `d2 = N_red(beta2)/N(I)`.
+    pub d2: Int<N>,
+    /// Lifted short quaternion `beta1` (standard coords).
+    pub beta1: [Int<N>; 4],
+    /// Lifted short quaternion `beta2` (standard coords).
+    pub beta2: [Int<N>; 4],
+    /// Shared denominator of `beta1/beta2` (= the reduced ideal denom).
+    pub denom: Int<N>,
+}
+
+/// Standard-coordinate, C-faithful `find_uv` for the keygen idx0 path
+/// (`num_alternate_order = 0`) — port of the C reference `find_uv`
+/// (`dim2id2iso.c:474`) restricted to `j1 = j2 = 0`.
+///
+/// Steps (all in C's standard coords, keeping the denominator): reduce the
+/// ideal via `quat_lideal_reduce_basis`
+/// ([`lideal_reduce_basis`](crate::quaternion::lll::lideal_reduce_basis) then
+/// [`post_lll_basis_treatment`](crate::quaternion::lll::post_lll_basis_treatment)),
+/// enumerate short vectors against the reduce Gram with `adjusted_norm = denom²`
+/// ([`enumerate_hypercube_wide`]), sort by norm, solve `u·d1 + v·d2 = target`
+/// ([`find_uv_from_lists`]), then lift `beta_k = reduced · vec_k` via the standard
+/// [`mat_4x4_eval`](crate::quaternion::lattice::mat_4x4_eval) (the columns of
+/// `reduced` are the ideal basis vectors).
+///
+/// Unlike the O_0-coordinate [`find_uv`], this preserves C's exact
+/// standard-coord / denom representation end-to-end, so `beta1/beta2` are
+/// byte-identical to C — the fix for the lvl3 `−A` divergence.
+#[cfg(feature = "alloc")]
+pub fn find_uv_cref<const N: usize>(
+    target: &Int<N>,
+    basis: &[[Int<N>; 4]; 4],
+    denom: &Uint<N>,
+    norm: &Uint<N>,
+    p: &Uint<N>,
+    box_size: i64,
+) -> Option<FindUvCrefResult<N>> {
+    use crate::quaternion::lattice::mat_4x4_eval;
+    use crate::quaternion::lll::{lideal_reduce_basis, post_lll_basis_treatment};
+
+    // 1. reduce + post_LLL (Stage 1 — matches C `quat_lideal_reduce_basis` +
+    //    `post_LLL_basis_treatment`, is_special_order=true).
+    let (mut reduced, mut gram) = lideal_reduce_basis::<N>(basis, denom, norm, p)?;
+    post_lll_basis_treatment::<N>(&mut gram, &mut reduced);
+
+    // 2. adjusted_norm = denom² (C `adjusted_norm[0]`).
+    let denom_int = *denom.as_int();
+    let adjusted_norm = denom_int.wrapping_mul(&denom_int);
+
+    // 3. enumerate short vectors in the reduce Gram.
+    let mut small = enumerate_hypercube_wide::<N, N>(box_size, &gram, &adjusted_norm);
+    if small.is_empty() {
+        return None;
+    }
+
+    // 4. stable sort by norm (matches C's `compare_vec_by_norm` qsort; the
+    //    insertion-order tiebreak mirrors enumeration order).
+    small.sort_by_key(|s| s.norm);
+
+    // 5. build the norm + quotient lists.
+    let small_norms: Vec<Int<N>> = small.iter().map(|s| s.norm).collect();
+    let quotients: Vec<Int<N>> = small_norms
+        .iter()
+        .map(|d| int_div_floor::<N>(target, d))
+        .collect();
+
+    // 6. solve u·d1 + v·d2 = target (is_diagonal = true, same list both sides).
+    let sol = find_uv_from_lists::<N>(target, &small_norms, &small_norms, &quotients, true, 0)?;
+
+    // 7. lift beta_k = reduced · vec_k (standard mat·vec).
+    let beta1 = mat_4x4_eval::<N>(&reduced, &small[sol.index_sol1].vec);
+    let beta2 = mat_4x4_eval::<N>(&reduced, &small[sol.index_sol2].vec);
+
+    Some(FindUvCrefResult {
+        u: sol.u,
+        v: sol.v,
+        d1: small_norms[sol.index_sol1],
+        d2: small_norms[sol.index_sol2],
+        beta1,
+        beta2,
+        denom: denom_int,
+    })
+}
+
+#[cfg(feature = "alloc")]
+impl<const N: usize> FindUvCrefResult<N> {
+    /// Adapt this standard-coord result into the [`FindUvResult`] shape the
+    /// clapotis combine consumes: the two lifted quaternions become
+    /// [`RationalQuaternion`](crate::quaternion::algebra::RationalQuaternion)s
+    /// `beta_k / denom` (standard coords — the correct frame for the algebra
+    /// multiplication in `theta_endomorphism`, unlike the O_0-coord
+    /// [`find_uv`]). `index_alternate_order_{1,2}` are `0` (keygen idx0 path).
+    ///
+    /// Returns `None` if the shared denominator is not representable as a
+    /// non-negative `Uint<N>` (never happens for the keygen denom = 2).
+    pub fn into_find_uv_result(self) -> Option<FindUvResult<N>> {
+        use crate::quaternion::algebra::{Quaternion, RationalQuaternion};
+        // Keygen denom is +2; `abs_sign().0` is its magnitude as a `Uint`.
+        let denom_u = self.denom.abs_sign().0;
+        let mk = |c: [Int<N>; 4]| {
+            RationalQuaternion::<N>::new(Quaternion::<N>::new(c[0], c[1], c[2], c[3]), denom_u)
+        };
+        Some(FindUvResult {
+            u: self.u,
+            v: self.v,
+            beta1: mk(self.beta1),
+            beta2: mk(self.beta2),
+            d1: self.d1,
+            d2: self.d2,
+            index_alternate_order_1: 0,
+            index_alternate_order_2: 0,
+        })
+    }
+}
+
 /// # Variable-time
 ///
 /// Variable-time on the ideal basis entries (LLL + enumeration both
@@ -1377,6 +1506,7 @@ pub fn find_uv<const LIMBS: usize>(
     box_size: i64,
 ) -> Result<FindUvResult<LIMBS>> {
     use crate::quaternion::ideal_mul::lideal_reduce_basis_wide;
+    use crate::quaternion::lattice::widen_int_lattice;
     use crate::quaternion::o0_mul::uint_as_nonneg_int;
 
     // Option C dispatch: non-empty alt_connecting goes to the
@@ -1406,6 +1536,25 @@ pub fn find_uv<const LIMBS: usize>(
     // LLL returns a reduced basis that fits back in `Int<LIMBS>` (LIMBS=16
     // for the real connecting ideal). (Per-level/input-scaled WIDE in
     // `Params` is future work.)
+    #[cfg(feature = "kat")]
+    if std::env::var_os("PQSQ_DUMP_THETA").is_some() {
+        for r in 0..4 {
+            for c in 0..4 {
+                let by = Uint::<LIMBS>::from_words(lideal.basis[r][c].to_words()).to_le_bytes();
+                std::eprint!("RUST_IN in.{r}{c} ");
+                for x in &by[..48] {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
+        let db = lideal.denom.to_le_bytes();
+        std::eprint!("RUST_IN in.den ");
+        for x in &db[..48] {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+    }
     let reduced = lideal_reduce_basis_wide::<LIMBS, 128>(lideal, p);
 
     // enumerate short vectors DIRECTLY in the LLL-reduced ORIGINAL
@@ -1450,8 +1599,7 @@ pub fn find_uv<const LIMBS: usize>(
     let denom_int = uint_as_nonneg_int::<LIMBS>(&reduced.denom).ok_or(Error::Unimplemented(
         "find_uv: reduced ideal denominator exceeds Int<LIMBS> non-negative range",
     ))?;
-    let denom_wide =
-        crate::quaternion::lattice::widen_int_lattice::<LIMBS, FINDUV_WIDE>(&denom_int);
+    let denom_wide = widen_int_lattice::<LIMBS, FINDUV_WIDE>(&denom_int);
     let denom_sq_wide = denom_wide.wrapping_mul(&denom_wide);
 
     // N(I) from the lattice determinant (convention-independent — see
@@ -1466,8 +1614,7 @@ pub fn find_uv<const LIMBS: usize>(
     let n_ideal_int = uint_as_nonneg_int::<LIMBS>(&n_ideal).ok_or(Error::Unimplemented(
         "find_uv: N(I) exceeds Int<LIMBS> non-negative range",
     ))?;
-    let n_ideal_wide =
-        crate::quaternion::lattice::widen_int_lattice::<LIMBS, FINDUV_WIDE>(&n_ideal_int);
+    let n_ideal_wide = widen_int_lattice::<LIMBS, FINDUV_WIDE>(&n_ideal_int);
     let adjusted_norm_wide = Int::<FINDUV_WIDE>::from_i64(4)
         .wrapping_mul(&denom_sq_wide)
         .wrapping_mul(&n_ideal_wide);
@@ -1537,6 +1684,39 @@ pub fn find_uv<const LIMBS: usize>(
     }
     .normalize();
 
+    #[cfg(feature = "kat")]
+    if std::env::var_os("PQSQ_DUMP_THETA").is_some() {
+        let pr = |nm: &str, v: &Int<LIMBS>| {
+            let by = Uint::<LIMBS>::from_words(v.to_words()).to_le_bytes();
+            std::eprint!("RUST_LLL {nm} ");
+            for x in &by[..48] {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        };
+        for r in 0..4 {
+            for c in 0..4 {
+                pr(&std::format!("red.{r}{c}"), &reduced.basis[r][c]);
+            }
+        }
+        let db = reduced.denom.to_le_bytes();
+        std::eprint!("RUST_LLL red.den ");
+        for x in &db[..48] {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+        for (i, lbl) in [(bezout.index_sol1, "v1"), (bezout.index_sol2, "v2")] {
+            for k in 0..4 {
+                pr(&std::format!("{lbl}.{k}"), &short_vecs[i].vec[k]);
+            }
+        }
+        std::eprintln!(
+            "RUST_LLL idx sol1={} sol2={} nvecs={}",
+            bezout.index_sol1,
+            bezout.index_sol2,
+            short_vecs.len()
+        );
+    }
     Ok(FindUvResult {
         u: bezout.u,
         v: bezout.v,

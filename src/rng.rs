@@ -93,6 +93,8 @@ impl NistPqcRng {
             written += take;
         }
         self.update(None);
+        #[cfg(feature = "kat")]
+        drbg_trace(out);
     }
 
     /// AES-256-CTR_DRBG `Update(data)` per NIST SP 800-90A. `data` is either
@@ -135,6 +137,26 @@ impl NistPqcRng {
         let mut block: Block<Aes256> = Block::<Aes256>::from(self.v);
         cipher.encrypt_block(&mut block);
         block.into()
+    }
+}
+
+/// DRBG draw-trace harness (env-gated, `kat`-only): emits one line per
+/// [`NistPqcRng::fill`] call — the Rust analogue of a C `randombytes` call —
+/// so the sequence can be diffed against the C reference to find the first
+/// divergence. Format `DRBG <idx> <n> <hex>` matches the C-side patch in
+/// `src/common/ref/randombytes_ctrdrbg.c`. Enable with `PQSQ_DRBG_TRACE=1`.
+#[cfg(feature = "kat")]
+fn drbg_trace(out: &[u8]) {
+    use core::sync::atomic::{AtomicU64, Ordering};
+    static IDX: AtomicU64 = AtomicU64::new(0);
+    let idx = IDX.fetch_add(1, Ordering::Relaxed);
+    if std::env::var_os("PQSQ_DRBG_TRACE").is_some() {
+        use std::fmt::Write as _;
+        let mut hex = String::with_capacity(out.len() * 2);
+        for b in out {
+            let _ = write!(hex, "{b:02x}");
+        }
+        std::eprintln!("DRBG {idx} {} {hex}", out.len());
     }
 }
 

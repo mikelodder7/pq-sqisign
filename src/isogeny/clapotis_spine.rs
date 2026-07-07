@@ -91,6 +91,41 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<P: FixedDegreeLevel, const QL: usiz
     // 1. find_uv at the production target 2^F.
     let target = *Uint::<L>::ONE.shl_vartime(f).as_int();
     let r = find_uv::<L>(&target, lideal, p, &[], P::FINDUV_BOX_SIZE).ok()?;
+    ideal_to_isogeny_clapotis_idx0_with_r::<P, QL, R>(
+        r,
+        lideal,
+        p,
+        witnesses,
+        sample_bound,
+        max_trials,
+        keygen,
+        rng,
+    )
+}
+
+/// The combine body of [`ideal_to_isogeny_clapotis_idx0`] driven by a
+/// PRECOMPUTED `find_uv` result `r` (skips the internal O_0 `find_uv`).
+///
+/// This is the dedicated index-0 combine — everything from θ onward is
+/// identical to `ideal_to_isogeny_clapotis_idx0`. Feeding it the byte-exact
+/// standard-coord `find_uv_cref` result reproduces C's Montgomery MODEL,
+/// unlike the alternate-order `clapotis_combine_indexed` (which yields −A).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn ideal_to_isogeny_clapotis_idx0_with_r<
+    P: FixedDegreeLevel,
+    const QL: usize,
+    R: CryptoRng,
+>(
+    r: crate::isogeny::clapotis::FindUvResult<L>,
+    lideal: &LeftIdeal<L>,
+    p: &Uint<L>,
+    witnesses: &[Uint<QL>],
+    sample_bound: i64,
+    max_trials: usize,
+    keygen: bool,
+    rng: &mut R,
+) -> Option<CurveAndBasis<P>> {
+    let f = u32::try_from(P::F).expect("F fits u32");
     debug_assert!(r.index_alternate_order_1 == 0 && r.index_alternate_order_2 == 0);
     // N(I) from the lattice determinant — convention-independent (the
     // connecting ideal may be built by samplers that store cached_norm = N
@@ -246,6 +281,66 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0<P: FixedDegreeLevel, const QL: usiz
 
     // 6. Assemble the couple kernel (T1m2 placeholder; chain gluing seeds from
     //    T1,T2), double to order 2^exp, walk the randomized chain pushing bas_u.
+    #[cfg(feature = "kat")]
+    if keygen && std::env::var_os("PQSQ_DUMP_THETA").is_some() {
+        let mut b = [0u8; 96];
+        for (nm, a) in [("phiu.e1.a", fu.e1.a), ("phiv.e1.a", fv.e1.a)] {
+            a.to_bytes_le(&mut b);
+            std::eprint!("RUST_THETA {nm} ");
+            for x in b {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+        // find_uv betas (num coords + denom), low 48 bytes = mod-2^376 residue.
+        for (nm, v) in [
+            ("b1.a", r.beta1.num.a),
+            ("b1.b", r.beta1.num.b),
+            ("b1.c", r.beta1.num.c),
+            ("b1.d", r.beta1.num.d),
+            ("b2.a", r.beta2.num.a),
+            ("b2.b", r.beta2.num.b),
+            ("b2.c", r.beta2.num.c),
+            ("b2.d", r.beta2.num.d),
+        ] {
+            let by = Uint::<L>::from_words(v.to_words()).to_le_bytes();
+            std::eprint!("RUST_THETA {nm} ");
+            for x in &by[..48] {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+        for (nm, v) in [("b1.den", r.beta1.denom), ("b2.den", r.beta2.denom)] {
+            let by = v.to_le_bytes();
+            std::eprint!("RUST_THETA {nm} ");
+            for x in &by[..48] {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+        // Combine-kernel points, affine x = X/Z (scale-invariant): bas_u = φ_u
+        // pushed basis; t2 = θ-applied φ_v pushed basis (C: bas_u / post-θ bas2).
+        for (nm, p) in [
+            ("basu.P", bas_u.0),
+            ("basu.Q", bas_u.1),
+            ("basu.PmQ", bas_u.2),
+            ("bas2pre.P", bas2.0),
+            ("bas2pre.Q", bas2.1),
+            ("bas2pre.PmQ", bas2.2),
+            ("t2.P", t2p),
+            ("t2.Q", t2q),
+            ("t2.PmQ", t2pmq),
+        ] {
+            if let Some(zi) = p.z.invert().into_option() {
+                p.x.mul(&zi).to_bytes_le(&mut b);
+                std::eprint!("RUST_THETA {nm} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
+    }
     let (p1, q1) = lift_basis(&EcBasis::new(bas_u.0, bas_u.1, bas_u.2), &fu.e1).ok()?;
     let (p2, q2) = lift_basis(&EcBasis::new(t2p, t2q, t2pmq), &fv.e1).ok()?;
     let e01 = CoupleCurve::new(fu.e1, fv.e1);
@@ -1919,6 +2014,126 @@ mod tests {
         std::eprintln!("[kg-lvl3] j_match=true bytes_match={bytes_match}");
 
         const KAT_PK0_FIRST96: [u8; 96] = [
+            0xc3, 0x23, 0x77, 0xd6, 0xf6, 0xd7, 0x07, 0x29, 0x88, 0x4a, 0x7f, 0x68, 0x77, 0xef,
+            0x47, 0x91, 0xe3, 0x5d, 0x21, 0xf7, 0x51, 0xa3, 0xe9, 0x6d, 0xe2, 0x3f, 0x9a, 0x7a,
+            0x3c, 0x01, 0xbc, 0xd8, 0xa5, 0xf1, 0x46, 0xdc, 0x19, 0xe4, 0xe2, 0xac, 0x63, 0x00,
+            0x74, 0x57, 0xf9, 0x7d, 0x8a, 0x40, 0xee, 0x84, 0xae, 0xe7, 0x56, 0x4c, 0xa9, 0xa7,
+            0xfb, 0xe6, 0x20, 0x0f, 0xd3, 0xe5, 0xe5, 0x59, 0x01, 0xbf, 0xc6, 0x0e, 0xb2, 0x5c,
+            0x50, 0xd3, 0x9f, 0x5c, 0x91, 0xc9, 0x65, 0x10, 0x55, 0x6b, 0xaa, 0x22, 0x02, 0x8d,
+            0xf7, 0x63, 0x60, 0x84, 0x17, 0x21, 0xa6, 0x01, 0xd6, 0x5e, 0x8d, 0x0f,
+        ];
+    }
+
+    /// Stage-3 port check: drive the clapotis combine with the C-faithful
+    /// STANDARD-coord betas from `find_uv_cref` (byte-exact 12/12 vs C) instead
+    /// of the O_0-coord `find_uv`. If the −A model bug was caused by the O_0
+    /// betas corrupting θ, this should produce E_A byte-exact to the KAT pk.
+    #[ignore = "S3 port experiment: standard-coord combine vs KAT lvl3 pk"]
+    #[test]
+    fn keygen_stdcoord_combine_matches_kat_lvl3() {
+        use crate::ec::montgomery::MontgomeryCurve;
+        use crate::gf::fp2::Fp2;
+        use crate::isogeny::clapotis::find_uv_cref;
+        use crate::params::lvl3::Level3;
+        use crate::quaternion::algebra::{Quaternion, RationalQuaternion};
+        use crate::quaternion::ideal::LeftIdeal;
+        use crate::quaternion::lattice::narrow_int_lattice;
+        use crate::quaternion::lll::keygen_byte_exact_secret_ideal_std;
+        const WN: usize = 160;
+
+        let seed: [u8; 48] = [
+            0x06, 0x15, 0x50, 0x23, 0x4D, 0x15, 0x8C, 0x5E, 0xC9, 0x55, 0x95, 0xFE, 0x04, 0xEF,
+            0x7A, 0x25, 0x76, 0x7F, 0x2E, 0x24, 0xCC, 0x2B, 0xC4, 0x79, 0xD0, 0x9D, 0x86, 0xDC,
+            0x9A, 0xBC, 0xFD, 0xE7, 0x05, 0x6A, 0x8C, 0x26, 0x6F, 0x9E, 0xF9, 0x7E, 0xD0, 0x85,
+            0x41, 0xDB, 0xD2, 0xE1, 0xFF, 0xA1,
+        ];
+        let mut rng = NistPqcRng::new(&seed);
+        let p_wn = crate::params::lvl3::prime().resize::<WN>();
+        let sec = crate::params::lvl3::sec_degree().resize::<WN>();
+        let wit_wn: [Uint<WN>; 12] =
+            [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::<WN>::from_u64);
+
+        let si =
+            keygen_byte_exact_secret_ideal_std::<WN, _>(&sec, &p_wn, 8192, 64, &wit_wn, &mut rng)
+                .expect("byte-exact lvl3 keygen front (std)");
+
+        // C-faithful find_uv on the standard-coord ideal (target = 2^376, box 3).
+        let target = *Uint::<WN>::ONE.shl_vartime(376).as_int();
+        let denom_u = si.std_denom.abs_sign().0;
+        let rfull = find_uv_cref::<WN>(&target, &si.std_basis, &denom_u, &si.norm, &p_wn, 3)
+            .expect("find_uv_cref must succeed")
+            .into_find_uv_result()
+            .expect("into_find_uv_result");
+
+        // Narrow the FindUvResult to the combine width L.
+        let nr = |x: &Int<WN>| narrow_int_lattice::<WN, L>(x);
+        let nq = |rq: &RationalQuaternion<WN>| {
+            RationalQuaternion::<L>::new(
+                Quaternion::<L>::new(nr(&rq.num.a), nr(&rq.num.b), nr(&rq.num.c), nr(&rq.num.d)),
+                rq.denom.resize::<L>(),
+            )
+        };
+        let r16 = crate::isogeny::clapotis::FindUvResult::<L> {
+            u: nr(&rfull.u),
+            v: nr(&rfull.v),
+            beta1: nq(&rfull.beta1),
+            beta2: nq(&rfull.beta2),
+            d1: nr(&rfull.d1),
+            d2: nr(&rfull.d2),
+            index_alternate_order_1: 0,
+            index_alternate_order_2: 0,
+        };
+
+        // Narrow the O_0 spine ideal to L for n_id / lattice context.
+        let mut b16 = [[Int::<L>::from_i64(0); 4]; 4];
+        for (r, row) in b16.iter_mut().enumerate() {
+            for (c, cell) in row.iter_mut().enumerate() {
+                *cell = narrow_int_lattice::<WN, L>(&si.spine_ideal.basis[r][c]);
+            }
+        }
+        let lideal = LeftIdeal::<L>::with_denom_and_norm(
+            b16,
+            si.spine_ideal.denom.resize::<L>(),
+            si.spine_ideal.cached_norm.resize::<L>(),
+        );
+        let p16 = crate::params::lvl3::prime().resize::<L>();
+        let w18: [Uint<18>; 5] = [2u64, 3, 5, 7, 11].map(Uint::<18>::from_u64);
+
+        let (e_a, _basis) = ideal_to_isogeny_clapotis_idx0_with_r::<Level3, 18, _>(
+            r16,
+            &lideal,
+            &p16,
+            &w18,
+            64,
+            1 << 14,
+            true,
+            &mut rng,
+        )
+        .expect("std-coord idx0 combine must produce E_A");
+
+        let mut pk = [0u8; 96];
+        e_a.a.to_bytes_le(&mut pk);
+        let kat_a = Fp2::<crate::params::lvl3::Fp3Element>::from_bytes_le(&KAT_PK0[..96])
+            .into_option()
+            .expect("decode KAT A");
+        let j_ours = MontgomeryCurve::new(e_a.a).j_invariant();
+        let j_kat = MontgomeryCurve::new(kat_a).j_invariant();
+        let bytes_match = pk == KAT_PK0;
+        // The byte-exact standard-coord `find_uv_cref` finds C's index-0
+        // solution (j1=j2=0), so the DEDICATED idx0 combine reproduces C's
+        // Montgomery MODEL exactly. (The production keygen currently falls back
+        // to the alternate-order combine for lvl3 — which yields −A — because
+        // its O_0 `find_uv` misses the index-0 solution.)
+        std::eprintln!(
+            "[kg-lvl3-std] j_match={} bytes_match={bytes_match}",
+            bool::from(j_ours.ct_eq(&j_kat))
+        );
+        assert!(
+            bytes_match,
+            "std-coord idx0 combine must produce the byte-exact lvl3 KAT public key",
+        );
+
+        const KAT_PK0: [u8; 96] = [
             0xc3, 0x23, 0x77, 0xd6, 0xf6, 0xd7, 0x07, 0x29, 0x88, 0x4a, 0x7f, 0x68, 0x77, 0xef,
             0x47, 0x91, 0xe3, 0x5d, 0x21, 0xf7, 0x51, 0xa3, 0xe9, 0x6d, 0xe2, 0x3f, 0x9a, 0x7a,
             0x3c, 0x01, 0xbc, 0xd8, 0xa5, 0xf1, 0x46, 0xdc, 0x19, 0xe4, 0xe2, 0xac, 0x63, 0x00,

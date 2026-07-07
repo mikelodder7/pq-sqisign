@@ -1086,6 +1086,23 @@ pub(crate) fn endomorphism_application_rational_even_basis<P: LevelConstants, co
     // integral and divisible by `2^t`). So divide the O_0 coords by `2^t`
     // exactly and scale by `(denom_odd·extra)^{-1} mod 2^f`. For ODD `denom`
     // (t = 0) this is bit-identical to inverting `denom·extra` together.
+    #[cfg(feature = "kat")]
+    if std::env::var_os("PQSQ_DUMP_THETA").is_some() {
+        let pr = |nm: &str, v: &Uint<8>| {
+            let by = v.to_le_bytes();
+            std::eprint!("RUST_THETA {nm} ");
+            for x in &by[..48] {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        };
+        pr("thnum.0", &int_to_mod_2f(&num.a, f));
+        pr("thnum.1", &int_to_mod_2f(&num.b, f));
+        pr("thnum.2", &int_to_mod_2f(&num.c, f));
+        pr("thnum.3", &int_to_mod_2f(&num.d, f));
+        pr("thden", &uint_to_mod_2f(denom, f));
+        pr("thextra", &uint_to_mod_2f(extra, f));
+    }
     let t = denom.trailing_zeros();
     let denom_odd = denom.wrapping_shr(t);
     let de = mul_mod_2f(&uint_to_mod_2f(&denom_odd, f), &uint_to_mod_2f(extra, f), f);
