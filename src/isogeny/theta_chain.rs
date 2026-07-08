@@ -384,12 +384,12 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
         }
         // set up the first codomain's theta structure (C-ref theta_precomputation)
         #[cfg(feature = "kat")]
-        if self.split_rng.is_some() && std::env::var("PQSQ_DUMP_AC").is_ok() {
+        if self.split_rng.is_some() && std::env::var("PQSQ_SPLIT3").is_ok() {
             let n = gc.codomain;
             // NORMALIZE projectively by .x (theta-null is projective; raw compare
             // is scale-ambiguous). Output (y/x, z/x, w/x).
             let xi = n.x.invert().unwrap_or(crate::gf::fp2::Fp2::zero());
-            let mut b = [0u8; 64];
+            let mut b = [0u8; 96];
             for (i, c) in [n.y.mul(&xi), n.z.mul(&xi), n.w.mul(&xi)]
                 .iter()
                 .enumerate()
@@ -447,10 +447,10 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
             self.pts[j] = theta_isogeny_eval(&st, &self.pts[j]);
         }
         #[cfg(feature = "kat")]
-        if self.split_rng.is_some() && std::env::var("PQSQ_DUMP_AC").is_ok() {
+        if self.split_rng.is_some() && std::env::var("PQSQ_SPLIT3").is_ok() {
             let n = st.codomain_null;
             let xi = n.x.invert().unwrap_or(crate::gf::fp2::Fp2::zero());
-            let mut b = [0u8; 64];
+            let mut b = [0u8; 96];
             for (k, c) in [n.y.mul(&xi), n.z.mul(&xi), n.w.mul(&xi)]
                 .iter()
                 .enumerate()
@@ -490,9 +490,9 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
             return;
         }
         #[cfg(feature = "kat")]
-        if self.split_rng.is_some() && std::env::var("PQSQ_DUMP_AC").is_ok() {
+        if self.split_rng.is_some() && std::env::var("PQSQ_SPLIT3").is_ok() {
             let n = self.variety().theta_null;
-            let mut b = [0u8; 64];
+            let mut b = [0u8; 96];
             let xi = n.x.invert().unwrap_or(crate::gf::fp2::Fp2::zero());
             for (i, c) in [n.y.mul(&xi), n.z.mul(&xi), n.w.mul(&xi)]
                 .iter()
@@ -521,10 +521,10 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
             self.pts[j] = theta_isogeny_eval(&st, &self.pts[j]);
         }
         #[cfg(feature = "kat")]
-        if self.split_rng.is_some() && std::env::var("PQSQ_DUMP_AC").is_ok() {
+        if self.split_rng.is_some() && std::env::var("PQSQ_SPLIT3").is_ok() {
             let n = st.codomain_null;
             let xi = n.x.invert().unwrap_or(crate::gf::fp2::Fp2::zero());
-            let mut b = [0u8; 64];
+            let mut b = [0u8; 96];
             for (i, c) in [n.y.mul(&xi), n.z.mul(&xi), n.w.mul(&xi)]
                 .iter()
                 .enumerate()
@@ -545,6 +545,19 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
         if self.failed {
             return;
         }
+        #[cfg(feature = "kat")]
+        if self.split_rng.is_some() && std::env::var("PQSQ_SPLIT3").is_ok() {
+            let n = self.variety().theta_null;
+            let mut b = [0u8; 96];
+            for (nm, c) in [("X", n.x), ("Y", n.y), ("Z", n.z), ("W", n.w)] {
+                c.to_bytes_le(&mut b);
+                std::eprint!("OURS_C2IN_{nm} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
         let st = {
             let av = self.variety();
             theta_isogeny_compute_2(av, &self.theta_q1[0], &self.theta_q2[0], true, false)
@@ -560,10 +573,10 @@ impl<'r, F: BaseField> ChainVisitor for ChainExecutor<'r, F> {
             self.pts[j] = theta_isogeny_eval(&st, &self.pts[j]);
         }
         #[cfg(feature = "kat")]
-        if self.split_rng.is_some() && std::env::var("PQSQ_DUMP_AC").is_ok() {
+        if self.split_rng.is_some() && std::env::var("PQSQ_SPLIT3").is_ok() {
             let n = st.codomain_null;
             let xi = n.x.invert().unwrap_or(crate::gf::fp2::Fp2::zero());
-            let mut b = [0u8; 64];
+            let mut b = [0u8; 96];
             for (i, c) in [n.y.mul(&xi), n.z.mul(&xi), n.w.mul(&xi)]
                 .iter()
                 .enumerate()

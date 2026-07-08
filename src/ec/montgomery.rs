@@ -240,21 +240,57 @@ impl<F: BaseField> ConditionallySelectable for MontgomeryPoint<F> {
 }
 
 /// A Montgomery curve `E_A : y^2 = x^3 + A x^2 + x` over `F_{p^2}`.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug)]
 pub struct MontgomeryCurve<F: BaseField> {
-    /// Curve coefficient `A`.
+    /// Curve coefficient `A` (always the AFFINE coefficient, `A/C`).
     pub a: Fp2<F>,
+    /// Projective `C`-coordinate when this curve is carried in projective
+    /// `(A : C)` form; `None` ⇒ affine (`C = 1`). Invariant: `A_proj = a · C`.
+    /// Only the fixed-degree-isogeny codomain sets this so the C-faithful
+    /// combine-kernel doubling can reproduce the reference's exact `(x:z)`
+    /// projective representative (needed for byte-exact keygen — the theta
+    /// gluing's `squared_theta` + final sqrt are not representative-invariant).
+    proj_c: Option<Fp2<F>>,
     _marker: PhantomData<F>,
 }
 
+// Curve equality is defined by the AFFINE coefficient only; the optional
+// projective `C` is a representative detail, not part of curve identity.
+impl<F: BaseField> PartialEq for MontgomeryCurve<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.a == other.a
+    }
+}
+impl<F: BaseField> Eq for MontgomeryCurve<F> {}
+
 impl<F: BaseField> MontgomeryCurve<F> {
-    /// Construct from a coefficient `A ∈ F_{p^2}`.
+    /// Construct from an affine coefficient `A ∈ F_{p^2}` (`C = 1`).
     #[inline]
     pub const fn new(a: Fp2<F>) -> Self {
         Self {
             a,
+            proj_c: None,
             _marker: PhantomData,
         }
+    }
+
+    /// Construct carrying an explicit projective `C`: `a` is the affine `A/C`,
+    /// `c` is the projective `C` (so `A_proj = a · c`). Used by the fixed-degree
+    /// isogeny codomain to preserve the reference's exact `(A:C)` representative.
+    #[inline]
+    pub fn new_projective(affine_a: Fp2<F>, c: Fp2<F>) -> Self {
+        Self {
+            a: affine_a,
+            proj_c: Some(c),
+            _marker: PhantomData,
+        }
+    }
+
+    /// The projective `C`-coordinate (`1` if the curve is affine). The projective
+    /// `A` is `self.a * self.proj_c()`.
+    #[inline]
+    pub fn proj_c(&self) -> Fp2<F> {
+        self.proj_c.unwrap_or_else(Fp2::one)
     }
 
     /// The "starting curve" `E_0 : y^2 = x^3 + x` (coefficient `A = 0`).

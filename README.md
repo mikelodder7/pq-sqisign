@@ -16,6 +16,28 @@ A pure-Rust implemention of SQIsign--compact post-quantum signature from quatern
 | Level-3       | 3          | 97         | 529        | 224       |
 | Level-5       | 5          | 129        | 701        | 292       |
 
+## Performance
+
+Signing and key generation are dominated by wide-integer multiplication in the
+quaternion-lattice reduction. The internal working widths are tuned to the
+minimum that preserves byte-exact KAT/C output, which is the largest available
+win in pure Rust.
+
+For maximum throughput, consumers should build with a tuned release profile —
+library profiles do not propagate, so this must be set in *your* crate:
+
+```toml
+[profile.release]
+lto = "fat"
+codegen-units = 1
+```
+
+and optionally `RUSTFLAGS="-C target-cpu=native"`. On Apple Silicon these add
+only ~2–3% combined: the hot loop is `crypto-bigint`'s Karatsuba multiply, which
+already emits the native widening-multiply (`umulh`) and whose serial carry
+chains do not vectorize. A larger speedup would require x86-64 `mulx`/`adcx`/`adox`
+(ADX) paths or an algorithmic change to the lattice intersection — not codegen flags.
+
 ## Warnings
 
 #### Implementation

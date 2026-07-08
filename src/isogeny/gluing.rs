@@ -254,8 +254,8 @@ pub(crate) fn gluing_codomain<F: BaseField>(
     xy_k2_8: &CoupleJacobianPoint<F>,
 ) -> Result<GluingCodomain<F>, GluingError> {
     #[cfg(feature = "kat")]
-    if std::env::var("PQSQ_DUMP_AC").is_ok() {
-        let mut b = [0u8; 64];
+    if std::env::var("PQSQ_SPLIT3").is_ok() {
+        let mut b = [0u8; 96];
         for (nm, c) in [
             ("K1P1X", xy_k1_8.p1.x),
             ("K1P1Y", xy_k1_8.p1.y),
@@ -297,14 +297,29 @@ pub(crate) fn gluing_codomain<F: BaseField>(
     // Step 3: compose the four matrices into the 4×4 basis-change M.
     let m = gluing_change_of_basis(&gi);
 
+    #[cfg(feature = "kat")]
+    if std::env::var("PQSQ_SPLIT3").is_ok() {
+        let mut b = [0u8; 96];
+        for r in 0..4 {
+            for c in 0..4 {
+                m.m[r][c].to_bytes_le(&mut b);
+                std::eprint!("OURS_GM_{r}{c} ");
+                for x in b {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
+    }
+
     // Step 4: apply M to each 8-torsion kernel point. base_change
     // takes a CoupleMontgomeryPoint (x-only); project the 8-torsion
     // Jacobian inputs via to_couple_xz.
     let k1_8_xz = xy_k1_8.to_couple_xz();
     let k2_8_xz = xy_k2_8.to_couple_xz();
     #[cfg(feature = "kat")]
-    if std::env::var("PQSQ_DUMP_AC").is_ok() {
-        let mut b = [0u8; 64];
+    if std::env::var("PQSQ_SPLIT3").is_ok() {
+        let mut b = [0u8; 96];
         for (nm, p) in [
             ("k1_8.p1", k1_8_xz.p1),
             ("k1_8.p2", k1_8_xz.p2),
@@ -345,8 +360,8 @@ pub(crate) fn gluing_codomain<F: BaseField>(
     let tt1_pre = base_change(&m, &k1_8_xz);
     let tt2_pre = base_change(&m, &k2_8_xz);
     #[cfg(feature = "kat")]
-    if std::env::var("PQSQ_DUMP_AC").is_ok() {
-        let mut b = [0u8; 64];
+    if std::env::var("PQSQ_SPLIT3").is_ok() {
+        let mut b = [0u8; 96];
         for (nm, p) in [("ttpre1", tt1_pre), ("ttpre2", tt2_pre)] {
             for (i, c) in [p.x, p.y, p.z, p.w].iter().enumerate() {
                 c.to_bytes_le(&mut b);

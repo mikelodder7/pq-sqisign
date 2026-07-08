@@ -231,6 +231,24 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0_with_r<
     let bas2 = (out_v[0].p1, out_v[1].p1, out_v[2].p1);
 
     #[cfg(feature = "kat")]
+    if std::env::var("PQSQ_SPLIT3").is_ok() {
+        for (nm, c) in [
+            ("U_E1A", fu.e1.a),
+            ("U_E2A", fu.e2.a),
+            ("V_E1A", fv.e1.a),
+            ("V_E2A", fv.e2.a),
+        ] {
+            let mut b = [0u8; 96];
+            c.to_bytes_le(&mut b);
+            std::eprint!("OURS_PHI {nm} ");
+            for x in b {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+    }
+
+    #[cfg(feature = "kat")]
     if keygen && std::env::var("PQSQ_DUMP_AC").is_ok() {
         let mut buf = [0u8; 64];
         for (nm, c) in [
@@ -343,15 +361,70 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0_with_r<
             }
         }
     }
-    let (p1, q1) = lift_basis(&EcBasis::new(bas_u.0, bas_u.1, bas_u.2), &fu.e1).ok()?;
-    let (p2, q2) = lift_basis(&EcBasis::new(t2p, t2q, t2pmq), &fv.e1).ok()?;
+    // C-faithful combine-kernel reduction — three coordinated representative
+    // fixes that together reproduce the reference's exact projective (x:z)
+    // kernel, which the gluing `squared_theta` + final-step sqrt (both NOT
+    // representative-invariant) require for byte-exact keygen:
+    //   (1) double the basis to order 2^exp in MONTGOMERY x-only, THEN lift to
+    //       Jacobian — mirroring C's `double_couple_point_iter` + theta-chain
+    //       `lift_basis` (we previously lifted first, then Jacobian-doubled);
+    //   (2) use C's NON-normalized `xDBL` (ec.c:234 — the fixed-degree codomains
+    //       have projective A24, so `ec_dbl` takes the raw-(A:C) path); and
+    //   (3) drive it with the PROJECTIVE (A:C) the codomain carries
+    //       (`fu.e1.proj_c()`), not the affine A — the missing scalar that
+    //       otherwise leaks through Q's raw Okeya-Sakurai and flips the model.
+    let ndbl = f - exp;
+    // C `xDBL` with AC=(A_proj:C): Q.x = 4C(X+Z)²(X-Z)²,
+    // Q.z = 4XZ·[(A_proj+2C)·4XZ + 4C(X-Z)²].
+    let cxdbl = |mut p: MontgomeryPoint<P::Field>,
+                 a_proj: &crate::gf::fp2::Fp2<P::Field>,
+                 two_c: &crate::gf::fp2::Fp2<P::Field>| {
+        for _ in 0..ndbl {
+            let t0 = p.x.add(&p.z).square(); // (X+Z)²
+            let t1 = p.x.sub(&p.z).square(); // (X-Z)²
+            let t2 = t0.sub(&t1); // 4XZ
+            let t1 = t1.mul(two_c); // 2C(X-Z)²
+            let t1 = t1.add(&t1); // 4C(X-Z)²
+            let q_x = t0.mul(&t1);
+            let t0 = a_proj.add(two_c).mul(&t2); // (A_proj+2C)·4XZ
+            let t0 = t0.add(&t1);
+            let q_z = t0.mul(&t2);
+            p = MontgomeryPoint::new(q_x, q_z);
+        }
+        p
+    };
+    let cu = fu.e1.proj_c();
+    let au = fu.e1.a.mul(&cu); // A_proj = affine_a · C
+    let two_cu = cu.double();
+    let cv = fv.e1.proj_c();
+    let av = fv.e1.a.mul(&cv);
+    let two_cv = cv.double();
+    let (p1, q1) = lift_basis(
+        &EcBasis::new(
+            cxdbl(bas_u.0, &au, &two_cu),
+            cxdbl(bas_u.1, &au, &two_cu),
+            cxdbl(bas_u.2, &au, &two_cu),
+        ),
+        &fu.e1,
+    )
+    .ok()?;
+    let (p2, q2) = lift_basis(
+        &EcBasis::new(
+            cxdbl(t2p, &av, &two_cv),
+            cxdbl(t2q, &av, &two_cv),
+            cxdbl(t2pmq, &av, &two_cv),
+        ),
+        &fv.e1,
+    )
+    .ok()?;
     let e01 = CoupleCurve::new(fu.e1, fv.e1);
+    // Kernel already reduced to order 2^exp by the montgomery doubling above —
+    // no further Jacobian `double_iter` (that would over-reduce and mismatch C).
     let ker = ThetaKernelCouplePoints::new(
         CoupleJacobianPoint::new(p1, p2),
         CoupleJacobianPoint::new(q1, q2),
         CoupleJacobianPoint::infinity(),
-    )
-    .double_iter(f - exp, &e01);
+    );
 
     #[cfg(feature = "kat")]
     if keygen && std::env::var("PQSQ_DUMP_AC").is_ok() {
@@ -548,6 +621,24 @@ fn clapotis_combine_indexed<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
         rng,
     )?;
     let bas2 = (out_v[0].p1, out_v[1].p1, out_v[2].p1);
+
+    #[cfg(feature = "kat")]
+    if std::env::var("PQSQ_SPLIT3").is_ok() {
+        for (nm, c) in [
+            ("U_E1A", fu.e1.a),
+            ("U_E2A", fu.e2.a),
+            ("V_E1A", fv.e1.a),
+            ("V_E2A", fv.e2.a),
+        ] {
+            let mut b = [0u8; 96];
+            c.to_bytes_le(&mut b);
+            std::eprint!("OURS_PHI {nm} ");
+            for x in b {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+    }
 
     // 5. Apply θ (scaled by 1/(d1·N(conn[index2]))) to φ_v's image (D3); the
     //    application itself is index-0 (standard-frame θ).
@@ -1099,6 +1190,24 @@ fn keygen_secret_and_spine<P: FixedDegreeLevel, const QL: usize, const WN: usize
         index_alternate_order_1: 0,
         index_alternate_order_2: 0,
     };
+
+    #[cfg(feature = "kat")]
+    if std::env::var("PQSQ_SPLIT3").is_ok() {
+        for (nm, val) in [
+            ("u", &r16.u),
+            ("v", &r16.v),
+            ("d1", &r16.d1),
+            ("d2", &r16.d2),
+        ] {
+            let u = val.abs_sign().0;
+            let mut s = String::new();
+            for limb in u.as_limbs().iter().rev() {
+                use core::fmt::Write as _;
+                let _ = write!(s, "{:016x}", limb.0);
+            }
+            std::eprintln!("OURS_FUV {nm} {s}");
+        }
+    }
 
     // Narrow the O_0 spine ideal to L (secret key + spine n_id context).
     let mut jb16 = [[Int::<L>::from_i64(0); 4]; 4];

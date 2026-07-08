@@ -211,9 +211,14 @@ pub(crate) fn theta_product_structure_to_elliptic_product<F: BaseField>(
     let affine_a_2 = a_2.mul(&c_2_inv);
     let affine_a_1 = a_1.mul(&c_1_inv);
 
+    // Carry the reference's exact PROJECTIVE (A:C) representative (not just the
+    // affine A/C): the C-faithful combine-kernel doubling reproduces C's `xDBL`
+    // representative from this, which the downstream gluing `squared_theta` +
+    // final-step sqrt (both non-representative-invariant) depend on for
+    // byte-exact keygen. `a` stays affine; `proj_c` holds C.
     Ok(CoupleCurve {
-        e1: MontgomeryCurve::new(affine_a_1),
-        e2: MontgomeryCurve::new(affine_a_2),
+        e1: MontgomeryCurve::new_projective(affine_a_1, c_1),
+        e2: MontgomeryCurve::new_projective(affine_a_2, c_2),
     })
 }
 
@@ -405,9 +410,9 @@ pub(crate) fn splitting_compute_randomized<F: BaseField, R: CryptoRng>(
     rng: &mut R,
 ) -> Result<ThetaSplitting<F>, SplittingError> {
     #[cfg(feature = "kat")]
-    if std::env::var("PQSQ_DUMP_AC").is_ok() {
+    if std::env::var("PQSQ_SPLIT3").is_ok() {
         let n = &domain.theta_null;
-        let mut buf = [0u8; 64];
+        let mut buf = [0u8; 96];
         for (nm, c) in [("X", n.x), ("Y", n.y), ("Z", n.z), ("W", n.w)] {
             c.to_bytes_le(&mut buf);
             std::eprint!("OURS_TNR_{nm} ");
@@ -525,7 +530,7 @@ fn splitting_build_matrix<F: BaseField>(
         }
         let is_zero = u_cst.is_zero();
         #[cfg(feature = "kat")]
-        if bool::from(is_zero) && std::env::var("PQSQ_DUMP_AC").is_ok() {
+        if bool::from(is_zero) && std::env::var("PQSQ_SPLIT3").is_ok() {
             std::eprintln!("OURS_VANISH={i}");
         }
         // count += 1 when this characteristic vanishes.
