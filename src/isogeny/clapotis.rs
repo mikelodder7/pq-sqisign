@@ -1493,6 +1493,259 @@ impl<const N: usize> FindUvCrefResult<N> {
     }
 }
 
+/// Alternate-order generalization of [`find_uv_cref`] — the C reference
+/// `find_uv` (dim2id2iso.c:472) with `num_alternate_order > 0`, in the
+/// byte-exact STANDARD-coord / denom convention (unlike the O_0-frame
+/// [`find_uv_alternate_orders`]). Keygen uses this when the index-0 order has
+/// no Bézout pair (lvl1 KAT record 29: `index_order2 = 1`).
+///
+/// The `(0,0)` case delegates to [`find_uv_cref`] verbatim, so every input the
+/// index-0 path already solves returns a byte-identical result — the C
+/// reference also tries `(0,0)` first and returns on the first hit, so the 199
+/// already-byte-exact KAT records are untouched. Only when `find_uv_cref` finds
+/// no pair does this build the alternate connecting orders
+/// `ideal[j] = conj(reduced_id) · ALT[j-1]` (`reduced_id` = the smallest-norm
+/// equivalent of the input, via O_0 machinery), reduce EACH order in the std
+/// convention (`ideal_basis_o0_to_standard_col` → `lideal_reduce_basis` →
+/// `post_lll_basis_treatment`), enumerate, and run the cross-product
+/// `(j1, j2)` search (`j2 ≥ j1`, first hit wins — C's exact order). The `j > 0`
+/// β is finalized per dim2id2iso.c:651-673:
+/// `β = conj((δ · (reduced_j·vec)).normalize())`, `δ = conj(reduced_0 col 0)`
+/// with `denom = ideal[0].denom · N(conj_ideal)`. Every returned β is
+/// self-verified in the input ideal ([`rational_quaternion_in_lideal`], C's
+/// own `quat_lattice_contains` arbiter) — a reconciliation error fails closed.
+#[cfg(feature = "alloc")]
+#[allow(clippy::too_many_arguments)]
+pub fn find_uv_cref_alt<const N: usize>(
+    target: &Int<N>,
+    basis: &[[Int<N>; 4]; 4],
+    denom: &Uint<N>,
+    norm: &Uint<N>,
+    p: &Uint<N>,
+    box_size: i64,
+    ideal0_o0: &crate::quaternion::ideal::LeftIdeal<N>,
+    alt_connecting: &[crate::quaternion::ideal::LeftIdeal<N>],
+) -> Option<FindUvResult<N>> {
+    use crate::quaternion::algebra::{Quaternion, RationalQuaternion};
+    use crate::quaternion::ideal_mul::{ideal_multiply, ideal_right_multiply_rational};
+    use crate::quaternion::lattice::mat_4x4_eval;
+    use crate::quaternion::lll::{lideal_reduce_basis, post_lll_basis_treatment};
+    use crate::quaternion::o0_mul::{
+        ideal_basis_o0_to_standard_col, o0_conjugate, standard_to_o0_basis,
+    };
+
+    // (0,0) fast path — byte-identical to find_uv_cref. C tries (0,0) first and
+    // returns on the first hit, so every index-0-solvable input is unchanged.
+    if let Some(r0) = find_uv_cref::<N>(target, basis, denom, norm, p, box_size) {
+        return r0.into_find_uv_result();
+    }
+    if alt_connecting.is_empty() {
+        return None;
+    }
+
+    // Pre-reduce order 0 (the caller's std ideal) — the SAME reduction C uses
+    // (`quat_lideal_reduce_basis`), so `δ = reduced_0 col 0` is C's exact `delta`
+    // and `conj_ideal_norm = gram0[0][0]/denom²` is C's `reduced_id.norm`.
+    let (mut reduced0, mut gram0) = lideal_reduce_basis::<N>(basis, denom, norm, p)?;
+    post_lll_basis_treatment::<N>(&mut gram0, &mut reduced0);
+    let denom0_int = *denom.as_int();
+    let adjusted0 = denom0_int.wrapping_mul(&denom0_int);
+    let conj_ideal_norm = int_div_floor::<N>(&gram0[0][0], &adjusted0).abs_sign().0;
+    let delta_col0 = mat_4x4_eval::<N>(
+        &reduced0,
+        &[
+            Int::<N>::from_i64(1),
+            Int::<N>::from_i64(0),
+            Int::<N>::from_i64(0),
+            Int::<N>::from_i64(0),
+        ],
+    );
+
+    // Build reduced_id = ideal[0] · conj(δ)/N(ideal[0]) from the STD col-0 δ
+    // (C `quat_lattice_alg_elem_mul`, dim2id2iso.c:544) — NOT from the O_0
+    // wide-reduction's smallest vector, which is a different representative and
+    // yields a non-C conj_ideal ⇒ non-C β_{j>0}. `δ` is in doubled-std coords
+    // (denom 2·…), so its O_0 image `standard_to_o0_basis(δ)` is all-even; halve
+    // to recover the actual smallest element's O_0 coords.
+    let delta_o0_doubled = standard_to_o0_basis::<N>(&Quaternion::<N>::new(
+        delta_col0[0],
+        delta_col0[1],
+        delta_col0[2],
+        delta_col0[3],
+    ));
+    let mut delta_o0 = [Int::<N>::from_i64(0); 4];
+    for (dst, src) in delta_o0.iter_mut().zip(&delta_o0_doubled) {
+        debug_assert!(
+            src.abs_sign().0.to_words()[0] & 1 == 0,
+            "standard_to_o0_basis(doubled δ) must be even",
+        );
+        *dst = src.shr_vartime(1);
+    }
+    let alpha_o0 = o0_conjugate::<N>(&delta_o0);
+    let n_ideal0 = ideal0_o0.reduced_norm_vartime()?;
+    let reduced_id_raw =
+        ideal_right_multiply_rational::<N>(ideal0_o0, &alpha_o0, &n_ideal0, p, None)?;
+    // `ideal_right_multiply_rational` leaves `denom = ideal0.denom · N(ideal0)`
+    // (huge, unreduced). C's `quat_lattice_alg_elem_mul` yields the canonical
+    // small-denom lattice; reduce basis/denom by their gcd (lattice-preserving)
+    // so ideal[j] = conj_ideal · ALT stays small — otherwise β_{j>0} inflates by
+    // ~N(ideal0) and the θ kernel is degenerate.
+    let (rid_basis, rid_denom) = crate::quaternion::hnf::quat_lattice_reduce_denom::<N>(
+        &reduced_id_raw.basis,
+        reduced_id_raw.denom.as_int(),
+    );
+    let reduced_id = crate::quaternion::ideal::LeftIdeal::<N>::with_denom_and_norm(
+        rid_basis,
+        rid_denom.abs_sign().0,
+        reduced_id_raw.cached_norm,
+    );
+    let conj_reduced_id = reduced_id.conjugate();
+
+    // Per-order std reduction + enumeration, matching find_uv_cref exactly.
+    // Order 0 uses the caller's std (basis, denom, norm); orders j ≥ 1 convert
+    // ideal[j] from O_0 to doubled-std coords first.
+    let mut reduced_per_j: Vec<[[Int<N>; 4]; 4]> = Vec::with_capacity(alt_connecting.len() + 1);
+    let mut short_per_j: Vec<Vec<EnumeratedShortVec<N>>> =
+        Vec::with_capacity(alt_connecting.len() + 1);
+    let mut small_norms_per_j: Vec<Vec<Int<N>>> = Vec::with_capacity(alt_connecting.len() + 1);
+    let mut quotients_per_j: Vec<Vec<Int<N>>> = Vec::with_capacity(alt_connecting.len() + 1);
+    let mut std_denom_per_j: Vec<Uint<N>> = Vec::with_capacity(alt_connecting.len() + 1);
+
+    let two_uint = Uint::<N>::from_u64(2);
+    for j in 0..=alt_connecting.len() {
+        let (std_basis_j, std_denom_j, norm_j) = if j == 0 {
+            (*basis, *denom, *norm)
+        } else {
+            let ideal_j = ideal_multiply::<N>(&conj_reduced_id, &alt_connecting[j - 1], p);
+            let std_basis_j = ideal_basis_o0_to_standard_col::<N>(&ideal_j.basis);
+            let std_denom_j = two_uint.wrapping_mul(&ideal_j.denom);
+            let norm_j = lattice_reduced_norm::<N, 32>(&ideal_j.basis, &ideal_j.denom)?;
+            (std_basis_j, std_denom_j, norm_j)
+        };
+        let (mut reduced, mut gram) =
+            lideal_reduce_basis::<N>(&std_basis_j, &std_denom_j, &norm_j, p)?;
+        post_lll_basis_treatment::<N>(&mut gram, &mut reduced);
+        let d_int = *std_denom_j.as_int();
+        let adjusted = d_int.wrapping_mul(&d_int);
+        let mut short = enumerate_hypercube_wide::<N, N>(box_size, &gram, &adjusted);
+        short.sort_by_key(|s| s.norm);
+        let small_norms: Vec<Int<N>> = short.iter().map(|s| s.norm).collect();
+        let quotients: Vec<Int<N>> = small_norms
+            .iter()
+            .map(|d| int_div_floor::<N>(target, d))
+            .collect();
+        reduced_per_j.push(reduced);
+        short_per_j.push(short);
+        small_norms_per_j.push(small_norms);
+        quotients_per_j.push(quotients);
+        std_denom_per_j.push(std_denom_j);
+    }
+
+    // δ = conj(reduced_0 col 0), denom = ideal[0].denom · N(conj_ideal).
+    let delta_col0 = mat_4x4_eval::<N>(
+        &reduced_per_j[0],
+        &[
+            Int::<N>::from_i64(1),
+            Int::<N>::from_i64(0),
+            Int::<N>::from_i64(0),
+            Int::<N>::from_i64(0),
+        ],
+    );
+    let delta_finalize = RationalQuaternion::<N>::new(
+        Quaternion::<N>::new(delta_col0[0], delta_col0[1], delta_col0[2], delta_col0[3]),
+        *denom,
+    )
+    .conjugate();
+    let delta_finalize = RationalQuaternion::<N>::new(
+        delta_finalize.num,
+        delta_finalize.denom.wrapping_mul(&conj_ideal_norm),
+    );
+
+    let build_beta = |j: usize, idx: usize| -> RationalQuaternion<N> {
+        let num = mat_4x4_eval::<N>(&reduced_per_j[j], &short_per_j[j][idx].vec);
+        let bp = RationalQuaternion::<N>::new(
+            Quaternion::<N>::new(num[0], num[1], num[2], num[3]),
+            std_denom_per_j[j],
+        );
+        if j == 0 {
+            // C keeps the j=0 β UNNORMALIZED (denom = ideal denom): it is
+            // `mat_4x4_eval(reduced, vec)` with no normalize/conjugate
+            // (dim2id2iso.c:647), matching `find_uv_cref`'s `into_find_uv_result`.
+            // Normalizing here would drop denom 2→1 and mis-scale θ.
+            bp
+        } else {
+            // Sign reconciliation for the alternate-order (j>0) lift: our
+            // ideal[j] is built via the O_0 `ideal_multiply` then bridged to std
+            // (`ideal_basis_o0_to_standard_col`), whereas C builds it natively in
+            // std (`quat_lideal_lideal_mul_reduced`). The two reduced bases agree
+            // as lattices but the bridge flips the orientation of the reduced
+            // basis, so `reduced_j·vec` comes out as −(C's β'). Both are valid
+            // ideal elements (the membership gate can't distinguish them), but
+            // θ = β2·conj(β1)/N is sign-sensitive, so we negate to C's canonical
+            // sign. (Empirically verified byte-exact vs C on lvl1 KAT record 29;
+            // the j=0 path uses the caller's native-std basis and needs no flip.)
+            let r = delta_finalize.mul(&bp, p).normalize().conjugate();
+            let zero = Int::<N>::from_i64(0);
+            RationalQuaternion::<N>::new(
+                Quaternion::<N>::new(
+                    zero.wrapping_sub(&r.num.a),
+                    zero.wrapping_sub(&r.num.b),
+                    zero.wrapping_sub(&r.num.c),
+                    zero.wrapping_sub(&r.num.d),
+                ),
+                r.denom,
+            )
+        }
+    };
+
+    // Cross-product (j1, j2) with j2 ≥ j1; first hit wins (C's nested loop).
+    for j1 in 0..reduced_per_j.len() {
+        for j2 in j1..reduced_per_j.len() {
+            let is_diagonal = j1 == j2;
+            let Some(b) = find_uv_from_lists::<N>(
+                target,
+                &small_norms_per_j[j1],
+                &small_norms_per_j[j2],
+                &quotients_per_j[j2],
+                is_diagonal,
+                0,
+            ) else {
+                continue;
+            };
+            let beta1 = build_beta(j1, b.index_sol1);
+            let beta2 = build_beta(j2, b.index_sol2);
+            #[cfg(feature = "kat")]
+            if std::env::var_os("PQSQ_FUVALT").is_some() {
+                let g1 = rational_quaternion_in_lideal::<N, 32>(&beta1, ideal0_o0);
+                let g2 = rational_quaternion_in_lideal::<N, 32>(&beta2, ideal0_o0);
+                std::eprintln!(
+                    "FUVALT PAIR j1={j1} j2={j2} i1={} i2={} d1={:x} d2={:x} gate1={g1} gate2={g2}",
+                    b.index_sol1,
+                    b.index_sol2,
+                    small_norms_per_j[j1][b.index_sol1].abs_sign().0,
+                    small_norms_per_j[j2][b.index_sol2].abs_sign().0,
+                );
+            }
+            // Self-verification gate (C `quat_lattice_contains`, dim2id2iso.c:690).
+            if rational_quaternion_in_lideal::<N, 32>(&beta1, ideal0_o0)
+                && rational_quaternion_in_lideal::<N, 32>(&beta2, ideal0_o0)
+            {
+                return Some(FindUvResult {
+                    u: b.u,
+                    v: b.v,
+                    beta1,
+                    beta2,
+                    d1: small_norms_per_j[j1][b.index_sol1],
+                    d2: small_norms_per_j[j2][b.index_sol2],
+                    index_alternate_order_1: j1,
+                    index_alternate_order_2: j2,
+                });
+            }
+        }
+    }
+    None
+}
+
 /// # Variable-time
 ///
 /// Variable-time on the ideal basis entries (LLL + enumeration both

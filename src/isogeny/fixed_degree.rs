@@ -562,6 +562,136 @@ pub(crate) fn fixed_degree_isogeny_and_eval_indexed<
     Some((length, e34))
 }
 
+/// KEYGEN-flavored (`small = true`) indexed fixed-degree isogeny — the
+/// combination the C reference uses that the split Rust functions lack: C's
+/// `_fixed_degree_isogeny_impl` takes `small` and `index_alternate_order`
+/// INDEPENDENTLY (dim2id2iso.c:12-176), and the keygen/signing spine always
+/// calls it with `small = true` (dim2id2iso.c:922, 1002). `_keygen` covers
+/// `(small=true, index=0)`; `_indexed` covers `(small=false, index≥0)`; this
+/// covers `(small=true, index≥0)` — reached when `find_uv` selects an alternate
+/// order for a keygen record (e.g. lvl1 KAT record 29, `index_order2 = 1`).
+///
+/// `index_alternate_curve == 0` delegates to [`fixed_degree_isogeny_and_eval_keygen`].
+/// For `k = index − 1 ≥ 0` it mirrors [`fixed_degree_isogeny_and_eval_indexed`]'s
+/// alternate-curve body but with the keygen `length = P_BITS + bound − u_bits`
+/// (C `small` branch, dim2id2iso.c:41) and the `B0` down-doubling by
+/// `TORSION_EVEN_POWER − length − HD` (C `ec_dbl_iter_basis`, dim2id2iso.c:121)
+/// that `_indexed` (small=false, length = TEP−HD) omits.
+// Needs the alternate-curve index, target scalar, eval/output point slices, primality witnesses, trial budget, and RNG.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fixed_degree_isogeny_and_eval_keygen_indexed<
+    P: FixedDegreeLevel,
+    const QL: usize,
+    R: CryptoRng,
+>(
+    index_alternate_curve: usize,
+    u: &Uint<QL>,
+    eval_points: &[CoupleMontgomeryPoint<P::Field>],
+    out_points: &mut [CoupleMontgomeryPoint<P::Field>],
+    witnesses: &[Uint<QL>],
+    max_trials: usize,
+    rng: &mut R,
+) -> Option<(u32, CoupleCurve<P::Field>)> {
+    use crate::quaternion::represent_integer::represent_integer_over_alt_order;
+
+    if index_alternate_curve == 0 {
+        return fixed_degree_isogeny_and_eval_keygen::<P, QL, R>(
+            u,
+            eval_points,
+            out_points,
+            witnesses,
+            max_trials,
+            rng,
+        );
+    }
+    let k = index_alternate_curve - 1;
+    const HD: u32 = 2;
+    let torsion_even_power = u32::try_from(P::F).expect("F fits u32");
+
+    // small=true keygen length (C dim2id2iso.c:41): bitsize(p)+bound − u_bits.
+    let p_bits_plus_bound =
+        u32::try_from(P::P_BITS).expect("P_BITS fits u32") + P::QUAT_REPRES_BOUND_INPUT;
+    debug_assert!(u.as_words()[0] & 1 == 1, "u must be odd");
+    let u_bits = u.bits_vartime();
+    let length = p_bits_plus_bound - u_bits;
+    let f_basis = (length + HD) as usize;
+
+    let u12 = *u;
+    let two_len = Uint::<QL>::ONE.shl_vartime(length);
+    let target = u12.wrapping_mul(&two_len.wrapping_sub(&u12));
+    let p = P::prime::<QL>();
+
+    let alt_count = match P::LEVEL {
+        1 => 6,
+        3 => 7,
+        _ => return None,
+    };
+    if k >= alt_count {
+        return None;
+    }
+
+    // θ over the alternate extremal order k (standard coords + denom).
+    let order = P::alternate_extremal_order(k);
+    let (theta_num, theta_denom) =
+        represent_integer_over_alt_order::<QL, R>(&order, &target, &p, max_trials, witnesses, rng)?;
+
+    // Scale θ numerator by u^{-1} mod 2^(length+2) (denom unchanged).
+    let modulus = Uint::<QL>::ONE.shl_vartime(length + 2);
+    let u_inv = crate::quaternion::sign_orchestration::uint_inv_mod_vartime::<QL>(&u12, &modulus)?;
+    let u_inv_i = Int::<QL>::from_words(u_inv.to_words());
+    let theta_scaled = Quaternion::<QL>::new(
+        theta_num.a.wrapping_mul(&u_inv_i),
+        theta_num.b.wrapping_mul(&u_inv_i),
+        theta_num.c.wrapping_mul(&u_inv_i),
+        theta_num.d.wrapping_mul(&u_inv_i),
+    );
+
+    // E0_alt = NICE curve k (C = 1 ⇒ curve_a is affine A); B0 = its even basis
+    // DOWN-DOUBLED by TORSION_EVEN_POWER − length − HD (C `ec_dbl_iter_basis`).
+    let cwe = P::nice_curve(k);
+    let curve = MontgomeryCurve::<P::Field>::new(cwe.curve_a);
+    let a24 = curve.a24();
+    let a24_curve = curve.to_a24();
+    let bp0 = MontgomeryPoint::<P::Field>::new(cwe.p_x, cwe.p_z);
+    let bq0 = MontgomeryPoint::<P::Field>::new(cwe.q_x, cwe.q_z);
+    let bpmq0 = MontgomeryPoint::<P::Field>::new(cwe.pmq_x, cwe.pmq_z);
+    let ndbl = torsion_even_power - length - HD;
+    let bp = a24_curve.x_double_n(&bp0, ndbl);
+    let bq = a24_curve.x_double_n(&bq0, ndbl);
+    let bpmq = a24_curve.x_double_n(&bpmq0, ndbl);
+
+    // Bθ = θ(B0) via the indexed endomorphism application; θ narrows to Int<8>.
+    let theta8 = Quaternion::<8>::new(
+        theta_scaled.a.resize::<8>(),
+        theta_scaled.b.resize::<8>(),
+        theta_scaled.c.resize::<8>(),
+        theta_scaled.d.resize::<8>(),
+    );
+    let (rp, rq, rpmq) = P::endomorphism_application_even_basis_indexed(
+        &bp,
+        &bq,
+        &bpmq,
+        index_alternate_curve,
+        &theta8,
+        &theta_denom.resize::<8>(),
+        f_basis,
+        &a24,
+    )?;
+
+    let bas1 = EcBasis::new(bp, bq, bpmq);
+    let bas2 = EcBasis::new(rp, rq, rpmq);
+    let (p1, q1) = lift_basis(&bas1, &curve).ok()?;
+    let (p2, q2) = lift_basis(&bas2, &curve).ok()?;
+    let ker = ThetaKernelCouplePoints::new(
+        CoupleJacobianPoint::new(p1, p2),
+        CoupleJacobianPoint::new(q1, q2),
+        CoupleJacobianPoint::infinity(),
+    );
+    let e12 = CoupleCurve::new(curve, curve);
+    let e34 = theta_chain_compute_and_eval(length, &e12, &ker, true, eval_points, out_points)?;
+    Some((length, e34))
+}
+
 #[cfg(all(test, feature = "kat"))]
 mod tests {
     use super::*;

@@ -30,7 +30,8 @@ use crate::ec::montgomery::{MontgomeryCurve, MontgomeryPoint};
 use crate::ec::weil::weil;
 use crate::isogeny::clapotis::{find_uv, lattice_reduced_norm, theta_endomorphism};
 use crate::isogeny::fixed_degree::{
-    FixedDegreeLevel, fixed_degree_isogeny_and_eval, fixed_degree_isogeny_and_eval_keygen,
+    FixedDegreeLevel, fixed_degree_isogeny_and_eval_indexed,
+    fixed_degree_isogeny_and_eval_keygen_indexed,
 };
 use crate::isogeny::theta_chain::theta_chain_compute_and_eval_randomized;
 use crate::level_constants::{EvenBasis, LevelConstants};
@@ -128,7 +129,13 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0_with_r<
     rng: &mut R,
 ) -> Option<CurveAndBasis<P>> {
     let f = u32::try_from(P::F).expect("F fits u32");
-    debug_assert!(r.index_alternate_order_1 == 0 && r.index_alternate_order_2 == 0);
+    // Alternate-order indices (C `index_order1/2`): 0 for the common index-0
+    // path (byte-identical to the pre-generalization body). Non-zero when
+    // `find_uv` selected an alternate connecting order (e.g. lvl1 KAT record
+    // 29, `index_order2 = 1`) — the φ_v curve, θ scale, β1 scale, and Weil
+    // reference then shift onto that order per C `dim2id2iso.c:836-1142`.
+    let index1 = r.index_alternate_order_1;
+    let index2 = r.index_alternate_order_2;
     // N(I) from the lattice determinant — convention-independent (the
     // connecting ideal may be built by samplers that store cached_norm = N
     // rather than N²). |det| ~ N²·denom⁴ overflows Int<L>, so derive at
@@ -169,8 +176,12 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0_with_r<
         std::eprintln!("OURS_UV_D2={_d2:x}");
     }
 
-    // 4. φ_u and φ_v: push the E0[2^F] basis (E2-factor = O).
-    let (bp, bq, bpmq) = P::basis_e0();
+    // 4. φ_u from the index1 starting curve, φ_v from index2 (both = E0 for the
+    //    common index-0 path; the alternate NICE curve otherwise). The pushed
+    //    basis is that starting curve's even-torsion basis
+    //    (`starting_basis_indexed(0) == basis_e0()`, so index-0 is unchanged).
+    let (bp1, bq1, bpmq1) = starting_basis_indexed::<P>(index1);
+    let (bp2, bq2, bpmq2) = starting_basis_indexed::<P>(index2);
     let inf = MontgomeryPoint::<P::Field>::infinity();
     let push_basis = |a: MontgomeryPoint<P::Field>,
                       b: MontgomeryPoint<P::Field>,
@@ -182,10 +193,11 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0_with_r<
         ]
     };
 
-    let eval_u = push_basis(bp, bq, bpmq);
+    let eval_u = push_basis(bp1, bq1, bpmq1);
     let mut out_u = [CoupleMontgomeryPoint::infinity(); 3];
     let (_lu, fu) = if keygen {
-        fixed_degree_isogeny_and_eval_keygen::<P, QL, _>(
+        fixed_degree_isogeny_and_eval_keygen_indexed::<P, QL, _>(
+            index1,
             &u_s.resize::<QL>(),
             &eval_u,
             &mut out_u,
@@ -194,7 +206,8 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0_with_r<
             rng,
         )?
     } else {
-        fixed_degree_isogeny_and_eval::<P, QL, _>(
+        fixed_degree_isogeny_and_eval_indexed::<P, QL, _>(
+            index1,
             &u_s.resize::<QL>(),
             &eval_u,
             &mut out_u,
@@ -206,10 +219,11 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0_with_r<
     };
     let bas_u = (out_u[0].p1, out_u[1].p1, out_u[2].p1);
 
-    let eval_v = push_basis(bp, bq, bpmq);
+    let eval_v = push_basis(bp2, bq2, bpmq2);
     let mut out_v = [CoupleMontgomeryPoint::infinity(); 3];
     let (_lv, fv) = if keygen {
-        fixed_degree_isogeny_and_eval_keygen::<P, QL, _>(
+        fixed_degree_isogeny_and_eval_keygen_indexed::<P, QL, _>(
+            index2,
             &v_s.resize::<QL>(),
             &eval_v,
             &mut out_v,
@@ -218,7 +232,8 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0_with_r<
             rng,
         )?
     } else {
-        fixed_degree_isogeny_and_eval::<P, QL, _>(
+        fixed_degree_isogeny_and_eval_indexed::<P, QL, _>(
+            index2,
             &v_s.resize::<QL>(),
             &eval_v,
             &mut out_v,
@@ -266,7 +281,11 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0_with_r<
         }
     }
 
-    // 5. Apply θ (scaled by 1/d1) to φ_v's image basis on Fv.E1.
+    // 5. Apply θ (scaled by 1/(d1·N(conn[index2]))) to φ_v's image basis on
+    //    Fv.E1. The `×N(conn[index2])` is the C alternate-order θ scale (D3,
+    //    dim2id2iso.c); for index2 = 0 `connecting_norm_indexed(0) = 1`, so the
+    //    common path is unchanged.
+    let extra_theta = d1.wrapping_mul(&connecting_norm_indexed::<P>(index2));
     let a24_fv1 = fv.e1.a24();
     let (t2p, t2q, t2pmq) = P::endomorphism_application_rational_even_basis::<L>(
         &bas2.0,
@@ -274,7 +293,7 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0_with_r<
         &bas2.2,
         &theta.num,
         &theta.denom,
-        &d1,
+        &extra_theta,
         f as usize,
         &a24_fv1,
     )?;
@@ -478,9 +497,10 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0_with_r<
     }
 
     // 7. Weil-pairing factor selection: the correct factor pairs as
-    //    e(bas)^{d1·u²}.
-    let e0 = MontgomeryCurve::<P::Field>::e0();
-    let w0 = weil(f, &bp, &bq, &bpmq, &e0);
+    //    e(bas)^{d1·u²}. Reference on the index1 starting curve/basis (D5); for
+    //    index1 = 0 this is E0 / basis_e0, i.e. the common path unchanged.
+    let e1_curve = starting_curve_indexed::<P>(index1);
+    let w0 = weil(f, &bp1, &bq1, &bpmq1, &e1_curve);
     let w1 = weil(f, &tt1.p1, &tt2.p1, &tt1m2.p1, &theta_cod.e1);
     let mask_f = Uint::<L>::ONE.shl_vartime(f).wrapping_sub(&Uint::ONE);
     let k = d1.wrapping_mul(&u_s).wrapping_mul(&u_s) & mask_f; // d1·u² mod 2^F
@@ -492,9 +512,13 @@ pub(crate) fn ideal_to_isogeny_clapotis_idx0_with_r<
         (theta_cod.e2, (tt1.p2, tt2.p2, tt1m2.p2))
     };
 
-    // 8. Apply β1 (scaled by 1/(u·d1)) to the selected basis.
+    // 8. Apply β1 (scaled by 1/(u·d1·N(conn[index1]))) to the selected basis.
+    //    The `×N(conn[index1])` is the C alternate-order β1 scale (D4); index1 = 0
+    //    gives `connecting_norm_indexed(0) = 1`, i.e. the common path unchanged.
     let a24_cod = codomain.a24();
-    let ud1 = u_s.wrapping_mul(&d1);
+    let ud1 = u_s
+        .wrapping_mul(&d1)
+        .wrapping_mul(&connecting_norm_indexed::<P>(index1));
     let (op, oq, opmq) = P::endomorphism_application_rational_even_basis::<L>(
         &basis_pts.0,
         &basis_pts.1,
@@ -1148,9 +1172,9 @@ fn keygen_secret_and_spine<P: FixedDegreeLevel, const QL: usize, const WN: usize
     max_trials: usize,
     rng: &mut R,
 ) -> Option<CurveBasisIdeal<P>> {
-    use crate::isogeny::clapotis::find_uv_cref;
+    use crate::isogeny::clapotis::find_uv_cref_alt;
     use crate::quaternion::algebra::{Quaternion, RationalQuaternion};
-    use crate::quaternion::lattice::narrow_int_lattice;
+    use crate::quaternion::lattice::{narrow_int_lattice, widen_int_lattice};
     use crate::quaternion::lll::keygen_byte_exact_secret_ideal_std;
 
     let p_wn = P::prime::<WN>();
@@ -1160,19 +1184,41 @@ fn keygen_secret_and_spine<P: FixedDegreeLevel, const QL: usize, const WN: usize
     // standard-coord form for `find_uv_cref`.
     let si = keygen_byte_exact_secret_ideal_std::<WN, R>(&sec_wn, &p_wn, 8192, 64, &wit_wn, rng)?;
 
-    // C-faithful index-0 find_uv on the standard-coord reduced ideal.
+    // C-faithful find_uv on the standard-coord reduced ideal. `find_uv_cref_alt`
+    // tries index 0 first (byte-identical to `find_uv_cref`) and only expands to
+    // the alternate connecting orders when index 0 has no Bézout pair (e.g. lvl1
+    // KAT record 29, `index_order2 = 1`). The alternate connecting ideals (L8)
+    // widen to the front width WN.
+    let widen_wn = |id: &LeftIdeal<8>| -> LeftIdeal<WN> {
+        let mut basis = [[Int::<WN>::from_i64(0); 4]; 4];
+        for (brow, idrow) in basis.iter_mut().zip(&id.basis) {
+            for (bcell, idcell) in brow.iter_mut().zip(idrow) {
+                *bcell = widen_int_lattice::<8, WN>(idcell);
+            }
+        }
+        LeftIdeal::<WN>::with_denom_and_norm(
+            basis,
+            id.denom.resize::<WN>(),
+            id.cached_norm.resize::<WN>(),
+        )
+    };
+    let alts_wn: Vec<LeftIdeal<WN>> = (0..P::NUM_ALTERNATE_EXTREMAL_ORDERS)
+        .map(|idx| widen_wn(&P::alternate_connecting_ideal(idx)))
+        .collect();
+
     let f = u32::try_from(P::F).ok()?;
     let target = *Uint::<WN>::ONE.shl_vartime(f).as_int();
     let denom = si.std_denom.abs_sign().0;
-    let rf = find_uv_cref::<WN>(
+    let rf = find_uv_cref_alt::<WN>(
         &target,
         &si.std_basis,
         &denom,
         &si.norm,
         &p_wn,
         P::FINDUV_BOX_SIZE,
-    )?
-    .into_find_uv_result()?;
+        &si.spine_ideal,
+        &alts_wn,
+    )?;
     let nr = |x: &Int<WN>| narrow_int_lattice::<WN, L>(x);
     let nq = |rq: &RationalQuaternion<WN>| {
         RationalQuaternion::<L>::new(
@@ -1187,8 +1233,8 @@ fn keygen_secret_and_spine<P: FixedDegreeLevel, const QL: usize, const WN: usize
         beta2: nq(&rf.beta2),
         d1: nr(&rf.d1),
         d2: nr(&rf.d2),
-        index_alternate_order_1: 0,
-        index_alternate_order_2: 0,
+        index_alternate_order_1: rf.index_alternate_order_1,
+        index_alternate_order_2: rf.index_alternate_order_2,
     };
 
     #[cfg(feature = "kat")]

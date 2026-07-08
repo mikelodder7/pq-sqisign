@@ -436,7 +436,7 @@ mod lvl3_probe {
                 let seed48: [u8; 48] = s.as_slice().try_into().expect("48-byte NIST seed");
                 let mut rng = NistPqcRng::new(&seed48);
                 match KeyPair::<P>::generate(&mut rng) {
-                    Ok(kp) if kp.verifying_key().as_bytes().as_ref() == pk_expected.as_slice() => {
+                    Ok(kp) if kp.verifying_key().as_bytes() == pk_expected.as_slice() => {
                         full_match += 1;
                     }
                     Ok(_) => model_diverged.push(checked),
@@ -451,12 +451,17 @@ mod lvl3_probe {
         eprintln!(
             "[{tag}-all-kat] {full_match}/{checked} byte-exact; model_diverged={model_diverged:?} finduv_gap={finduv_gap:?}"
         );
-        // The fix's guarantee: EVERY key keygen produces is byte-identical to C's
-        // (zero wrong-model divergence). `finduv_gap` records are a pre-existing
-        // find_uv limitation tracked separately, not a model regression.
+        // Guarantee: EVERY keygen public key is byte-identical to C's — zero
+        // wrong-model divergence AND zero find_uv gaps. The alternate-order
+        // find_uv (`find_uv_cref_alt`) + the index-aware combine close the last
+        // gap (lvl1 record 29, index_order2 = 1), so both levels are 100/100.
         assert!(
             model_diverged.is_empty(),
             "keygen produced wrong-model pks (not byte-exact) for records {model_diverged:?}"
+        );
+        assert!(
+            finduv_gap.is_empty(),
+            "keygen find_uv failed (no isogeny) for records {finduv_gap:?}"
         );
     }
 
