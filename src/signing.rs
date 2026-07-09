@@ -209,6 +209,22 @@ fn protocols_sign_impl<
         };
         let pow = helpers.pow_dim2_deg_resp;
         let two_resp = helpers.two_resp_length;
+        #[cfg(feature = "kat")]
+        if std::env::var_os("PQSQ_AUX_DUMP").is_some() {
+            std::eprintln!(
+                "OURS_AUX backtracking={backtracking} two_resp_length={two_resp} pow={pow}"
+            );
+            for (name, val) in [
+                ("aux_norm", helpers.random_aux_norm.to_le_bytes()),
+                ("deg_resp_inv", helpers.degree_resp_inv.to_le_bytes()),
+            ] {
+                std::eprint!("OURS_AUX {name} neg=0 ");
+                for x in &val[..96] {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+        }
         // Common path only: skip degenerate / length-1 / short-chain cases.
         if pow == 0 || pow == 1 {
             #[cfg(feature = "std")]
@@ -236,6 +252,16 @@ fn protocols_sign_impl<
             eprintln!("[sign L{}] attempt {_attempt}: aux_isogeny None", P::LEVEL);
             continue;
         };
+        #[cfg(feature = "kat")]
+        if std::env::var_os("PQSQ_AUX_DUMP").is_some() {
+            let mut b = [0u8; 96];
+            e_aux.a.to_bytes_le(&mut b);
+            std::eprint!("OURS_EAUX aff=");
+            for x in &b[..P::FP2_BYTES] {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
         // 8. Reduce the bases to order 2^(pow + HD + two_resp), then dim-2.
         let reduced_order = (pow + HD + two_resp) as usize;
         let e_diff = u32::try_from(tep - reduced_order).ok()?;

@@ -246,6 +246,74 @@ pub fn bound_parallelogram<const N: usize>(
     Some((boxes, u_final))
 }
 
+/// Port of `quat_lattice_sample_from_ball` (`lat_ball.c`): rejection-sample a
+/// short element of the standard-coords lattice (column-major integer `basis`,
+/// denominator `denom`) whose reduced norm is ≤ `bound` (C's `radius` argument),
+/// over the algebra prime `p`.
+///
+/// Byte-faithful to C: builds the standard Gram (`quat_lattice_gram`), corrects
+/// the radius by `denom²·2` (the Gram is twice the reduced norm), bounds a
+/// parallelogram ([`bound_parallelogram`]), then rejection-samples — each
+/// coordinate drawn with `ibz_rand_interval(0, 2·box[i]) − box[i]` (no draw when
+/// `box[i] = 0`, matching the C DRBG consumption), mapped through `Uᵀ`, and
+/// accepted when the quadratic form `xᵀ·G·x` lands in `(0, rad]`.
+///
+/// Returns the accepted element's standard-coords numerators (the denominator is
+/// the input `denom`), or `None` if the parallelogram is trivial or the trial
+/// budget is exhausted. `N` must hold the Gram/adjugate of `basis` (lvl1 ball
+/// Grams: `det ≈ 2^4180`).
+#[cfg(feature = "alloc")]
+#[allow(clippy::needless_range_loop)] // Uᵀ·x reads U[j][i] across rows; mirrors C `ibz_mat_4x4_eval_t`.
+pub fn sample_from_ball<const N: usize, R: rand_core::CryptoRng + ?Sized>(
+    basis: &[[Int<N>; 4]; 4],
+    denom: &Uint<N>,
+    bound: &Uint<N>,
+    p: &Uint<N>,
+    max_trials: usize,
+    rng: &mut R,
+) -> Option<[Int<N>; 4]> {
+    use crate::quaternion::lattice::qf_eval_4x4;
+    use crate::rng::ibz_rand_interval;
+
+    let g = lattice_gram::<N>(basis, p);
+    // rad = bound · denom² · 2 (the Gram is twice the reduced norm).
+    let rad = bound
+        .wrapping_mul(denom)
+        .wrapping_mul(denom)
+        .wrapping_mul(&Uint::<N>::from_u64(2));
+
+    let (boxes, u) = bound_parallelogram::<N>(&g, &rad)?;
+
+    let zero = Int::<N>::from_i64(0);
+    for _ in 0..max_trials {
+        // Draw x[i] ∈ [−box[i], box[i]]; box[i] = 0 ⇒ no draw (x[i] = 0).
+        let mut x = [zero; 4];
+        for (i, xi) in x.iter_mut().enumerate() {
+            if boxes[i] == zero {
+                continue;
+            }
+            let two_box = boxes[i].wrapping_add(&boxes[i]).abs();
+            let drawn = ibz_rand_interval::<N, R>(rng, &Uint::<N>::ZERO, &two_box);
+            *xi = drawn.as_int().wrapping_sub(&boxes[i]);
+        }
+        // Map to the parallelogram: xt = Uᵀ · x.
+        let mut xt = [zero; 4];
+        for i in 0..4 {
+            let mut s = zero;
+            for j in 0..4 {
+                s = s.wrapping_add(&u[j][i].wrapping_mul(&x[j]));
+            }
+            xt[i] = s;
+        }
+        // Accept when 0 < xtᵀ·G·xt ≤ rad (the Gram is positive definite ⇒ ≥ 0).
+        let q = qf_eval_4x4::<N>(&xt, &g).abs();
+        if q != Uint::<N>::ZERO && q <= rad {
+            return Some(mat4_eval::<N>(basis, &xt));
+        }
+    }
+    None
+}
+
 /// Port of `quat_lattice_gram` (`lattice.c`): the reduced-norm Gram of a
 /// COLUMN-major lattice basis, `G[i][j] = 2·Σ_k w_k·b[k][i]·b[k][j]` with
 /// weights `w = (1, 1, p, p)` (the form `b(u,v) = u0v0 + u1v1 + p(u2v2 +

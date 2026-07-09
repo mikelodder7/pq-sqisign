@@ -129,88 +129,6 @@ pub(crate) fn lattice_intersect<const L: usize>(
     (rb, rd)
 }
 
-/// Sample a lattice element with reduced norm ≤ `radius`. Functional analogue
-/// of C `quat_lattice_sample_from_ball` (`lat_ball.c`) — but instead of the
-/// dpe-float `quat_lll_core` + bounding-parallelogram, this LLL-reduces the
-/// lattice under the `O_0` reduced-norm metric (`lll_4x4_in_metric`, integer)
-/// and rejection-samples small integer combinations of the reduced basis. The
-/// result is a genuine lattice element inside the norm ball (sufficient for a
-/// valid response quaternion); it is NOT byte-exact to C's RNG-driven sampler
-/// (that, and ZK-grade uniformity, are a later refinement).
-///
-/// Returns `(e, denom)` with `e` in `O_0`-coords and
-/// `N_red(e/denom) = qf_eval(o0_gram, e) / (4·denom²) ≤ radius`, or `None` if no
-/// element is found within the search budget. lvl1-pinned via the `O_0` metric.
-#[cfg(feature = "alloc")]
-pub(crate) fn lattice_sample_from_ball<const L: usize, R: rand_core::CryptoRng>(
-    basis: &[[Int<L>; 4]; 4],
-    denom: &Uint<L>,
-    radius: &Uint<L>,
-    p: &Uint<L>,
-    max_trials: usize,
-    rng: &mut R,
-) -> Option<([Int<L>; 4], Uint<L>)> {
-    use crate::quaternion::lattice::{lll_4x4_in_metric, qf_eval_4x4};
-    use crate::quaternion::o0_mul::o0_reduced_norm_gram_matrix;
-
-    let metric = o0_reduced_norm_gram_matrix::<L>(p);
-    let reduced = lll_4x4_in_metric::<L>(basis, &metric);
-
-    // bound = 4·radius·denom² (the o0 Gram is 4× the reduced-norm form).
-    let denom_sq = denom.wrapping_mul(denom);
-    let bound = *radius
-        .wrapping_mul(&denom_sq)
-        .wrapping_mul(&Uint::<L>::from_u64(4))
-        .as_int();
-
-    let combo = |c: &[i64; 4]| -> [Int<L>; 4] {
-        let mut e = [Int::<L>::from_i64(0); 4];
-        for (r, &cr) in c.iter().enumerate() {
-            if cr == 0 {
-                continue;
-            }
-            let cs = Int::<L>::from_i64(cr);
-            for t in 0..4 {
-                e[t] = e[t].wrapping_add(&cs.wrapping_mul(&reduced[r][t]));
-            }
-        }
-        e
-    };
-    let in_ball = |e: &[Int<L>; 4]| -> bool {
-        let qf = qf_eval_4x4::<L>(e, &metric);
-        !bool::from(qf.is_negative()) && qf != Int::<L>::from_i64(0) && qf.abs() <= bound.abs()
-    };
-
-    // Deterministic first pass: each reduced basis vector (shortest first).
-    for r in 0..4 {
-        let mut c = [0i64; 4];
-        c[r] = 1;
-        let e = combo(&c);
-        if in_ball(&e) {
-            return Some((e, *denom));
-        }
-    }
-    // Rejection pass: random small combinations.
-    let mut buf = [0u8; 4];
-    for _ in 0..max_trials {
-        rng.fill_bytes(&mut buf);
-        let c = [
-            (buf[0] % 5) as i64 - 2,
-            (buf[1] % 5) as i64 - 2,
-            (buf[2] % 5) as i64 - 2,
-            (buf[3] % 5) as i64 - 2,
-        ];
-        if c == [0, 0, 0, 0] {
-            continue;
-        }
-        let e = combo(&c);
-        if in_ball(&e) {
-            return Some((e, *denom));
-        }
-    }
-    None
-}
-
 /// Convert an `O_0`-coords lattice (`basis_o0` rows are `Z`-generators in the
 /// `(1, i, (i+j)/2, (1+k)/2)` basis, scaled by `denom_o0`) into C's standard
 /// `(1, i, j, ij)` `quat_lattice_t` form, in Hermite Normal Form — the frame
@@ -227,11 +145,9 @@ pub(crate) fn lattice_sample_from_ball<const L: usize, R: rand_core::CryptoRng>(
 ///
 /// Returns C's `(basis, denom)` — `basis` column-major (columns are generators,
 /// as `quat_lattice_t` stores them), `denom` dividing it. Byte-exact to C's
-/// response `lattice_hom_chall_to_com`.
-// `kat`-gated until the byte-exact `sample_from_ball` (step 2b) consumes it in
-// production; for now it is exercised by the `PQSQ_RESP_DUMP` diagnostic and the
-// `o0_lattice_to_standard_hnf_matches_c_record0` regression test.
-#[cfg(feature = "kat")]
+/// response `lattice_hom_chall_to_com` (validated by
+/// `o0_lattice_to_standard_hnf_matches_c_record0`).
+#[cfg(feature = "alloc")]
 pub(crate) fn o0_lattice_to_standard_hnf<const N: usize>(
     basis_o0: &[[Int<N>; 4]; 4],
     denom_o0: &Uint<N>,
@@ -268,8 +184,9 @@ pub(crate) fn o0_lattice_to_standard_hnf<const N: usize>(
 /// with the secret ideal, intersect that with the conjugate of the commitment
 /// ideal to get the `Hom(E_chall → E_com)`-lattice, then sample a short element
 /// (reduced norm ≤ `(2^response_bits − 1)·lattice_content`). Returns
-/// `(resp O_0-coords, resp_denom, lattice_content)`. lvl1-pinned via the metric
-/// inside `lattice_sample_from_ball`.
+/// `(resp O_0-coords, resp_denom, lattice_content)`. Byte-exact: bridges the
+/// hom-lattice into C's standard coords and samples via
+/// [`crate::quaternion::lll::sample_from_ball`].
 #[cfg(feature = "alloc")]
 pub(crate) fn compute_response_quat_element<const L: usize, R: rand_core::CryptoRng>(
     secret_ideal: &crate::quaternion::ideal::LeftIdeal<L>,
@@ -298,39 +215,66 @@ pub(crate) fn compute_response_quat_element<const L: usize, R: rand_core::Crypto
         &conj_commit,
         &lideal_commit.denom,
     );
-    #[cfg(feature = "kat")]
-    if std::env::var_os("PQSQ_RESP_DUMP").is_some() {
-        let (std_basis, std_denom) = o0_lattice_to_standard_hnf::<L>(&hom_b, &hom_d);
-        let dby = std_denom.to_le_bytes();
-        std::eprint!("OURS_STDHNF latden ");
-        for x in &dby[..32] {
-            std::eprint!("{x:02x}");
-        }
-        std::eprintln!();
-        for (i, row) in std_basis.iter().enumerate() {
-            for (j, e) in row.iter().enumerate() {
-                let neg = e < &Int::<L>::from_i64(0);
-                let by = e.abs_sign().0.to_le_bytes();
-                std::eprint!("OURS_STDHNF latb{i}{j} neg={} ", neg as u8);
-                for x in &by[..128] {
-                    std::eprint!("{x:02x}");
-                }
-                std::eprintln!();
-            }
-        }
-    }
     // lattice_content = N(chall_secret) · N(commitment).
     let n_cs = chall_secret.reduced_norm_vartime()?;
     let n_com = lideal_commit.reduced_norm_vartime()?;
     let lattice_content = n_cs.wrapping_mul(&n_com);
-    // radius = (2^response_bits − 1) · lattice_content.
+    // radius (C `bound`) = (2^response_bits − 1) · lattice_content.
     let radius = Uint::<L>::ONE
         .shl_vartime(response_bits)
         .wrapping_sub(&Uint::<L>::ONE)
         .wrapping_mul(&lattice_content);
-    let (resp, resp_d) =
-        lattice_sample_from_ball::<L, R>(&hom_b, &hom_d, &radius, p, max_trials, rng)?;
-    Some((resp, resp_d, lattice_content))
+
+    // Byte-exact response: sample in C's standard coords. Bridge the O_0
+    // hom-lattice to C's standard `quat_lattice_t` (HNF), rejection-sample the
+    // ball (`sample_from_ball` = `lat_ball.c`), then map the standard-coords
+    // result back to O_0 coords for the downstream (backtracking / aux). Because
+    // the sampled element lies in `O_0`, `standard_to_o0_basis` of its numerators
+    // is exactly `2·(O_0 coords)`, so pairing it with `std_denom` (= 2) divides
+    // out cleanly — matching the stand-in's `(coords, denom)` contract.
+    let (std_basis, std_denom) = o0_lattice_to_standard_hnf::<L>(&hom_b, &hom_d);
+    let coord_std = crate::quaternion::lll::sample_from_ball::<L, R>(
+        &std_basis, &std_denom, &radius, p, max_trials, rng,
+    )?;
+    #[cfg(feature = "kat")]
+    if std::env::var_os("PQSQ_RESP_DUMP").is_some() {
+        let dby = std_denom.to_le_bytes();
+        std::eprint!("OURS_XRES xden ");
+        for x in &dby[..16] {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+        for (c, e) in coord_std.iter().enumerate() {
+            let neg = e < &Int::<L>::from_i64(0);
+            let by = e.abs_sign().0.to_le_bytes();
+            std::eprint!("OURS_XRES xc{c} neg={} ", neg as u8);
+            for x in &by[..64] {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
+    }
+    // Map the standard-coords result to O_0 coords, as the *integral* element.
+    // `standard_to_o0_basis(coord_std)` equals `std_denom · (true O_0 coords)`
+    // (the element lies in `O_0`), so dividing by `std_denom` recovers the
+    // integer O_0 coordinates the downstream consumes (it takes `resp` as the
+    // response element directly; the returned denom is 1).
+    let q = crate::quaternion::Quaternion::<L>::new(
+        coord_std[0],
+        coord_std[1],
+        coord_std[2],
+        coord_std[3],
+    );
+    let o0_scaled = crate::quaternion::o0_mul::standard_to_o0_basis::<L>(&q);
+    let sd = crypto_bigint::NonZero::new(std_denom).into_option()?;
+    let mut resp = [Int::<L>::from_i64(0); 4];
+    for (r, num) in resp.iter_mut().zip(o0_scaled.iter()) {
+        let neg = bool::from(num.is_negative());
+        let (quo, _rem) = num.abs().div_rem_vartime(&sd);
+        let qi = *quo.as_int();
+        *r = if neg { qi.wrapping_neg() } else { qi };
+    }
+    Some((resp, Uint::<L>::ONE, lattice_content))
 }
 
 /// Backtracking analysis of the response quaternion (sign step 3 tail). Port of
@@ -498,38 +442,6 @@ mod tests {
             resp != [Int::<8>::from_i64(0); 4],
             "response is a non-zero lattice element",
         );
-    }
-
-    #[cfg(all(feature = "alloc", feature = "kat"))]
-    #[test]
-    fn sample_from_ball_returns_an_element_inside_the_ball() {
-        use crate::quaternion::lattice::qf_eval_4x4;
-        use crate::quaternion::o0_mul::o0_reduced_norm_gram_matrix;
-        use crate::rng::NistPqcRng;
-        let ideal = sample_ideal(); // norm 5
-        let p = crate::params::lvl1::prime().resize::<8>();
-        let radius = Uint::<8>::from_u64(1000); // generous: ≥ the lattice minimum
-        let mut rng = NistPqcRng::new(&[0x33u8; 48]);
-        let (e, d) = lattice_sample_from_ball::<8, _>(
-            &ideal.basis,
-            &ideal.denom,
-            &radius,
-            &p,
-            1 << 12,
-            &mut rng,
-        )
-        .expect("a lattice element within the ball exists");
-        // e is a genuine lattice element.
-        assert!(ideal.contains(&e), "sampled element ∈ lattice");
-        // N_red(e/d) ≤ radius  ⟺  qf_eval(o0_gram, e) ≤ 4·radius·d².
-        let gram = o0_reduced_norm_gram_matrix::<8>(&p);
-        let qf = qf_eval_4x4::<8>(&e, &gram);
-        let bound = *radius
-            .wrapping_mul(&d.wrapping_mul(&d))
-            .wrapping_mul(&Uint::<8>::from_u64(4))
-            .as_int();
-        assert!(qf != Int::<8>::from_i64(0), "non-zero element");
-        assert!(qf.abs() <= bound.abs(), "reduced norm within the ball");
     }
 
     #[test]
