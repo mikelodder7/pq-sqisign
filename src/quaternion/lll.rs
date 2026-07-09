@@ -177,6 +177,75 @@ pub fn quat_lll_core<const N: usize>(g: &mut [[Int<N>; 4]; 4], basis: &mut [[Int
     }
 }
 
+/// `(box, U)` returned by [`bound_parallelogram`]: the parallelogram
+/// half-widths and the transpose transform from parallelogram to lattice
+/// coordinates.
+pub type BoundParallelogram<const N: usize> = ([Int<N>; 4], [[Int<N>; 4]; 4]);
+
+/// Port of `quat_lattice_bound_parallelogram` (`lat_ball.c`): bound the
+/// intersection of the norm ball of squared radius `radius` with the lattice
+/// whose (symmetric, positive-definite) Gram matrix is `g`.
+///
+/// Reduces the *dual* lattice with the `dpe`-float [`quat_lll_core`] and returns
+/// the parallelogram half-widths `box` together with the transpose transform
+/// `U` (a sampled parallelogram point `x` maps to the lattice via `Uᵀ·x`):
+///   - `dualG, denom = adj(g), det(g)`   (`ibz_mat_4x4_inv_with_det_as_denom`)
+///   - `quat_lll_core(dualG, U = identity)`
+///   - `box[i] = ⌊√(dualG_red[i][i]·radius / denom)⌋`
+///   - `U = inv(U) = adj(U)·det(U)`       (`det(U) = ±1`)
+///
+/// Returns `None` when the parallelogram contains only the origin (every
+/// `box[i] == 0`), matching C's `trivial` result where the caller aborts.
+///
+/// `N` must hold `det(g)` and the adjugate minors of `g` (for lvl1 ball Grams,
+/// `det(g) ≈ 2^4180`). Byte-exact to the C reference — see
+/// `lattice_ops::tests::bound_parallelogram_float_matches_c_records`.
+pub fn bound_parallelogram<const N: usize>(
+    g: &[[Int<N>; 4]; 4],
+    radius: &Uint<N>,
+) -> Option<BoundParallelogram<N>> {
+    use crate::quaternion::extremal_orders::adjugate_with_det;
+
+    // dualG = adj(g), denom = det(g). A full-rank lattice Gram has det ≠ 0.
+    let (mut dualg, denom) = adjugate_with_det::<N>(g);
+    let denom_nz = NonZero::new(denom.abs()).into_option()?;
+
+    // Reduce the dual form, tracking the unimodular transform from identity.
+    let mut u = [[Int::<N>::from_i64(0); 4]; 4];
+    for (i, row) in u.iter_mut().enumerate() {
+        row[i] = Int::<N>::from_i64(1);
+    }
+    quat_lll_core::<N>(&mut dualg, &mut u);
+
+    // box[i] = floor_sqrt(dualG_red[i][i] · radius / denom); trivial if all 0.
+    let mut boxes = [Int::<N>::from_i64(0); 4];
+    let mut trivial = true;
+    for (i, b) in boxes.iter_mut().enumerate() {
+        let t = dualg[i][i].abs().wrapping_mul(radius);
+        let (q, _r) = t.div_rem_vartime(&denom_nz);
+        let s = q.floor_sqrt_vartime();
+        if s != Uint::<N>::ZERO {
+            trivial = false;
+        }
+        *b = *s.as_int();
+    }
+    if trivial {
+        return None;
+    }
+
+    // U ← inv(U) = adj(U)·det(U) with det(U) = ±1: the transpose transform.
+    let (adj_u, det_u) = adjugate_with_det::<N>(&u);
+    let mut u_final = adj_u;
+    if bool::from(det_u.is_negative()) {
+        for row in u_final.iter_mut() {
+            for e in row.iter_mut() {
+                *e = e.wrapping_neg();
+            }
+        }
+    }
+    Some((boxes, u_final))
+}
+
 /// Port of `quat_lattice_gram` (`lattice.c`): the reduced-norm Gram of a
 /// COLUMN-major lattice basis, `G[i][j] = 2·Σ_k w_k·b[k][i]·b[k][j]` with
 /// weights `w = (1, 1, p, p)` (the form `b(u,v) = u0v0 + u1v1 + p(u2v2 +
