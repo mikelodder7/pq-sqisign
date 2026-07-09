@@ -22,6 +22,13 @@ pub use lvl5::Level5;
 
 use crate::gf::fp::BaseField;
 
+/// Largest signature size across all levels (`Level5::SIG_BYTES` = 292). Lets
+/// generic-over-`P` code stack-allocate a `[u8; MAX_SIG_BYTES]` buffer (an
+/// associated-const array length `[u8; P::SIG_BYTES]` needs `generic_const_exprs`,
+/// unavailable on stable) and slice it to `P::SIG_BYTES`. A test asserts it bounds
+/// every level's `SIG_BYTES`.
+pub const MAX_SIG_BYTES: usize = 292;
+
 /// Common parameter-set surface implemented by [`Level1`], [`Level3`], [`Level5`].
 ///
 /// A `Params` implementor names the prime, the field-element byte size, and the

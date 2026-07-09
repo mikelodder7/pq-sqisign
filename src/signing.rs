@@ -9,8 +9,6 @@ use crate::quaternion::ideal::LeftIdeal;
 #[cfg(feature = "sign")]
 use crate::verification::SecretKeyData;
 #[cfg(feature = "sign")]
-use alloc::vec::Vec;
-#[cfg(feature = "sign")]
 use rand_core::CryptoRng;
 
 /// Widen a `LeftIdeal<16>` to `LeftIdeal<W>` (W ≥ 16) for wide lattice ops.
@@ -37,17 +35,18 @@ pub fn protocols_sign<P: crate::isogeny::fixed_degree::FixedDegreeLevel, R: Cryp
     sk: &SecretKeyData<P::Field>,
     msg: &[u8],
     rng: &mut R,
-) -> Option<Vec<u8>> {
+    sig_out: &mut [u8],
+) -> Option<usize> {
     match P::LEVEL {
         // lvl1: QL=12, W=80 (5120 bits — smallest tested width with margin).
-        1 => protocols_sign_impl::<P, 12, 80, R>(sk, msg, rng),
+        1 => protocols_sign_impl::<P, 12, 80, R>(sk, msg, rng, sig_out),
         // lvl3: QL=18, W=128 (8192 bits) for the 2^768-scale response lattice.
         // Unlike the commit WL (soft retry-cliff), W has a HARD cliff: too narrow
         // and the response-quaternion adjugate overflows into a WRONG element that
         // verify rejects (no retry saves it). 16-seed sign+verify stress: W=96
         // fails outright, W=112 is clean; W=128 keeps a 2-block margin over the
         // cliff. Was W=160; narrowing to 128 cut ~15% off lvl3 sign.
-        3 => protocols_sign_impl::<P, 18, 128, R>(sk, msg, rng),
+        3 => protocols_sign_impl::<P, 18, 128, R>(sk, msg, rng, sig_out),
         _ => None,
     }
 }
@@ -62,7 +61,8 @@ fn protocols_sign_impl<
     sk: &SecretKeyData<P::Field>,
     msg: &[u8],
     rng: &mut R,
-) -> Option<Vec<u8>> {
+    sig_out: &mut [u8],
+) -> Option<usize> {
     use crate::ec::biscalar::ec_curve_to_basis_2f_from_hint;
     use crate::ec::couple::EcBasis;
     use crate::ec::montgomery::MontgomeryCurve;
@@ -100,6 +100,16 @@ fn protocols_sign_impl<
             eprintln!("[sign L{}] attempt {_attempt}: commit None", P::LEVEL);
             continue;
         };
+        #[cfg(feature = "kat")]
+        if std::env::var_os("PQSQ_COMMIT_DUMP").is_some() {
+            let mut b = [0u8; 96];
+            e_com.a.to_bytes_le(&mut b);
+            std::eprint!("OURS_ECOM aff=");
+            for x in &b[..P::FP2_BYTES] {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
         // 2. Challenge coefficient.
         let chall_coeff = hash_to_challenge::<P>(&sk.curve_a, &e_com.a, msg);
         // 3. Challenge ideal (pulled back through the secret key matrix). A
@@ -143,6 +153,24 @@ fn protocols_sign_impl<
             *r16 = narrow_int_lattice::<W, 16>(rw);
         }
         let lattice_content = lc_w.resize::<16>();
+        #[cfg(feature = "kat")]
+        if std::env::var_os("PQSQ_COMMIT_DUMP").is_some() {
+            for (c, v) in resp.iter().enumerate() {
+                let neg = v < &crypto_bigint::Int::<16>::from_i64(0);
+                let by = v.abs_sign().0.to_le_bytes();
+                std::eprint!("OURS_RESP {c} neg={} ", neg as u8);
+                for x in &by[..40] {
+                    std::eprint!("{x:02x}");
+                }
+                std::eprintln!();
+            }
+            let dby = _resp_d_w.resize::<16>().to_le_bytes();
+            std::eprint!("OURS_RESP denom ");
+            for x in &dby[..16] {
+                std::eprint!("{x:02x}");
+            }
+            std::eprintln!();
+        }
         // 5. Backtracking. C ref (sign.c:107-118): `quat_alg_make_primitive`
         //    makes `resp_quat` PRIMITIVE in place (content stripped),
         //    backtracking = v2(content), lattice_content /= 2^backtracking.
@@ -290,9 +318,10 @@ fn protocols_sign_impl<
             "[sign L{}] attempt {_attempt}: SUCCESS (pow={pow} two_resp={two_resp})",
             P::LEVEL
         );
-        let mut out = alloc::vec![0u8; P::SIG_BYTES];
-        sig.to_bytes::<P>(&mut out).ok()?;
-        return Some(out);
+        // Serialize directly into the caller's fixed-size buffer — no heap
+        // allocation. SQIsign signatures are fixed-length `P::SIG_BYTES`.
+        sig.to_bytes::<P>(sig_out).ok()?;
+        return Some(P::SIG_BYTES);
     }
     None
 }
@@ -300,6 +329,7 @@ fn protocols_sign_impl<
 #[cfg(all(test, feature = "kat"))]
 mod tests {
     use super::*;
+    use crate::params::Params;
     use crate::rng::NistPqcRng;
 
     #[ignore = "heavy: full keygen → sign → verify roundtrip (real-scale spine)"]
@@ -328,10 +358,11 @@ mod tests {
         pk.to_bytes_lvl1(&mut pk_bytes).expect("pk encode");
 
         let msg = b"sqisign roundtrip";
-        let sig = protocols_sign::<crate::params::Level1, _>(&sk, msg, &mut rng)
+        let mut sig = [0u8; crate::params::Level1::SIG_BYTES];
+        let n = protocols_sign::<crate::params::Level1, _>(&sk, msg, &mut rng, &mut sig)
             .expect("sign produces a signature");
 
-        let result = crate::verify::<crate::params::Level1>(msg, &sig, &pk_bytes);
+        let result = crate::verify::<crate::params::Level1>(msg, &sig[..n], &pk_bytes);
         assert_eq!(result, Ok(()), "verify must accept the produced signature");
     }
 }

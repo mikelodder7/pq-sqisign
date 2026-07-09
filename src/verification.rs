@@ -26,7 +26,9 @@ type CurveBasis<F> = (
 /// A pair of even-torsion bases over field `F` (challenge basis, auxiliary basis).
 type BasisPair<F> = (crate::ec::couple::EcBasis<F>, crate::ec::couple::EcBasis<F>);
 
-/// lvl1 PK wire size (bytes): `PK_BYTES = 64 (A) + 1 (hint) = 65`.
+/// lvl1 PK wire size (bytes): `PK_BYTES = 64 (A) + 1 (hint) = 65`. Test-only —
+/// production decode derives sizes from [`Params`].
+#[cfg(test)]
 const PK_BYTES_LVL1: usize = 65;
 /// lvl1 signature/field wire widths, retained for the byte-layout tests now
 /// that the production encode/decode derive these from [`Params`].
@@ -40,8 +42,11 @@ const FP2_BYTES_LVL1: usize = 64;
 const MAT_ENTRY_BYTES_LVL1: usize = 16;
 /// lvl1 secret-key wire size and field widths (C `secret_key_from_bytes`).
 /// `SK_BYTES = 65 (pk) + 32 (norm) + 4·32 (gen coords) + 4·32 (matrix) = 353`.
+/// Test-only — production decode derives sizes from [`Params`].
+#[cfg(test)]
 const SK_BYTES_LVL1: usize = 353;
-/// `FP_ENCODED_BYTES` / `TORSION_2POWER_BYTES` at lvl1 (both 32).
+/// `FP_ENCODED_BYTES` / `TORSION_2POWER_BYTES` at lvl1 (both 32). Test-only.
+#[cfg(test)]
 const SK_FIELD_BYTES_LVL1: usize = 32;
 
 /// Decode a `nbytes`-byte little-endian field into `Int<W>`. When `signed`, the
@@ -81,27 +86,33 @@ pub struct SecretKeyData<F: BaseField> {
     pub mat_bacan_to_ba0_two: [[Uint<8>; 2]; 2],
 }
 
-impl SecretKeyData<Fp1Element> {
-    /// Decode from the 353-byte lvl1 wire format — C `secret_key_from_bytes`.
-    /// Layout: `pk (65) || norm (32, unsigned) || gen.coord[0..3] (4×32, signed)
-    /// || mat[0][0],[0][1],[1][0],[1][1] (4×32, unsigned)`. The secret ideal is
-    /// rebuilt via `quat_lideal_create(gen, denom=1, norm, O_0)` (the encoded
-    /// generator's denominator is omitted — it does not change the ideal).
-    pub fn from_bytes_lvl1(enc: &[u8]) -> Result<Self> {
+impl<F: BaseField> SecretKeyData<F> {
+    /// Decode from the `P::SK_BYTES` wire format — C `secret_key_from_bytes`
+    /// (`encode_signature.c`). Layout: `pk (PK_BYTES) || norm (fb, unsigned)
+    /// || gen.coord[0..3] (4×fb, signed) || mat[0][0],[0][1],[1][0],[1][1]
+    /// (4×fb, unsigned)`, where `fb = FP2_BYTES/2` (C `FP_ENCODED_BYTES`, which
+    /// coincides with `TORSION_2POWER_BYTES` at every level: 32 at lvl1, 48 at
+    /// lvl3). The mat entries are mod `2^F` (F = 248/376) — both fit `Uint<8>`
+    /// (512-bit). The secret ideal is rebuilt via
+    /// `quat_lideal_create(gen, denom=1, norm, O_0)` (the encoded generator's
+    /// denominator is omitted — it does not change the ideal). `W` is the ideal
+    /// reconstruction width (`det_4x4` headroom): 24 at lvl1, 32 at lvl3.
+    fn from_bytes_generic<P: crate::level_constants::LevelConstants<Field = F>, const W: usize>(
+        enc: &[u8],
+    ) -> Result<Self> {
         use crate::quaternion::Quaternion;
         use crate::quaternion::lattice::narrow_int_lattice;
         use crate::quaternion::o0_mul::{c_ideal_to_left_ideal, quat_lideal_create};
-        const W: usize = 24; // create width: norm~2^250 ⇒ det_4x4 needs headroom
 
-        if enc.len() < SK_BYTES_LVL1 {
+        if enc.len() < P::SK_BYTES {
             return Err(Error::BufferTooSmall {
-                required: SK_BYTES_LVL1,
+                required: P::SK_BYTES,
                 provided: enc.len(),
             });
         }
-        let pk = PublicKeyData::from_bytes_lvl1(&enc[..PK_BYTES_LVL1])?;
-        let mut off = PK_BYTES_LVL1;
-        let fb = SK_FIELD_BYTES_LVL1;
+        let pk = PublicKeyData::<F>::from_bytes::<P>(&enc[..P::PK_BYTES])?;
+        let mut off = P::PK_BYTES;
+        let fb = P::FP2_BYTES / 2;
 
         let norm = decode_int_le::<W>(&enc[off..off + fb], false).abs();
         off += fb;
@@ -113,18 +124,18 @@ impl SecretKeyData<Fp1Element> {
         );
         off += 4 * fb;
 
-        let read_u256 = |o: usize| -> Uint<8> {
+        let read_mat_entry = |o: usize| -> Uint<8> {
             let mut buf = [0u8; 64];
             buf[..fb].copy_from_slice(&enc[o..o + fb]);
             Uint::<8>::from_le_slice(&buf)
         };
         let mat = [
-            [read_u256(off), read_u256(off + fb)],
-            [read_u256(off + 2 * fb), read_u256(off + 3 * fb)],
+            [read_mat_entry(off), read_mat_entry(off + fb)],
+            [read_mat_entry(off + 2 * fb), read_mat_entry(off + 3 * fb)],
         ];
 
         // Reconstruct the secret ideal at width W, narrow to LeftIdeal<16>.
-        let p_w = crate::params::lvl1::prime().resize::<W>();
+        let p_w = P::prime::<W>();
         let (basis, denom, n) =
             quat_lideal_create::<W>(&gen_q, &crypto_bigint::Int::<W>::from_i64(1), &norm, &p_w);
         let wide = c_ideal_to_left_ideal::<W>(&basis, &denom, &n);
@@ -146,6 +157,20 @@ impl SecretKeyData<Fp1Element> {
             secret_ideal,
             mat_bacan_to_ba0_two: mat,
         })
+    }
+}
+
+impl SecretKeyData<Fp1Element> {
+    /// Decode from the 353-byte lvl1 wire format (`from_bytes_generic::<Level1, 24>`).
+    pub fn from_bytes_lvl1(enc: &[u8]) -> Result<Self> {
+        Self::from_bytes_generic::<Level1, 24>(enc)
+    }
+}
+
+impl SecretKeyData<crate::params::lvl3::Fp3Element> {
+    /// Decode from the 529-byte lvl3 wire format (`from_bytes_generic::<Level3, 32>`).
+    pub fn from_bytes_lvl3(enc: &[u8]) -> Result<Self> {
+        Self::from_bytes_generic::<crate::params::lvl3::Level3, 32>(enc)
     }
 }
 

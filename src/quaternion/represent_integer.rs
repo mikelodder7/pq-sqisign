@@ -105,71 +105,6 @@ pub(crate) fn uint_gcd_vartime<const LIMBS: usize>(
     x
 }
 
-/// Sample a `Uint<LIMBS>` uniformly in `[0, n)` via **rejection sampling**
-/// — bias-free, matching the convention of [`super::sample::sample_random_quaternion_o0`].
-///
-/// Algorithm: draw `LIMBS` words of raw bytes, accept iff the value is in
-/// the largest multiple-of-`n` range below `2^(64·LIMBS)`; reject and
-/// resample otherwise. The acceptance threshold is `2^(64·LIMBS) -
-/// (2^(64·LIMBS) mod n)`. When `n` divides `2^(64·LIMBS)` (e.g. `n` is
-/// a power of two at most `2^(64·LIMBS)`), the threshold equals `2^(64·LIMBS)`
-/// and every draw is accepted with no rejection — the orchestrator's
-/// `remain` parameter (a power of two) is the common case for this fast path.
-///
-/// Expected iterations: `2^(64·LIMBS) / threshold ≈ 1` at sane LIMBS
-/// (the rejection probability is `(2^(64·LIMBS) mod n) / 2^(64·LIMBS)`,
-/// cryptographically negligible at signing-prime scales).
-///
-/// Variable-time on the rejection-loop's iteration count; intended for
-/// non-secret moduli. Requires `n > 0`.
-///
-/// Security-review Finding 3: earlier versions reduced modulo `n`
-/// without rejection, introducing a small (but non-zero) modulo bias.
-/// This version is bias-free.
-fn sample_uint_lt_vartime<const LIMBS: usize, R: CryptoRng>(
-    rng: &mut R,
-    n: &Uint<LIMBS>,
-) -> Uint<LIMBS> {
-    let n_nz: NonZero<Uint<LIMBS>> = NonZero::new(*n).expect("caller ensures n > 0");
-    let zero_u = Uint::<LIMBS>::ZERO;
-    let one_u = Uint::<LIMBS>::ONE;
-    let max = Uint::<LIMBS>::MAX;
-
-    // `2^(64·LIMBS) mod n = (max + 1) mod n = (max_mod_n + 1) mod n`.
-    // Call this value `bias_floor`.
-    //   - If `bias_floor == 0`, n divides `2^(64·LIMBS)` exactly and no
-    //     rejection is needed (all draws accept).
-    //   - Else the acceptance range is `[0, max - bias_floor + 1)`, i.e.
-    //     accept iff `r <= max - bias_floor` (== threshold_minus_one).
-    let max_mod_n = max.rem_vartime(&n_nz);
-    let bias_floor = max_mod_n.wrapping_add(&one_u).rem_vartime(&n_nz);
-    let all_accept = bias_floor == zero_u;
-    let threshold_minus_one = max.wrapping_sub(&bias_floor);
-
-    loop {
-        let mut words = [0u64; LIMBS];
-        for w in words.iter_mut() {
-            let mut buf = [0u8; 8];
-            rng.fill_bytes(&mut buf);
-            *w = u64::from_le_bytes(buf);
-        }
-        let r = Uint::<LIMBS>::from_words(words);
-        if all_accept || r <= threshold_minus_one {
-            return r.rem_vartime(&n_nz);
-        }
-        // Otherwise: rejected (top bias-window draw). Loop.
-    }
-}
-
-/// Sample a `Uint<LIMBS>` uniformly in `[1, n]` by sampling `[0, n)` and
-/// shifting by +1. Bias inherits from `sample_uint_lt_vartime`.
-fn sample_uint_in_one_to_n_vartime<const LIMBS: usize, R: CryptoRng>(
-    rng: &mut R,
-    n: &Uint<LIMBS>,
-) -> Uint<LIMBS> {
-    sample_uint_lt_vartime::<LIMBS, R>(rng, n).wrapping_add(&Uint::<LIMBS>::ONE)
-}
-
 /// Narrow an `Int<WIDE>` to `Int<RET>`. Returns `None` when the high limbs
 /// are not the sign-extension of the low limbs, or when the top retained
 /// bit would flip the sign relative to the original.
@@ -673,13 +608,16 @@ fn finalize_random_ideal_o0_ret<const LIMBS: usize, const RET: usize, R: CryptoR
     // bounded by max_trials so a degenerate input (e.g. tiny norm where
     // every sample shares a factor) surfaces as Err rather than hanging.
     let gen_rerand: [Int<LIMBS>; 4] = {
+        // C re-randomizes with `ibz_rand_interval(1, norm)` on all 4 coords —
+        // matched by `rand_uint_in_interval` (interval-width draw), NOT the
+        // full-LIMBS-width `sample_uint_in_one_to_n_vartime` (byte-exact-sign).
         let mut found: Option<[Int<LIMBS>; 4]> = None;
         for _ in 0..max_trials {
             let r_coords = [
-                sample_uint_in_one_to_n_vartime::<LIMBS, R>(rng, norm),
-                sample_uint_in_one_to_n_vartime::<LIMBS, R>(rng, norm),
-                sample_uint_in_one_to_n_vartime::<LIMBS, R>(rng, norm),
-                sample_uint_in_one_to_n_vartime::<LIMBS, R>(rng, norm),
+                rand_uint_in_interval::<LIMBS, R>(rng, &one_u, norm),
+                rand_uint_in_interval::<LIMBS, R>(rng, &one_u, norm),
+                rand_uint_in_interval::<LIMBS, R>(rng, &one_u, norm),
+                rand_uint_in_interval::<LIMBS, R>(rng, &one_u, norm),
             ];
             // Safe-reinterpret each [1, norm] Uint as a non-negative Int.
             // Precision contract: norm < 2^(64·LIMBS − 1) (general-path
@@ -882,11 +820,17 @@ pub fn sampling_random_ideal_o0_given_norm_wide_ret<
         // composite-modulus / non-QR inputs; both surface as retry.
         let _ = (sample_bound, witnesses); // unused on fast path; routed to general path below.
         let norm_nz: NonZero<Uint<LIMBS>> = NonZero::new(*norm).expect("norm >= 2 above");
+        // C `quat_sampling_random_ideal_O0_given_norm` (normeq.c) draws the 3
+        // trace-zero coords with `ibz_rand_interval(0, norm-1)` — matched by
+        // `rand_uint_in_interval` (interval-width bytes), NOT `sample_uint_lt`
+        // (full-LIMBS-width bytes). Using the wrong primitive here desynced the
+        // DRBG and made the commitment curve diverge from C (byte-exact-sign).
+        let n_minus_1 = norm.wrapping_sub(&one_u);
         let mut found: Option<[Int<LIMBS>; 4]> = None;
         for _ in 0..max_trials {
-            let b_u = sample_uint_lt_vartime::<LIMBS, R>(rng, norm);
-            let c_u = sample_uint_lt_vartime::<LIMBS, R>(rng, norm);
-            let d_u = sample_uint_lt_vartime::<LIMBS, R>(rng, norm);
+            let b_u = rand_uint_in_interval::<LIMBS, R>(rng, &zero_u, &n_minus_1);
+            let c_u = rand_uint_in_interval::<LIMBS, R>(rng, &zero_u, &n_minus_1);
+            let d_u = rand_uint_in_interval::<LIMBS, R>(rng, &zero_u, &n_minus_1);
 
             // Compute `n_temp_mod = (b² + p·(c² + d²)) mod norm`, reducing
             // mod norm at every multiplication so intermediates stay in

@@ -831,20 +831,14 @@ pub(crate) fn commit<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     // value-based, not width-based, so widening WL does not perturb the sampler
     // draw order. `QL` per level (lvl1=12, lvl3=18).
     match P::LEVEL {
-        1 => commit_impl::<P, QL, 64, 80, R>(witnesses, sample_bound, max_trials, rng),
-        3 => commit_impl::<P, QL, 96, 112, R>(witnesses, sample_bound, max_trials, rng),
+        1 => commit_impl::<P, QL, 80, R>(witnesses, sample_bound, max_trials, rng),
+        3 => commit_impl::<P, QL, 112, R>(witnesses, sample_bound, max_trials, rng),
         _ => None,
     }
 }
 
 #[cfg(feature = "kgen")]
-fn commit_impl<
-    P: FixedDegreeLevel,
-    const QL: usize,
-    const SL: usize,
-    const WL: usize,
-    R: CryptoRng,
->(
+fn commit_impl<P: FixedDegreeLevel, const QL: usize, const WL: usize, R: CryptoRng>(
     witnesses: &[Uint<QL>],
     sample_bound: i64,
     max_trials: usize,
@@ -852,67 +846,53 @@ fn commit_impl<
 ) -> Option<CurveBasisIdeal<P>> {
     use crate::quaternion::lattice::narrow_int_lattice;
     use crate::quaternion::lll::quat_lideal_prime_norm_reduced_equivalent;
-    use crate::quaternion::o0_mul::{c_ideal_to_left_ideal, ideal_basis_o0_to_standard_col};
-    use crate::quaternion::represent_integer::sampling_random_ideal_o0_given_norm_wide_ret;
+    use crate::quaternion::o0_mul::{c_ideal_to_left_ideal, quat_lideal_create};
+    use crate::quaternion::represent_integer::sample_secret_gen;
 
-    // SL = internal sampler width for the COM_DEGREE ≈ 2^512 re-randomization
-    // (N_red ~ (p·n²)² needs 64·SL ≳ 2^2552). WL = working width for the raw
-    // ideal + its reduction. WL=40 is NOT enough: the prime-norm J-construction
-    // computes det_4x4(I·ᾱ) whose intermediate products reach ~2^3348 (entries
-    // ~2^837), overflowing 2560 bits and yielding a NON-left-closed ideal.
-    // WL=64 (4096 bits) has the headroom (verified by left-closure of the
-    // reduced ideal — `reduced_norm_vartime` itself false-negatives at this
-    // scale because its own det_4x4 overflows, so it is NOT a validity oracle).
-    //
-    // SL/WL are per-level const-generic params. WL is width-minimized (it is the
-    // dominant sign cost — commit + find_uv_cref are ~65% of a lvl3 sign, all
-    // wide-Uint Karatsuba mul, cost super-linear in limb count). Too-narrow WL
-    // does NOT corrupt output: an intermittent det_4x4 overflow yields a
-    // non-left-closed ideal that the retry loop rejects and re-samples, so the
-    // failure mode is a throughput cliff, not a wrong signature. Empirically
-    // (16-seed sign+verify stress, `keypair::…::width_stress_*`): lvl3 collapses
-    // at WL=96 (retry storm), is clean and near-optimal at WL=104+; lvl1 is
-    // clean down to WL=72. Chosen with margin: lvl1 SL=64/WL=80, lvl3 SL=96/WL=112.
-    let com_sl = match P::LEVEL {
-        1 => crate::params::lvl1::com_degree().resize::<SL>(),
-        3 => crate::params::lvl3::com_degree().resize::<SL>(),
+    // WL = working width for the commitment ideal sampling + its prime-norm
+    // reduction + `find_uv_cref`. WL must give headroom for the prime-norm
+    // J-construction's HNF modulus `det_4x4(I·conj(α))` (the p-scaled quaternion
+    // product to the 4th power), which overflows a narrow width for a fraction of
+    // sampled ideals → a malformed high-denominator ideal that `find_uv_cref`
+    // rejects (C never hits this — arbitrary-precision `ibz`). WL is the dominant
+    // sign cost (wide-Uint Karatsuba, super-linear in limbs); width-minimized
+    // with margin (lvl1 WL=80, lvl3 WL=112). The DRBG draw is value-based (the
+    // `rand_uint_in_interval` byte-count = ⌈bits(COM_DEGREE)/8⌉, independent of
+    // WL), so WL does not perturb the byte-exact draw order.
+    let com_wl = match P::LEVEL {
+        1 => crate::params::lvl1::com_degree().resize::<WL>(),
+        3 => crate::params::lvl3::com_degree().resize::<WL>(),
         _ => return None,
     };
-    let p_sl = P::prime::<SL>();
     let p_wl = P::prime::<WL>();
     let p16 = P::prime::<L>();
-    let wit_sl: [Uint<SL>; 12] =
-        [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
     let wit_wl: [Uint<WL>; 12] =
         [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37].map(Uint::from_u64);
+    let _ = sample_bound; // standard-frame sampler takes no symmetric bound.
 
-    // 1. Random O_0 ideal of norm COM_DEGREE (is_prime: COM_DEGREE is prime),
-    //    returned at the wide working width WL.
-    let raw = sampling_random_ideal_o0_given_norm_wide_ret::<SL, WL, _>(
-        &com_sl,
-        &p_sl,
-        true,
-        None,
-        sample_bound,
-        max_trials,
-        &wit_sl,
-        rng,
-    )
-    .ok()?;
-    // 2. Convert O_0-coords row-major → standard column-major doubled basis
-    //    (denom → 2·denom) — the form `lideal_reduce_basis` consumes — then
-    //    reduce to a prime-norm equivalent (same right order ⇒ same codomain).
-    let std_col = ideal_basis_o0_to_standard_col::<WL>(&raw.basis);
-    let denom_wl = Int::<WL>::from_i64(2).wrapping_mul(raw.denom.as_int());
+    // 1. Random O_0 ideal of norm COM_DEGREE via the byte-exact STANDARD-frame
+    //    sampler — the SAME path keygen uses (`sample_secret_gen` builds `gen` in
+    //    (1,i,j,k) coords and does `gen·gen_rerand` as a standard-quaternion
+    //    multiply, matching C `quat_sampling_random_ideal_O0_given_norm`). The
+    //    prior O_0-coord sampler multiplied in the wrong frame, so `E_com`
+    //    diverged from C (byte-exact-sign). `quat_lideal_create` then builds the
+    //    standard column-major (basis, denom, norm) the reduction consumes.
+    let gen_q = sample_secret_gen::<WL, _>(&com_wl, &p_wl, max_trials, rng)?;
+    let (basis, denom, norm) =
+        quat_lideal_create::<WL>(&gen_q, &Int::<WL>::from_i64(1), &com_wl, &p_wl);
+    // 2. Reduce to a prime-norm equivalent (same right order ⇒ same codomain).
     let (j_basis, j_denom, q) = quat_lideal_prime_norm_reduced_equivalent::<WL, _>(
-        &std_col,
-        &denom_wl,
-        &raw.cached_norm,
-        &p_wl,
-        64,
-        &wit_wl,
-        rng,
+        &basis, &denom, &norm, &p_wl, 64, &wit_wl, rng,
     )?;
+    #[cfg(feature = "kat")]
+    if std::env::var_os("PQSQ_COMMIT_DUMP").is_some() {
+        let b = q.resize::<8>().to_le_bytes();
+        std::eprint!("OURS_COMMIT_Q ");
+        for x in &b[..48] {
+            std::eprint!("{x:02x}");
+        }
+        std::eprintln!();
+    }
     // 3. The reduced ideal has small prime norm q (≲ bitsize(p)) ⇒ narrow its
     //    standard-col basis to the spine width L, bridge, and run Clapotis.
     let mut jb16 = [[Int::<L>::from_i64(0); 4]; 4];
@@ -980,6 +960,11 @@ fn commit_impl<
             }
         })
     };
+    // `keygen = true` ⇒ the `small = true` fixed-degree flavor. C's commitment
+    // isogeny (`dim2id2iso_arbitrary_isogeny_evaluation` → `dim2id2iso_..._clapotis`)
+    // ALWAYS calls the fixed-degree with `small = true` (dim2id2iso.c:922/1002),
+    // for BOTH keygen and signing/commit — so commit must use it too, else the
+    // fixed-degree length + RepresentInteger draws diverge from C (byte-exact E_com).
     let (e_com, basis) = r16
         .and_then(|r| {
             ideal_to_isogeny_clapotis_idx0_with_r::<P, QL, _>(
@@ -989,7 +974,7 @@ fn commit_impl<
                 witnesses,
                 sample_bound,
                 max_trials,
-                false,
+                true,
                 rng,
             )
         })
@@ -1000,7 +985,7 @@ fn commit_impl<
                 witnesses,
                 sample_bound,
                 max_trials,
-                false,
+                true,
                 rng,
             )
         })
@@ -1154,7 +1139,20 @@ pub(crate) fn keygen<P: FixedDegreeLevel, const QL: usize, R: CryptoRng>(
     // change_of_basis_matrix_tate(canonical, B_0_two) = change_of_basis_matrix(
     // B_Acan, B_A0)). Both bases at order 2^f.
     let f = u32::try_from(torsion_even_power).ok()?;
-    let mat = P::change_of_basis_matrix(&b_acan, &b_a0, &e_a, f)?;
+    let mut mat = P::change_of_basis_matrix(&b_acan, &b_a0, &e_a, f)?;
+    // C keygen stores `change_of_basis_matrix_tate(canonical, B_0_two)`
+    // (keygen.c:54), whose sign convention is the NEGATION of our Weil-based
+    // `change_of_basis_matrix` — empirically ours = −C mod 2^f on every entry at
+    // both levels (`lvl{1,3}_keygen_sk_vs_kat`). Negate so the encoded sk mat is
+    // byte-exact with C. Sign is unaffected: the challenge kernel ⟨mat·v⟩ equals
+    // ⟨−mat·v⟩, so `compute_challenge_ideal_signature` yields the same ideal.
+    let modulus = Uint::<8>::ONE.shl_vartime(f);
+    let mask = modulus.wrapping_sub(&Uint::<8>::ONE);
+    for row in mat.iter_mut() {
+        for e in row.iter_mut() {
+            *e = modulus.wrapping_sub(&(*e & mask)) & mask;
+        }
+    }
     Some((e_a, secret_ideal, mat, b_acan, hint_pk, b_a0))
 }
 

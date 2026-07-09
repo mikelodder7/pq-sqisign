@@ -83,9 +83,16 @@ impl<P: Params> SigningKey<P> {
     where
         P: crate::keypair::KeyLevel,
     {
-        let sig_bytes = match <P as crate::keypair::KeyLevel>::protocols_sign(&self.data, msg, rng)
-        {
-            Some(b) => b,
+        // Stack buffer sized to the largest scheme; sliced to this level's
+        // signature length. No heap allocation for the signature bytes.
+        let mut buf = [0u8; crate::params::MAX_SIG_BYTES];
+        let n = match <P as crate::keypair::KeyLevel>::protocols_sign(
+            &self.data,
+            msg,
+            rng,
+            &mut buf[..P::SIG_BYTES],
+        ) {
+            Some(n) => n,
             None if P::LEVEL == 1 => return Err(Error::SigningFailed),
             None => {
                 return Err(Error::Unimplemented(
@@ -93,7 +100,7 @@ impl<P: Params> SigningKey<P> {
                 ));
             }
         };
-        Ok(SqiSignature::from_bytes_unchecked(&sig_bytes))
+        Ok(SqiSignature::from_bytes_unchecked(&buf[..n]))
     }
 }
 

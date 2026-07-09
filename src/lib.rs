@@ -260,17 +260,17 @@ fn keypair_at_lvl5<P: Params, R: rand_core::CryptoRng>(rng: &mut R) -> Result<()
 
 /// SQIsign signature generation, matching `sqisign_sign` in the reference C API.
 ///
-/// At Level 1 this implements the full signing flow: parse `sk` to recover
-/// the secret quaternion ideal, hash `msg` via Shake256 to the challenge
-/// `c`, construct the challenge ideal, run the KLPT body on (secret ideal,
-/// challenge ideal) to find the response ideal, translate via the Clapotis
-/// evaluator, and encode the signature bytes into `sig_out`. The signature
-/// verifies against [`verify`] (sign↔verify roundtrip). The chain's RNG is
-/// bound to `(msg, sk, rng-derived entropy)` via [`hash::Shake256Rng`] so
-/// the output varies with `msg`.
+/// Decodes `sk`, then runs the functional signer
+/// ([`crate::signing::protocols_sign`]): sample the commitment, hash `msg` to
+/// the challenge, build the response, and encode the signature directly into
+/// `sig_out` (no heap allocation — SQIsign signatures are fixed-length
+/// `P::SIG_BYTES`). Returns the signature length. Draws from `rng` and binds the
+/// message through the challenge hash, matching the C reference (no separate RNG
+/// hedge). The signature verifies against [`verify`].
 ///
-/// Byte-exact reproduction of the C reference KAT signature bytes is not
-/// yet achieved (it requires DRBG seed alignment with the reference).
+/// Supported at levels 1 and 3 (level-3 additionally requires
+/// `Level3::sk_from_bytes`, not yet implemented). Byte-exact reproduction of the
+/// C reference KAT signature bytes is a separate, in-progress alignment effort.
 #[cfg(feature = "sign")]
 pub fn sign<P: Params, R: rand_core::CryptoRng>(
     rng: &mut R,
@@ -296,80 +296,45 @@ pub fn sign<P: Params, R: rand_core::CryptoRng>(
         });
     }
     match P::LEVEL {
-        1 => sign_at_lvl1::<P, R>(rng, msg, sk),
-        3 => sign_at_lvl3::<P, R>(rng, msg, sk),
-        5 => sign_at_lvl5::<P, R>(rng, msg, sk),
-        _ => Err(Error::Unimplemented("sign: unsupported security level")),
+        1 => sign_at_lvl1(rng, msg, sk, sig_out),
+        3 => sign_at_lvl3(rng, msg, sk, sig_out),
+        _ => Err(Error::Unimplemented(
+            "sign: only security levels 1 and 3 are supported",
+        )),
     }
 }
 
-/// Derive a deterministic chain-driving RNG that binds to `(msg, sk,
-/// rng-derived entropy)`. The returned [`hash::Shake256Rng`] is a
-/// CryptoRng whose byte stream is fully determined by its inputs —
-/// this is what makes `sign`'s output bind to `msg` per the SQIsign
-/// protocol requirement.
-///
-/// Sampling pattern: the caller's `rng` contributes 32 bytes of fresh
-/// entropy; those plus `msg` and `sk` get absorbed into a Shake256
-/// instance with a domain-separation prefix, and the resulting state
-/// is consumed into a [`hash::Shake256Rng`]. Downstream chain code
-/// uses this RNG instead of `rng` directly.
-///
-/// Same `(msg, sk, entropy)` ⇒ same `Shake256Rng` byte stream (proven
-/// by the `shake256_rng_multi_absorb_binds_inputs` test). Different
-/// `msg` (or `sk` or `entropy`) ⇒ different stream. This is the
-/// canonical SQIsign sign-flow forward-prep.
+/// Decode the level-1 `sk` bytes and run the functional signer
+/// ([`crate::signing::protocols_sign`]) into `sig_out`. Draws directly from
+/// `rng` — the message binds through the challenge hash, matching the C
+/// reference `crypto_sign` (no separate RNG hedge).
 #[cfg(feature = "sign")]
-fn derive_sign_chain_rng<R: rand_core::CryptoRng>(
+fn sign_at_lvl1<R: rand_core::CryptoRng>(
     rng: &mut R,
     msg: &[u8],
     sk: &[u8],
-) -> hash::Shake256Rng {
-    let mut entropy = [0u8; 32];
-    rng.fill_bytes(&mut entropy);
-    let mut h = hash::Shake256::new();
-    h.absorb(b"SQIsign-sign-chain-rng-v1");
-    h.absorb(msg);
-    h.absorb(sk);
-    h.absorb(&entropy);
-    h.into_rng()
+    sig_out: &mut [u8],
+) -> Result<usize> {
+    use crate::keypair::KeyLevel;
+    use crate::params::Level1;
+    let sk_data = Level1::sk_from_bytes(sk)?;
+    Level1::protocols_sign(&sk_data, msg, rng, sig_out).ok_or(Error::SigningFailed)
 }
 
-/// Run the L1 KLPT body + Clapotis chain for sign with a chain RNG
-/// bound to `(msg, sk, rng-derived entropy)`.
-///
-/// The chain RNG is not the caller's bare `rng` — it's a
-/// [`hash::Shake256Rng`] derived from `(msg, sk, rng-entropy)`, making
-/// sign's execution path bind to `msg` as required by the SQIsign
-/// protocol.
+/// Level-3 counterpart of [`sign_at_lvl1`]. NOTE: `Level3::sk_from_bytes` is not
+/// yet implemented, so this currently surfaces that decode gap (the isogeny path
+/// itself is functional via `protocols_sign`).
 #[cfg(feature = "sign")]
-fn sign_at_lvl1<P: Params, R: rand_core::CryptoRng>(
+fn sign_at_lvl3<R: rand_core::CryptoRng>(
     rng: &mut R,
     msg: &[u8],
     sk: &[u8],
+    sig_out: &mut [u8],
 ) -> Result<usize> {
-    let mut chain_rng = derive_sign_chain_rng(rng, msg, sk);
-    klpt_clapotis_chain_at_lvl1::<P, _>(&mut chain_rng).map(|()| 0)
-}
-
-#[cfg(feature = "sign")]
-fn sign_at_lvl3<P: Params, R: rand_core::CryptoRng>(
-    rng: &mut R,
-    msg: &[u8],
-    sk: &[u8],
-) -> Result<usize> {
-    let mut chain_rng = derive_sign_chain_rng(rng, msg, sk);
-    klpt_clapotis_chain_at_lvl3::<P, _>(&mut chain_rng).map(|()| 0)
-}
-
-#[cfg(feature = "sign")]
-fn sign_at_lvl5<P: Params, R: rand_core::CryptoRng>(
-    rng: &mut R,
-    msg: &[u8],
-    sk: &[u8],
-) -> Result<usize> {
-    let mut chain_rng = derive_sign_chain_rng(rng, msg, sk);
-    klpt_clapotis_chain_at_lvl5::<P, _>(&mut chain_rng).map(|()| 0)
+    use crate::keypair::KeyLevel;
+    use crate::params::Level3;
+    let sk_data = Level3::sk_from_bytes(sk)?;
+    Level3::protocols_sign(&sk_data, msg, rng, sig_out).ok_or(Error::SigningFailed)
 }
 
 /// SQIsign signature verification, matching `sqisign_verify` in the reference C API.
@@ -497,81 +462,129 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "sign")]
+    /// Public `crate::sign` (the free fn taking `sk` BYTES) is wired to the
+    /// functional signer at lvl1: load C's KAT record-0 secret key, sign a
+    /// message into `sig_out`, and verify it against C's public key. Exercises
+    /// the whole front-door path (sk-decode → `protocols_sign` → `sig_out`) and
+    /// confirms it produces a valid signature end-to-end.
+    #[cfg(all(feature = "kat", feature = "vrfy"))]
     #[test]
-    fn sign_at_lvl1_reaches_clapotis_stub() {
-        // Verifies the sign wiring at L1 runs the same KLPT body
-        // + Clapotis chain as keypair_at_lvl1, then bails at the
-        // Clapotis stub. Proves the chain wiring extends symmetrically
-        // from keypair to sign; the public API surface for both signing
-        // operations now runs the cryptographic core.
+    fn sign_lvl1_public_api_roundtrip_with_c_sk() {
         use crate::rng::NistPqcRng;
 
-        let mut rng = NistPqcRng::new(&[0x81u8; 48]);
-        let msg = b"test message";
-        // Buffers sized per Level1 spec (SK_BYTES=353, SIG_BYTES=148).
-        let sk = [0u8; Level1::SK_BYTES];
-        let mut sig_out = [0u8; Level1::SIG_BYTES];
+        let rsp = include_str!("../tests/KAT/PQCsignKAT_353_SQIsign_lvl1.rsp");
+        let (mut sk, mut pk, mut msg): (Vec<u8>, Vec<u8>, Vec<u8>) =
+            (Vec::new(), Vec::new(), Vec::new());
+        for line in rsp.lines() {
+            if let Some(h) = line.strip_prefix("msg = ") {
+                if msg.is_empty() {
+                    msg = hex::decode(h.trim()).unwrap();
+                }
+            } else if let Some(h) = line.strip_prefix("pk = ") {
+                if pk.is_empty() {
+                    pk = hex::decode(h.trim()).unwrap();
+                }
+            } else if let Some(h) = line.strip_prefix("sk = ") {
+                if sk.is_empty() {
+                    sk = hex::decode(h.trim()).unwrap();
+                    break;
+                }
+            }
+        }
+        let mut rng = NistPqcRng::new(&[0x11u8; 48]);
+        let mut sig = [0u8; Level1::SIG_BYTES];
+        let n = sign::<Level1, _>(&mut rng, &msg, &sk, &mut sig)
+            .expect("lvl1 crate::sign must produce a signature");
+        assert_eq!(n, Level1::SIG_BYTES);
+        verify::<Level1>(&msg, &sig[..n], &pk)
+            .expect("the produced signature must verify against C's pk");
+    }
 
-        let result = sign::<Level1, _>(&mut rng, msg, &sk, &mut sig_out);
-        let err = result.expect_err("sign at L1 must fail at the Clapotis stub");
-        let Error::Unimplemented(msg) = err else {
-            unreachable!("expected Unimplemented, got {err:?}");
-        };
+    /// lvl3 counterpart of [`sign_lvl1_public_api_roundtrip_with_c_sk`]: the
+    /// public `crate::sign` now decodes C's lvl3 `sk` (via `Level3::sk_from_bytes`),
+    /// signs, and the signature verifies against C's lvl3 pk. Heavy (lvl3 sign),
+    /// hence `#[ignore]`.
+    #[cfg(all(feature = "kat", feature = "vrfy"))]
+    #[test]
+    #[ignore = "heavy: lvl3 crate::sign roundtrip with C's KAT sk"]
+    fn sign_lvl3_public_api_roundtrip_with_c_sk() {
+        use crate::rng::NistPqcRng;
+
+        let rsp = include_str!("../tests/KAT/PQCsignKAT_529_SQIsign_lvl3.rsp");
+        let (mut sk, mut pk, mut msg): (Vec<u8>, Vec<u8>, Vec<u8>) =
+            (Vec::new(), Vec::new(), Vec::new());
+        for line in rsp.lines() {
+            if let Some(h) = line.strip_prefix("msg = ") {
+                if msg.is_empty() {
+                    msg = hex::decode(h.trim()).unwrap();
+                }
+            } else if let Some(h) = line.strip_prefix("pk = ") {
+                if pk.is_empty() {
+                    pk = hex::decode(h.trim()).unwrap();
+                }
+            } else if let Some(h) = line.strip_prefix("sk = ") {
+                if sk.is_empty() {
+                    sk = hex::decode(h.trim()).unwrap();
+                    break;
+                }
+            }
+        }
+        let mut rng = NistPqcRng::new(&[0x13u8; 48]);
+        let mut sig = [0u8; Level3::SIG_BYTES];
+        let n = sign::<Level3, _>(&mut rng, &msg, &sk, &mut sig)
+            .expect("lvl3 crate::sign must produce a signature");
+        assert_eq!(n, Level3::SIG_BYTES);
+        verify::<Level3>(&msg, &sig[..n], &pk)
+            .expect("the produced lvl3 signature must verify against C's pk");
+    }
+
+    /// Fast lvl3 `sk` decode self-check (no signing): `Level3::sk_from_bytes` on
+    /// C's KAT sk must recover a curve/hint matching C's pk, and a well-formed
+    /// secret ideal (perfect-square `cached_norm` ⇒ the W=32 reconstruction did
+    /// not overflow). Confirms the decode is correct independent of the heavy
+    /// sign roundtrip.
+    #[cfg(all(feature = "kat", feature = "sign"))]
+    #[test]
+    fn sk_decode_lvl3_matches_kat_pk() {
+        use crate::keypair::KeyLevel;
+        use crate::verification::PublicKeyData;
+
+        let rsp = include_str!("../tests/KAT/PQCsignKAT_529_SQIsign_lvl3.rsp");
+        let (mut sk, mut pk): (Vec<u8>, Vec<u8>) = (Vec::new(), Vec::new());
+        for line in rsp.lines() {
+            if let Some(h) = line.strip_prefix("pk = ") {
+                if pk.is_empty() {
+                    pk = hex::decode(h.trim()).unwrap();
+                }
+            } else if let Some(h) = line.strip_prefix("sk = ") {
+                if sk.is_empty() {
+                    sk = hex::decode(h.trim()).unwrap();
+                    break;
+                }
+            }
+        }
+        let sk_data = Level3::sk_from_bytes(&sk).expect("lvl3 sk decodes");
+        let pk_data = PublicKeyData::<params::lvl3::Fp3Element>::from_bytes::<Level3>(&pk)
+            .expect("lvl3 pk decodes");
+        assert_eq!(sk_data.curve_a, pk_data.curve_a, "sk curve must match pk");
+        assert_eq!(sk_data.hint_pk, pk_data.hint_pk, "sk hint must match pk");
         assert!(
-            msg.contains("Clapotis") || msg.contains("dominant remaining scope"),
-            "sign at L1 must reach the Clapotis stub (KLPT body at L1 OK); got: {msg}",
+            sk_data.secret_ideal.reduced_norm_vartime().is_some(),
+            "secret ideal cached_norm must be a perfect square (W=32 no overflow)"
         );
     }
 
+    /// lvl5 signing is unsupported; the public API rejects it cleanly.
     #[cfg(feature = "sign")]
     #[test]
-    fn sign_at_lvl3_reaches_clapotis_stub() {
-        // At L3, sign runs the full KLPT body at L3
-        // magnitudes (TLIMBS=12, target_m=1000·2^380) with
-        // q_max_bits=Some(378) seed-independence, and bails at
-        // the Clapotis stub.
+    fn sign_lvl5_unsupported() {
         use crate::rng::NistPqcRng;
-
         let mut rng = NistPqcRng::new(&[0x82u8; 48]);
-        let msg = b"test message";
-        let sk = [0u8; Level3::SK_BYTES];
-        let mut sig_out = [0u8; Level3::SIG_BYTES];
-
-        let result = sign::<Level3, _>(&mut rng, msg, &sk, &mut sig_out);
-        let err = result.expect_err("sign at L3 must fail at the Clapotis stub");
-        let Error::Unimplemented(msg) = err else {
-            unreachable!("expected Unimplemented, got {err:?}");
-        };
-        assert!(
-            msg.contains("Clapotis") || msg.contains("dominant remaining scope"),
-            "sign at L3 must reach the Clapotis stub (KLPT body at L3 OK); got: {msg}",
-        );
-    }
-
-    #[cfg(feature = "sign")]
-    #[test]
-    fn sign_at_lvl5_reaches_clapotis_stub() {
-        // At L5, sign runs the full KLPT body at L5 magnitudes
-        // (TLIMBS=16, target_m=2^513) with q_max_bits=
-        // Some(511), and bails at the Clapotis stub. ~7s debug runtime
-        // due to Miller-Rabin at 1024-bit precision.
-        use crate::rng::NistPqcRng;
-
-        let mut rng = NistPqcRng::new(&[0x82u8; 48]);
-        let msg = b"test message";
         let sk = [0u8; Level5::SK_BYTES];
         let mut sig_out = [0u8; Level5::SIG_BYTES];
-
-        let result = sign::<Level5, _>(&mut rng, msg, &sk, &mut sig_out);
-        let err = result.expect_err("sign at L5 must fail at the Clapotis stub");
-        let Error::Unimplemented(msg) = err else {
-            unreachable!("expected Unimplemented, got {err:?}");
-        };
-        assert!(
-            msg.contains("Clapotis") || msg.contains("dominant remaining scope"),
-            "sign at L5 must reach the Clapotis stub (KLPT body at L5 OK); got: {msg}",
-        );
+        let err = sign::<Level5, _>(&mut rng, b"m", &sk, &mut sig_out)
+            .expect_err("lvl5 sign is unsupported");
+        assert!(matches!(err, Error::Unimplemented(_)));
     }
 
     // ── verify wiring at all NIST levels ──
@@ -616,59 +629,12 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "sign")]
     #[test]
-    fn sign_chain_rng_binds_to_msg_at_lvl1() {
-        // Verifies that sign's internal chain RNG genuinely
-        // depends on `msg`. Same `(rng_seed, sk)` with two different
-        // messages must produce different first-byte samples from the
-        // derived chain RNG.
-        //
-        // The test exercises `derive_sign_chain_rng` directly (a
-        // private helper) by constructing two callers' rngs from the
-        // same seed and absorbing different messages. The derived
-        // Shake256Rng's first-byte streams must differ. This locks
-        // the contract that `shake256_rng_multi_absorb_binds_inputs`
-        // proved at the primitive level — now verified at the sign-
-        // chain wiring level.
-        use crate::rng::NistPqcRng;
-        use rand_core::Rng;
-
-        let sk = [0u8; 8];
-        let mut rng_a = NistPqcRng::new(&[0x86u8; 48]);
-        let mut rng_b = NistPqcRng::new(&[0x86u8; 48]);
-        let mut chain_a = derive_sign_chain_rng(&mut rng_a, b"message-a", &sk);
-        let mut chain_b = derive_sign_chain_rng(&mut rng_b, b"message-b", &sk);
-        let mut buf_a = [0u8; 32];
-        let mut buf_b = [0u8; 32];
-        chain_a.fill_bytes(&mut buf_a);
-        chain_b.fill_bytes(&mut buf_b);
-        assert_ne!(buf_a, buf_b, "sign's derived chain RNG must depend on msg",);
-    }
-
-    #[cfg(feature = "sign")]
-    #[test]
-    fn sign_chain_rng_deterministic_for_identical_inputs_at_lvl1() {
-        // The dual property: same `(rng_seed, msg, sk)` produces
-        // the same chain RNG byte stream. Composed with the previous
-        // test, this gives the contract: sign's chain RNG is a pure
-        // function of `(rng_seed, msg, sk)`.
-        use crate::rng::NistPqcRng;
-        use rand_core::Rng;
-
-        let sk = [0u8; 8];
-        let mut rng_a = NistPqcRng::new(&[0x86u8; 48]);
-        let mut rng_b = NistPqcRng::new(&[0x86u8; 48]);
-        let mut chain_a = derive_sign_chain_rng(&mut rng_a, b"same-message", &sk);
-        let mut chain_b = derive_sign_chain_rng(&mut rng_b, b"same-message", &sk);
-        let mut buf_a = [0u8; 32];
-        let mut buf_b = [0u8; 32];
-        chain_a.fill_bytes(&mut buf_a);
-        chain_b.fill_bytes(&mut buf_b);
-        assert_eq!(
-            buf_a, buf_b,
-            "same inputs must produce identical chain RNG streams",
-        );
+    fn max_sig_bytes_bounds_all_levels() {
+        use crate::params::MAX_SIG_BYTES;
+        assert!(Level1::SIG_BYTES <= MAX_SIG_BYTES);
+        assert!(Level3::SIG_BYTES <= MAX_SIG_BYTES);
+        assert!(Level5::SIG_BYTES <= MAX_SIG_BYTES);
     }
 
     // ── buffer-size validation rejections ──
